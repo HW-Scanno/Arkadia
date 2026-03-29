@@ -15,8 +15,8 @@ namespace Arkadia;
 
 public partial class App : Application
 {
-    /// <summary>Duration of MainWindow's fade-in after the splash screen closes.</summary>
-    public static readonly TimeSpan MainFadeInDuration = TimeSpan.FromMilliseconds(200);
+    /// <summary>Duration of MainWindow content fade-in after the splash screen closes.</summary>
+    public static readonly TimeSpan MainFadeInDuration = TimeSpan.FromMilliseconds(400);
 
     public override void Initialize()
     {
@@ -57,10 +57,13 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// Runs the complete splash visual lifecycle, then shows MainWindow while the splash
-    /// window is still technically open, switches shutdown mode, then closes the splash.
-    /// This ordering guarantees there is never a zero-open-window moment that would trigger
-    /// an OnLastWindowClose shutdown before MainWindow is ready.
+    /// Runs the complete splash visual lifecycle, then shows MainWindow (content hidden)
+    /// while the splash window is still technically open, switches shutdown mode,
+    /// closes the splash, then fades MainWindow content in.
+    ///
+    /// The overlap in phases 2-3 prevents a zero-open-window gap that would trigger
+    /// OnLastWindowClose. Both windows stay fully opaque to the OS throughout — only
+    /// their root content panels have opacity animated, which avoids DWM flicker.
     /// </summary>
     private static async Task RunSplashThenShowMain(
         SplashWindow splash,
@@ -69,22 +72,20 @@ public partial class App : Application
     {
         try
         {
-            // Phase 1: splash visual lifecycle — fade-in, min duration, fade-out.
-            // Splash window remains open (not closed) after RunAsync returns.
+            // Phase 1: full splash visual sequence; splash window remains open after return
             await splash.RunAsync();
 
-            // Phase 2: show MainWindow while splash is still open.
-            // Two windows exist for this brief moment — no zero-window gap possible.
+            // Phase 2: show MainWindow (content invisible) while splash still exists
             desktop.MainWindow = main;
             desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
-            main.Opacity = 0;
+            main.MainRoot.Opacity = 0;
             main.Show();
 
-            // Phase 3: close splash now that MainWindow is the live window.
+            // Phase 3: close splash — MainWindow is now the only window
             try { splash.Close(); } catch { }
 
-            // Phase 4: fade MainWindow in
-            await FadeInWindowAsync(main);
+            // Phase 4: fade MainWindow content in
+            await FadeControlAsync(main.MainRoot);
         }
         catch
         {
@@ -97,7 +98,7 @@ public partial class App : Application
                     desktop.MainWindow = main;
                     desktop.ShutdownMode = ShutdownMode.OnMainWindowClose;
                 }
-                main.Opacity = 1;
+                main.MainRoot.Opacity = 1;
                 if (!main.IsVisible)
                     main.Show();
             }
@@ -105,9 +106,9 @@ public partial class App : Application
         }
     }
 
-    private static async Task FadeInWindowAsync(Window window)
+    private static async Task FadeControlAsync(Control control)
     {
-        window.Opacity = 0;
+        control.Opacity = 0;
         try
         {
             var animation = new Animation
@@ -120,10 +121,10 @@ public partial class App : Application
                     new KeyFrame { Cue = new Cue(1d), Setters = { new Setter(Visual.OpacityProperty, 1.0) } },
                 },
             };
-            await animation.RunAsync(window);
+            await animation.RunAsync(control);
         }
         catch { }
-        window.Opacity = 1;
+        control.Opacity = 1;
     }
 
     /// <summary>

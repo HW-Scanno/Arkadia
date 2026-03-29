@@ -8,25 +8,19 @@ namespace Arkadia.Tests.Startup;
 /// <summary>
 /// Verifies that startup timing constants meet the spec.
 /// <para>
-/// Startup transition sequence (manually verified — requires live Avalonia UI thread):
+/// Fade strategy (manually verified — requires live Avalonia UI thread):
+///   Window.Opacity is never changed. Only the root content panel of each window
+///   (SplashRoot / MainRoot) has its opacity animated. This keeps each window fully
+///   opaque to the OS/DWM compositor, which eliminates the flicker caused by
+///   window-level transparency changes on Windows.
 ///
-/// Phase 1  — splash visual lifecycle:
-///   desktop.MainWindow = null → framework's Show() call is a null-safe no-op.
-///   ShutdownMode = OnLastWindowClose keeps the app alive while splash is the only window.
-///   splash.Show() → fade-in (~300 ms) → min-duration wait → fade-out (~250 ms).
-///   SplashWindow.RunAsync() returns; window is still OPEN (no self-close).
-///
-/// Phase 2  — overlap: main shown while splash still exists:
-///   desktop.MainWindow = main; ShutdownMode = OnMainWindowClose; main.Opacity=0; main.Show().
-///   Two windows exist for a brief moment — no zero-window gap that could trigger shutdown.
-///
-/// Phase 3  — splash closes:
-///   splash.Close() called; only MainWindow remains.
-///
-/// Phase 4  — main fade-in:
-///   MainWindow fades in (~200 ms), then Opacity snapped to 1.
-///
-/// No-splash path: desktop.MainWindow is set normally; framework shows it directly.
+/// Startup sequence:
+///   Phase 1  — SplashRoot fades 0→1 over ~600 ms; window always at Opacity=1.
+///   Phase 2  — SplashRoot held at 1 for remainder of MinVisibleDuration (~3 s).
+///   Phase 3  — SplashRoot fades 1→0 over ~500 ms. RunAsync() returns; splash still open.
+///   Phase 4  — MainWindow.Show(); MainRoot.Opacity=0 (content hidden, window opaque).
+///              splash.Close() — MainWindow is now the only window.
+///   Phase 5  — MainRoot fades 0→1 over ~400 ms. Startup complete.
 /// </para>
 /// </summary>
 public sealed class SplashTimingTests
@@ -38,12 +32,12 @@ public sealed class SplashTimingTests
         Assert.Equal(TimeSpan.FromSeconds(3), SplashWindow.MinVisibleDuration);
 
     [Fact]
-    public void FadeInDuration_IsWithinSpec_250to350ms() =>
-        Assert.InRange(SplashWindow.FadeInDuration.TotalMilliseconds, 250, 350);
+    public void FadeInDuration_IsWithinSpec_500to700ms() =>
+        Assert.InRange(SplashWindow.FadeInDuration.TotalMilliseconds, 500, 700);
 
     [Fact]
-    public void FadeOutDuration_IsWithinSpec_200to300ms() =>
-        Assert.InRange(SplashWindow.FadeOutDuration.TotalMilliseconds, 200, 300);
+    public void FadeOutDuration_IsWithinSpec_400to600ms() =>
+        Assert.InRange(SplashWindow.FadeOutDuration.TotalMilliseconds, 400, 600);
 
     [Fact]
     public void FadeInDuration_IsShorterThanMinVisibleDuration() =>
@@ -52,8 +46,8 @@ public sealed class SplashTimingTests
     // --- main window fade-in constant ---
 
     [Fact]
-    public void MainFadeInDuration_IsWithinSpec_150to300ms() =>
-        Assert.InRange(App.MainFadeInDuration.TotalMilliseconds, 150, 300);
+    public void MainFadeInDuration_IsWithinSpec_300to500ms() =>
+        Assert.InRange(App.MainFadeInDuration.TotalMilliseconds, 300, 500);
 
     [Fact]
     public void MainFadeInDuration_IsShorterThanSplashMinVisible() =>

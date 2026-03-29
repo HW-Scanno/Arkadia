@@ -9,15 +9,16 @@ namespace Arkadia.Startup;
 
 /// <summary>
 /// Borderless, centred splash window that displays a single .png.
-/// Call <see cref="RunAsync"/> to show with fade-in, hold for the minimum visible duration,
-/// then fade out. The window is NOT closed by RunAsync — the caller must close it after
-/// ensuring another window is already shown (to prevent a zero-window shutdown gap).
+/// Opacity is animated on the root content panel (SplashRoot), NOT on the Window itself,
+/// to avoid DWM/compositor flicker from window-level transparency changes.
+/// The caller must close the window after showing the next window to prevent a
+/// zero-window shutdown gap.
 /// </summary>
 public partial class SplashWindow : Window
 {
-    public static readonly TimeSpan FadeInDuration     = TimeSpan.FromMilliseconds(300);
+    public static readonly TimeSpan FadeInDuration     = TimeSpan.FromMilliseconds(600);
     public static readonly TimeSpan MinVisibleDuration = TimeSpan.FromSeconds(3);
-    public static readonly TimeSpan FadeOutDuration    = TimeSpan.FromMilliseconds(250);
+    public static readonly TimeSpan FadeOutDuration    = TimeSpan.FromMilliseconds(500);
 
     public bool HasImage { get; private set; }
 
@@ -27,7 +28,8 @@ public partial class SplashWindow : Window
     public SplashWindow(string imagePath)
     {
         InitializeComponent();
-        Opacity = 0.0; // start transparent; RunAsync fades in
+        // Window stays fully opaque; content panel starts transparent
+        SplashRoot.Opacity = 0.0;
         try
         {
             SplashImage.Source = new Bitmap(imagePath);
@@ -40,10 +42,9 @@ public partial class SplashWindow : Window
     }
 
     /// <summary>
-    /// Shows the splash, fades in, waits for the minimum visible duration, then fades out.
-    /// Returns when the visual sequence is complete. Does NOT close the window — the caller
-    /// must call <see cref="Window.Close"/> after showing the next window to avoid a
-    /// zero-window shutdown gap.
+    /// Shows the splash, fades in the content panel, waits for the minimum visible duration,
+    /// then fades out the content panel. Returns when the visual sequence is complete.
+    /// Does NOT close the window — the caller must close it after showing the next window.
     /// </summary>
     public async Task RunAsync()
     {
@@ -52,23 +53,20 @@ public partial class SplashWindow : Window
         try
         {
             Show();
-            await FadeInAsync();
+            await FadeContentAsync(0.0, 1.0, FadeInDuration);
             await minDelay;
-            await FadeOutAsync();
+            await FadeContentAsync(1.0, 0.0, FadeOutDuration);
         }
         catch
         {
             // Animation or coordination failure — visual sequence aborted; caller proceeds
         }
-        // Intentionally no Close() here — see summary.
+        // Intentionally no Close() here — caller owns window lifetime to prevent shutdown gap
     }
 
-    private Task FadeInAsync()  => FadeOpacityAsync(0.0, 1.0, FadeInDuration);
-    private Task FadeOutAsync() => FadeOpacityAsync(1.0, 0.0, FadeOutDuration);
-
-    private async Task FadeOpacityAsync(double from, double to, TimeSpan duration)
+    private async Task FadeContentAsync(double from, double to, TimeSpan duration)
     {
-        Opacity = from;
+        SplashRoot.Opacity = from;
         try
         {
             var animation = new Animation
@@ -77,16 +75,16 @@ public partial class SplashWindow : Window
                 FillMode = FillMode.None,
                 Children =
                 {
-                    new KeyFrame { Cue = new Cue(0d), Setters = { new Setter(OpacityProperty, from) } },
-                    new KeyFrame { Cue = new Cue(1d), Setters = { new Setter(OpacityProperty, to)   } },
+                    new KeyFrame { Cue = new Cue(0d), Setters = { new Setter(Avalonia.Controls.Grid.OpacityProperty, from) } },
+                    new KeyFrame { Cue = new Cue(1d), Setters = { new Setter(Avalonia.Controls.Grid.OpacityProperty, to)   } },
                 },
             };
-            await animation.RunAsync(this);
+            await animation.RunAsync(SplashRoot);
         }
         catch
         {
             // Animation failure — snap to target opacity and continue
         }
-        Opacity = to; // ensure final value regardless of animation outcome
+        SplashRoot.Opacity = to;
     }
 }

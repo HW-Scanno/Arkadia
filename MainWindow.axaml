@@ -55,7 +55,8 @@
 
     </Window.Styles>
 
-    <Grid ColumnDefinitions="220,*">
+    <!-- MainRoot opacity is animated on show; Window stays fully opaque to avoid DWM flicker -->
+    <Grid x:Name="MainRoot" ColumnDefinitions="220,*">
 
         <!-- ══════════════════════════════ Sidebar ══════════════════════════════ -->
         <Border Grid.Column="0"
