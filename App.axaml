@@ -1,10 +1,19 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="Arkadia.App"
-             RequestedThemeVariant="Default">
-             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+             RequestedThemeVariant="Dark">
 
     <Application.Styles>
-        <FluentTheme />
+        <StyleInclude Source="avares://Semi.Avalonia/SemiTheme.axaml"/>
     </Application.Styles>
+
+    <!-- Fallback palette resources — overridden at runtime by active visual theme palette -->
+    <Application.Resources>
+        <SolidColorBrush x:Key="ArkBackground"    Color="#0F0F14"/>
+        <SolidColorBrush x:Key="ArkSurface"       Color="#1A1A24"/>
+        <SolidColorBrush x:Key="ArkSurfaceAlt"    Color="#242433"/>
+        <SolidColorBrush x:Key="ArkAccent"        Color="#7B68EE"/>
+        <SolidColorBrush x:Key="ArkTextPrimary"   Color="#F0F0F0"/>
+        <SolidColorBrush x:Key="ArkTextSecondary" Color="#888899"/>
+    </Application.Resources>
 </Application>

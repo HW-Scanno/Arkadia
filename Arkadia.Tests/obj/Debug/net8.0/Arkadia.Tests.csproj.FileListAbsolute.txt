@@ -160,3 +160,4 @@ D:\Projects\Arkadia\Arkadia.Tests\obj\Debug\net8.0\refint\Arkadia.Tests.dll
 D:\Projects\Arkadia\Arkadia.Tests\obj\Debug\net8.0\Arkadia.Tests.pdb
 D:\Projects\Arkadia\Arkadia.Tests\obj\Debug\net8.0\Arkadia.Tests.genruntimeconfig.cache
 D:\Projects\Arkadia\Arkadia.Tests\obj\Debug\net8.0\ref\Arkadia.Tests.dll
+D:\Projects\Arkadia\Arkadia.Tests\obj\Debug\net8.0\Arkadia.Tests.sourcelink.json

@@ -73,3 +73,4 @@ D:\Projects\Arkadia\obj\Debug\net8.0\Arkadia.pdb
 D:\Projects\Arkadia\obj\Debug\net8.0\Arkadia.genruntimeconfig.cache
 D:\Projects\Arkadia\obj\Debug\net8.0\ref\Arkadia.dll
 D:\Projects\Arkadia\bin\Debug\net8.0\Semi.Avalonia.dll
+d:\Projects\Arkadia\obj\Debug\net8.0\Arkadia.sourcelink.json

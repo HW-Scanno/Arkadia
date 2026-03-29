@@ -9,8 +9,9 @@ namespace Arkadia.Startup;
 
 /// <summary>
 /// Borderless, centred splash window that displays a single .png.
-/// Call <see cref="RunAsync"/> to show with fade-in, enforce a minimum visible duration,
-/// then fade out and close automatically.
+/// Call <see cref="RunAsync"/> to show with fade-in, hold for the minimum visible duration,
+/// then fade out. The window is NOT closed by RunAsync — the caller must close it after
+/// ensuring another window is already shown (to prevent a zero-window shutdown gap).
 /// </summary>
 public partial class SplashWindow : Window
 {
@@ -39,11 +40,12 @@ public partial class SplashWindow : Window
     }
 
     /// <summary>
-    /// Shows the splash, fades in, waits until both the main window is ready and the
-    /// minimum visible duration has elapsed, then fades out and closes.
-    /// Intended as fire-and-forget from App startup; all failures degrade gracefully.
+    /// Shows the splash, fades in, waits for the minimum visible duration, then fades out.
+    /// Returns when the visual sequence is complete. Does NOT close the window — the caller
+    /// must call <see cref="Window.Close"/> after showing the next window to avoid a
+    /// zero-window shutdown gap.
     /// </summary>
-    public async Task RunAsync(Task mainReady)
+    public async Task RunAsync()
     {
         // Start the minimum-duration timer immediately so fade-in time counts toward it
         var minDelay = Task.Delay(MinVisibleDuration);
@@ -51,17 +53,14 @@ public partial class SplashWindow : Window
         {
             Show();
             await FadeInAsync();
-            await Task.WhenAll(mainReady, minDelay);
+            await minDelay;
             await FadeOutAsync();
         }
         catch
         {
-            // Animation or coordination failure — proceed to close
+            // Animation or coordination failure — visual sequence aborted; caller proceeds
         }
-        finally
-        {
-            try { Close(); } catch { }
-        }
+        // Intentionally no Close() here — see summary.
     }
 
     private Task FadeInAsync()  => FadeOpacityAsync(0.0, 1.0, FadeInDuration);
