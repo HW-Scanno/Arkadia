@@ -1,0 +1,12 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.Startup.SplashWindow"
+        Title=""
+        SystemDecorations="None"
+        WindowStartupLocation="CenterScreen"
+        CanResize="False"
+        ShowInTaskbar="False"
+        Topmost="True"
+        SizeToContent="WidthAndHeight">
+    <Image x:Name="SplashImage" Stretch="None"/>
+</Window>
