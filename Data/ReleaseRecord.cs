@@ -1,0 +1,20 @@
+namespace Arkadia.Data;
+
+public sealed class ReleaseRecord
+{
+    public string Id        { get; set; } = "";
+    public string DatLineId { get; set; } = "";
+    public string Name      { get; set; } = "";
+    /// <summary>
+    /// Lowercase status value.
+    /// Allowed values: "present", "pending", "missing", "lost", "outdated".
+    /// </summary>
+    public string Status    { get; set; } = "missing";
+    /// <summary>"A", "B", "C", or empty string.</summary>
+    public string Tier      { get; set; } = "";
+    public string Region    { get; set; } = "";
+    /// <summary>Comma-separated lowercase codes, e.g. "en,fr,de".</summary>
+    public string Languages { get; set; } = "";
+    public string Format    { get; set; } = "";
+    public string Size      { get; set; } = "";
+}

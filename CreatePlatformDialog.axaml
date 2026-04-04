@@ -1,0 +1,370 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:data="using:Arkadia.Data"
+        x:Class="Arkadia.CreatePlatformDialog"
+        Title="Create Platform"
+        Width="540" Height="720"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+
+        <!-- ══ Section card ════════════════════════════════════════════════════ -->
+        <Style Selector="Border.section-card">
+            <Setter Property="Background"      Value="#1A1A24"/>
+            <Setter Property="BorderBrush"     Value="#1E1E2C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="6"/>
+            <Setter Property="Padding"         Value="16,14"/>
+        </Style>
+
+        <!-- ══ Read-only ID field (edit mode) ═════════════════════════════════ -->
+        <Style Selector="TextBox.id-readonly">
+            <Setter Property="IsReadOnly"  Value="True"/>
+            <Setter Property="Opacity"     Value="0.55"/>
+            <Setter Property="Cursor"      Value="Arrow"/>
+        </Style>
+
+        <!-- ══ Text inputs ═════════════════════════════════════════════════════
+             All inline Background/Foreground/BorderBrush/BorderThickness/
+             FontSize/Padding are removed from each TextBox element so that
+             the pseudo-class rules below can take effect.
+        ════════════════════════════════════════════════════════════════════════ -->
+        <Style Selector="TextBox">
+            <Setter Property="Background"      Value="#0D0D13"/>
+            <Setter Property="Foreground"      Value="#E8E8F0"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="Padding"         Value="8,7"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="BorderBrush" Duration="0:0:0.13"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="TextBox:pointerover">
+            <Setter Property="BorderBrush" Value="#4C3020"/>
+        </Style>
+        <Style Selector="TextBox:focus-within">
+            <Setter Property="BorderBrush" Value="#E07040"/>
+        </Style>
+
+        <!-- ══ Image area ══════════════════════════════════════════════════════ -->
+        <Style Selector="Border.drop-area">
+            <Setter Property="Background"      Value="#161620"/>
+            <Setter Property="BorderBrush"     Value="#252535"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="6"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="BorderBrush" Duration="0:0:0.15"/>
+                    <BrushTransition Property="Background"  Duration="0:0:0.15"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Border.drop-area:pointerover">
+            <Setter Property="BorderBrush" Value="#904A22"/>
+            <Setter Property="Background"  Value="#1B1712"/>
+        </Style>
+        <Style Selector="TextBlock.drop-hint">
+            <Setter Property="Foreground" Value="#444458"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="Foreground" Duration="0:0:0.15"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="Border.drop-area:pointerover TextBlock.drop-hint">
+            <Setter Property="Foreground" Value="#8A8AA0"/>
+        </Style>
+
+
+    </Window.Styles>
+
+    <!-- ── Root: fixed header / scrollable content / fixed footer ── -->
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- ── Row 0: Fixed header ── -->
+        <Border Grid.Row="0"
+                Padding="28,22,28,18"
+                BorderBrush="#181826"
+                BorderThickness="0,0,0,1"
+                Background="#0F0F14">
+            <StackPanel Spacing="5">
+                <TextBlock Text="Create Platform"
+                           FontSize="17" FontWeight="SemiBold"
+                           Foreground="#F0F0F0"/>
+                <TextBlock Text="Define a new platform before importing DAT lines."
+                           FontSize="12" Foreground="#555566"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Row 1: Scrollable form content ── -->
+        <ScrollViewer Grid.Row="1"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="28,20,28,28" Spacing="0">
+
+                <!-- ╔══ REQUIRED ══╗ -->
+                <TextBlock Text="REQUIRED"
+                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                           Foreground="#C8C8DC" Margin="0,0,0,8"/>
+
+                <Border Classes="section-card" Margin="0,0,0,20">
+                    <StackPanel Spacing="13">
+
+                        <!-- Platform ID -->
+                        <StackPanel Spacing="4">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="Platform ID" FontSize="12" Foreground="#888899"/>
+                                <TextBlock Text="*"           FontSize="12" Foreground="#E07040"/>
+                            </StackPanel>
+                            <TextBox x:Name="IdInput"
+                                     Watermark="e.g. nes, ps2, gameboy"
+                                     TextChanged="OnIdChanged"/>
+                            <TextBlock x:Name="IdErrorText"
+                                       FontSize="11" Foreground="#EF5350"
+                                       IsVisible="False" TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                        <!-- Name -->
+                        <StackPanel Spacing="4">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="Name" FontSize="12" Foreground="#888899"/>
+                                <TextBlock Text="*"    FontSize="12" Foreground="#E07040"/>
+                            </StackPanel>
+                            <TextBox x:Name="NameInput"
+                                     Watermark="e.g. Nintendo Entertainment System"
+                                     TextChanged="OnNameChanged"/>
+                        </StackPanel>
+
+                        <!-- Manufacturer -->
+                        <StackPanel Spacing="4">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="Manufacturer" FontSize="12" Foreground="#888899"/>
+                                <TextBlock Text="*"            FontSize="12" Foreground="#E07040"/>
+                            </StackPanel>
+                            <TextBox x:Name="ManufacturerInput"
+                                     Watermark="e.g. Nintendo"
+                                     TextChanged="OnManufacturerChanged"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </Border>
+
+                <!-- ╔══ OPTIONAL METADATA ══╗ -->
+                <TextBlock Text="OPTIONAL METADATA"
+                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                           Foreground="#888899" Margin="0,0,0,8"/>
+
+                <Border Classes="section-card" Margin="0,0,0,20">
+                    <StackPanel Spacing="13">
+
+                        <!-- Hardware Type -->
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Hardware Type" FontSize="12" Foreground="#888899"/>
+                            <ComboBox x:Name="HardwareTypeInput"
+                                      HorizontalAlignment="Stretch"
+                                      FontSize="12"
+                                      Background="#0D0D13"
+                                      BorderBrush="#2A2A3C" BorderThickness="1"
+                                      Padding="8,6">
+                            <ComboBox.ItemTemplate>
+                                <DataTemplate x:DataType="data:HardwareTypeRecord">
+                                    <TextBlock Text="{Binding Name}" FontSize="12"/>
+                                </DataTemplate>
+                            </ComboBox.ItemTemplate>
+                        </ComboBox>
+                        </StackPanel>
+
+                        <!-- Year + Media -->
+                        <Grid ColumnDefinitions="*,12,*">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Year of Release" FontSize="12" Foreground="#888899"/>
+                                <TextBox x:Name="YearInput" Watermark="e.g. 1985"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <TextBlock Text="Media" FontSize="12" Foreground="#888899"/>
+                                <TextBox x:Name="MediaInput" Watermark="e.g. Cartridge, CD-ROM"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Notes -->
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Notes" FontSize="12" Foreground="#888899"/>
+                            <TextBox x:Name="NotesInput"
+                                     Watermark="Optional notes…"
+                                     AcceptsReturn="True"
+                                     Height="64"
+                                     TextWrapping="Wrap"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </Border>
+
+                <!-- ╔══ ADVANCED ══╗ -->
+                <TextBlock Text="ADVANCED"
+                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                           Foreground="#888899" Margin="0,0,0,8"/>
+
+                <Border x:Name="AdvancedSection"
+                        Classes="section-card"
+                        Margin="0,0,0,20">
+                    <StackPanel Spacing="13">
+
+                        <!-- CPU + Memory -->
+                        <Grid ColumnDefinitions="*,12,*">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="CPU" FontSize="12" Foreground="#888899"/>
+                                <TextBox x:Name="CpuInput" Watermark="e.g. Ricoh 2A03"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <TextBlock Text="Memory" FontSize="12" Foreground="#888899"/>
+                                <TextBox x:Name="MemoryInput" Watermark="e.g. 2 KB RAM"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Graphics + Sound -->
+                        <Grid ColumnDefinitions="*,12,*">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Graphics" FontSize="12" Foreground="#888899"/>
+                                <TextBox x:Name="GraphicsInput" Watermark="e.g. Ricoh 2C02"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <TextBlock Text="Sound" FontSize="12" Foreground="#888899"/>
+                                <TextBox x:Name="SoundInput" Watermark="e.g. 5-channel APU"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Display Resolution + Aspect Ratio -->
+                        <Grid ColumnDefinitions="*,12,*">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Display Resolution" FontSize="12" Foreground="#888899"/>
+                                <TextBox x:Name="ResolutionInput" Watermark="e.g. 256×240"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <TextBlock Text="Aspect Ratio" FontSize="12" Foreground="#888899"/>
+                                <TextBox x:Name="AspectRatioInput" Watermark="e.g. 4:3"/>
+                            </StackPanel>
+                        </Grid>
+
+                    </StackPanel>
+                </Border>
+
+                <!-- ╔══ IMAGES ══╗ -->
+                <TextBlock Text="IMAGES"
+                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                           Foreground="#888899" Margin="0,0,0,8"/>
+
+                <Grid ColumnDefinitions="*,12,*" Margin="0,0,0,4">
+
+                    <!-- Logo Image -->
+                    <StackPanel Grid.Column="0" Spacing="6">
+                        <TextBlock Text="Logo" FontSize="12" Foreground="#888899"/>
+                        <Border x:Name="LogoDropArea"
+                                Classes="drop-area"
+                                Height="116">
+                            <Grid>
+                                <StackPanel x:Name="LogoDropText"
+                                            VerticalAlignment="Center"
+                                            HorizontalAlignment="Center"
+                                            Spacing="5">
+                                    <TextBlock Text="↑"
+                                               Classes="drop-hint"
+                                               FontSize="16"
+                                               HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Click to browse for a PNG"
+                                               Classes="drop-hint"
+                                               FontSize="11"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               MaxWidth="120"/>
+                                </StackPanel>
+                                <Image x:Name="LogoPreviewImage"
+                                       IsVisible="False"
+                                       Stretch="Uniform"
+                                       Margin="8"/>
+                            </Grid>
+                        </Border>
+                        <!-- Delete row — shown only when image exists on disk -->
+                        <Button x:Name="LogoDeleteButton"
+                                IsVisible="False"
+                                Content="✕  Delete image"
+                                FontSize="11" Foreground="#EF5350"
+                                Background="#1A1A24" BorderBrush="#2A1A1A" BorderThickness="1"
+                                CornerRadius="4" Padding="10,5"
+                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                Click="OnDeleteLogoImage"/>
+                    </StackPanel>
+
+                    <!-- Details Image -->
+                    <StackPanel Grid.Column="2" Spacing="6">
+                        <TextBlock Text="Details Image" FontSize="12" Foreground="#888899"/>
+                        <Border x:Name="DetailsDropArea"
+                                Classes="drop-area"
+                                Height="116">
+                            <Grid>
+                                <StackPanel x:Name="DetailsDropText"
+                                            VerticalAlignment="Center"
+                                            HorizontalAlignment="Center"
+                                            Spacing="5">
+                                    <TextBlock Text="↑"
+                                               Classes="drop-hint"
+                                               FontSize="16"
+                                               HorizontalAlignment="Center"/>
+                                    <TextBlock Text="Click to browse for a PNG"
+                                               Classes="drop-hint"
+                                               FontSize="11"
+                                               TextAlignment="Center"
+                                               TextWrapping="Wrap"
+                                               MaxWidth="120"/>
+                                </StackPanel>
+                                <Image x:Name="DetailsPreviewImage"
+                                       IsVisible="False"
+                                       Stretch="Uniform"
+                                       Margin="8"/>
+                            </Grid>
+                        </Border>
+                        <!-- Delete row — shown only when image exists on disk -->
+                        <Button x:Name="DetailsDeleteButton"
+                                IsVisible="False"
+                                Content="✕  Delete image"
+                                FontSize="11" Foreground="#EF5350"
+                                Background="#1A1A24" BorderBrush="#2A1A1A" BorderThickness="1"
+                                CornerRadius="4" Padding="10,5"
+                                HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                                Click="OnDeleteDetailsImage"/>
+                    </StackPanel>
+
+                </Grid>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ── Row 2: Fixed footer ── -->
+        <Border Grid.Row="2"
+                Padding="28,14"
+                BorderBrush="#181826"
+                BorderThickness="0,1,0,0"
+                Background="#0F0F14">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Cancel"
+                        Background="#242433" Foreground="#F0F0F0"
+                        Padding="16,8" CornerRadius="6" BorderThickness="0"
+                        Click="OnCancel"/>
+                <Button x:Name="CreateButton"
+                        Content="Create Platform"
+                        Background="#E07040" Foreground="#FFFFFF"
+                        Padding="16,8" CornerRadius="6" BorderThickness="0"
+                        IsEnabled="False"
+                        Click="OnCreate"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

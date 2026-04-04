@@ -1,0 +1,314 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:data="using:Arkadia.Data"
+        x:Class="Arkadia.ImportDatDialog"
+        Title="Import DAT"
+        Width="560" Height="660"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+
+        <!-- ══ Section card ════════════════════════════════════════════════════ -->
+        <Style Selector="Border.section-card">
+            <Setter Property="Background"      Value="#1A1A24"/>
+            <Setter Property="BorderBrush"     Value="#1E1E2C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="6"/>
+            <Setter Property="Padding"         Value="16,14"/>
+        </Style>
+
+        <!-- ══ Read-only field ════════════════════════════════════════════════ -->
+        <Style Selector="TextBox.field-readonly">
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="Opacity"    Value="0.55"/>
+            <Setter Property="Cursor"     Value="Arrow"/>
+        </Style>
+
+        <!-- ══ Monospace read-only (DAT Line ID) ══════════════════════════════ -->
+        <Style Selector="TextBox.id-display">
+            <Setter Property="IsReadOnly"   Value="True"/>
+            <Setter Property="FontFamily"   Value="Consolas,Courier New,monospace"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="Foreground"   Value="#E07040"/>
+            <Setter Property="Background"   Value="#0D0D13"/>
+            <Setter Property="BorderBrush"  Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"      Value="8,7"/>
+            <Setter Property="CornerRadius" Value="4"/>
+        </Style>
+
+        <!-- ══ Text inputs ════════════════════════════════════════════════════ -->
+        <Style Selector="TextBox">
+            <Setter Property="Background"      Value="#0D0D13"/>
+            <Setter Property="Foreground"      Value="#E8E8F0"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="Padding"         Value="8,7"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="BorderBrush" Duration="0:0:0.13"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="TextBox:pointerover">
+            <Setter Property="BorderBrush" Value="#4C3020"/>
+        </Style>
+        <Style Selector="TextBox:focus-within">
+            <Setter Property="BorderBrush" Value="#E07040"/>
+        </Style>
+
+        <!-- ══ Browse button ══════════════════════════════════════════════════ -->
+        <Style Selector="Button.browse-btn">
+            <Setter Property="Background"   Value="#242433"/>
+            <Setter Property="Foreground"   Value="#E8E8F0"/>
+            <Setter Property="BorderBrush"  Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding"      Value="14,7"/>
+            <Setter Property="FontSize"     Value="12"/>
+        </Style>
+
+    </Window.Styles>
+
+    <!-- ── Root: fixed header / scrollable content / fixed footer ── -->
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- ── Row 0: Fixed header ── -->
+        <Border Grid.Row="0"
+                Padding="28,22,28,18"
+                BorderBrush="#181826"
+                BorderThickness="0,0,0,1"
+                Background="#0F0F14">
+            <StackPanel Spacing="5">
+                <TextBlock Text="Import DAT"
+                           FontSize="17" FontWeight="SemiBold"
+                           Foreground="#F0F0F0"/>
+                <TextBlock Text="Import a DAT file to register a new DAT line."
+                           FontSize="12" Foreground="#555566"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Row 1: Scrollable form content ── -->
+        <ScrollViewer Grid.Row="1"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="28,20,28,28" Spacing="0">
+
+                <!-- ╔══ FILE ══╗ -->
+                <TextBlock Text="FILE"
+                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                           Foreground="#C8C8DC" Margin="0,0,0,8"/>
+
+                <Border Classes="section-card" Margin="0,0,0,20">
+                    <StackPanel Spacing="10">
+                        <StackPanel Spacing="4">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="DAT File" FontSize="12" Foreground="#888899"/>
+                                <TextBlock Text="*"        FontSize="12" Foreground="#E07040"/>
+                            </StackPanel>
+                            <Grid ColumnDefinitions="*,8,Auto">
+                                <TextBox Grid.Column="0"
+                                         x:Name="FilePathInput"
+                                         Classes="field-readonly"
+                                         Watermark="No file selected"
+                                         IsReadOnly="True"/>
+                                <Button Grid.Column="2"
+                                        Classes="browse-btn"
+                                        Content="Browse"
+                                        Click="OnBrowse"/>
+                            </Grid>
+                            <TextBlock Text="Accepts .dat files only"
+                                       FontSize="11" Foreground="#444458"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- ╔══ CONFIGURATION ══╗ -->
+                <TextBlock Text="CONFIGURATION"
+                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                           Foreground="#888899" Margin="0,0,0,8"/>
+
+                <Border Classes="section-card" Margin="0,0,0,20">
+                    <StackPanel Spacing="13">
+
+                        <Grid ColumnDefinitions="*,12,*">
+
+                            <!-- Authority -->
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="Authority" FontSize="12" Foreground="#888899"/>
+                                    <TextBlock Text="*"         FontSize="12" Foreground="#E07040"/>
+                                </StackPanel>
+                                <ComboBox x:Name="AuthorityInput"
+                                          HorizontalAlignment="Stretch"
+                                          FontSize="12"
+                                          Background="#0D0D13"
+                                          BorderBrush="#2A2A3C" BorderThickness="1"
+                                          Padding="8,6"
+                                          SelectionChanged="OnConfigChanged"/>
+                            </StackPanel>
+
+                            <!-- Platform -->
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="Platform" FontSize="12" Foreground="#888899"/>
+                                    <TextBlock Text="*"        FontSize="12" Foreground="#E07040"/>
+                                </StackPanel>
+                                <ComboBox x:Name="PlatformInput"
+                                          HorizontalAlignment="Stretch"
+                                          FontSize="12"
+                                          Background="#0D0D13"
+                                          BorderBrush="#2A2A3C" BorderThickness="1"
+                                          Padding="8,6"
+                                          SelectionChanged="OnConfigChanged">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="data:PlatformRecord">
+                                            <TextBlock Text="{Binding Name}" FontSize="12"/>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
+                            </StackPanel>
+
+                        </Grid>
+
+                        <!-- Storage Strategy -->
+                        <StackPanel Spacing="4">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="Storage Strategy" FontSize="12" Foreground="#888899"/>
+                                <TextBlock Text="*"               FontSize="12" Foreground="#E07040"/>
+                            </StackPanel>
+                            <ComboBox x:Name="StorageStrategyInput"
+                                      HorizontalAlignment="Stretch"
+                                      FontSize="12"
+                                      Background="#0D0D13"
+                                      BorderBrush="#2A2A3C" BorderThickness="1"
+                                      Padding="8,6"
+                                      SelectionChanged="OnConfigChanged">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="data:StorageStrategyRecord">
+                                        <TextBlock Text="{Binding Name}" FontSize="12"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <!-- DAT Category -->
+                        <StackPanel Spacing="4">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="DAT Category" FontSize="12" Foreground="#888899"/>
+                                <TextBlock Text="*"            FontSize="12" Foreground="#E07040"/>
+                            </StackPanel>
+                            <AutoCompleteBox x:Name="CategoryInput"
+                                             HorizontalAlignment="Stretch"
+                                             FontSize="12"
+                                             Background="#0D0D13"
+                                             Foreground="#E8E8F0"
+                                             BorderBrush="#2A2A3C" BorderThickness="1"
+                                             Padding="8,7"
+                                             CornerRadius="4"
+                                             FilterMode="StartsWith"
+                                             Watermark="e.g. Media"
+                                             TextChanged="OnCategoryChanged"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </Border>
+
+                <!-- ╔══ DAT METADATA ══╗ -->
+                <TextBlock Text="DAT METADATA"
+                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                           Foreground="#888899" Margin="0,0,0,8"/>
+
+                <Border Classes="section-card" Margin="0,0,0,20">
+                    <StackPanel Spacing="13">
+
+                        <!-- Parsed Date + Version -->
+                        <Grid ColumnDefinitions="*,12,*">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="Parsed Date" FontSize="12" Foreground="#888899"/>
+                                    <TextBlock Text="*"           FontSize="12" Foreground="#E07040"/>
+                                </StackPanel>
+                                <TextBox x:Name="ParsedDateInput"
+                                         Watermark="e.g. 2026-04-02"
+                                         TextChanged="OnParsedDateChanged"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <TextBlock Text="Version" FontSize="12" Foreground="#888899"/>
+                                <TextBox x:Name="VersionInput" Watermark="optional"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Release Count + Parsing Status -->
+                        <Grid ColumnDefinitions="*,12,*">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="Release Count" FontSize="12" Foreground="#888899"/>
+                                <TextBlock x:Name="ReleaseCountText"
+                                           Text="—"
+                                           FontSize="12" Foreground="#888899"
+                                           Margin="0,4,0,0"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <TextBlock Text="Parsing Status" FontSize="12" Foreground="#888899"/>
+                                <TextBlock x:Name="ParseStatusText"
+                                           Text="—"
+                                           FontSize="12" Foreground="#888899"
+                                           Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </Grid>
+
+                    </StackPanel>
+                </Border>
+
+                <!-- ╔══ DAT LINE ID ══╗ -->
+                <TextBlock Text="DAT LINE ID"
+                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                           Foreground="#888899" Margin="0,0,0,8"/>
+
+                <Border Classes="section-card" Margin="0,0,0,4">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Generated ID" FontSize="12" Foreground="#888899"/>
+                        <TextBox x:Name="DatLineIdInput"
+                                 Classes="id-display"
+                                 Watermark="—"
+                                 IsReadOnly="True"/>
+                        <TextBlock Text="Format: platform-authority-category"
+                                   FontSize="11" Foreground="#333348"/>
+                        <TextBlock x:Name="DatLineConflictText"
+                                   Text="DAT line already exists. Use Update DAT instead."
+                                   FontSize="11"
+                                   Foreground="#EF5350"
+                                   IsVisible="False"/>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ── Row 2: Fixed footer ── -->
+        <Border Grid.Row="2"
+                Padding="28,14"
+                BorderBrush="#181826"
+                BorderThickness="0,1,0,0"
+                Background="#0F0F14">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Cancel"
+                        Background="#242433" Foreground="#F0F0F0"
+                        Padding="16,8" CornerRadius="6" BorderThickness="0"
+                        Click="OnCancel"/>
+                <Button x:Name="ImportButton"
+                        Content="Import"
+                        Background="#E07040" Foreground="#FFFFFF"
+                        Padding="16,8" CornerRadius="6" BorderThickness="0"
+                        IsEnabled="False"
+                        Click="OnImport"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

@@ -1,0 +1,71 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.DeleteDatLineDialog"
+        Title="Delete DAT Line"
+        Width="480" Height="340"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <StackPanel Margin="28,24,28,24" Spacing="0">
+
+        <!-- Header -->
+        <TextBlock Text="DELETE DAT LINE"
+                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                   Foreground="#888899" Margin="0,0,0,12"/>
+
+        <!-- Details box -->
+        <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,16">
+            <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="100,*">
+                    <TextBlock Grid.Column="0" Text="Platform"  FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="DlgPlatform" FontSize="12" Foreground="#F0F0F0"/>
+                </Grid>
+                <Grid ColumnDefinitions="100,*">
+                    <TextBlock Grid.Column="0" Text="DAT Line"  FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="DlgName" FontSize="12" Foreground="#F0F0F0" TextWrapping="Wrap"/>
+                </Grid>
+                <Grid ColumnDefinitions="100,*">
+                    <TextBlock Grid.Column="0" Text="Authority" FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="DlgAuthority" FontSize="12" Foreground="#F0F0F0"/>
+                </Grid>
+                <Grid ColumnDefinitions="100,*">
+                    <TextBlock Grid.Column="0" Text="Releases"  FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="DlgReleases" FontSize="12" Foreground="#F0F0F0"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- Warning -->
+        <TextBlock Text="This will permanently remove the DAT line and all its releases from the catalog. This action cannot be undone."
+                   FontSize="12" Foreground="#E07040" TextWrapping="Wrap" Margin="0,0,0,18"/>
+
+        <!-- Confirmation input -->
+        <TextBlock Text="Type the DAT line name to confirm:"
+                   FontSize="12" Foreground="#888899" Margin="0,0,0,6"/>
+        <TextBox x:Name="ConfirmInput"
+                 FontSize="12"
+                 Background="#1A1A24" Foreground="#F0F0F0"
+                 BorderBrush="#242433" BorderThickness="1"
+                 Padding="8,6"
+                 Margin="0,0,0,20"
+                 TextChanged="OnConfirmInputChanged"/>
+
+        <!-- Buttons -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+            <Button x:Name="CancelButton"
+                    Content="Cancel"
+                    Background="#242433" Foreground="#F0F0F0"
+                    Padding="16,8" CornerRadius="6" BorderThickness="0"
+                    Click="OnCancel"/>
+            <Button x:Name="DeleteButton"
+                    Content="Delete"
+                    Background="#EF5350" Foreground="#FFFFFF"
+                    Padding="16,8" CornerRadius="6" BorderThickness="0"
+                    IsEnabled="False"
+                    Click="OnDelete"/>
+        </StackPanel>
+
+    </StackPanel>
+</Window>

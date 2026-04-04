@@ -12,7 +12,7 @@
         <SolidColorBrush x:Key="ArkBackground"    Color="#0F0F14"/>
         <SolidColorBrush x:Key="ArkSurface"       Color="#1A1A24"/>
         <SolidColorBrush x:Key="ArkSurfaceAlt"    Color="#242433"/>
-        <SolidColorBrush x:Key="ArkAccent"        Color="#7B68EE"/>
+        <SolidColorBrush x:Key="ArkAccent"        Color="#E07040"/>
         <SolidColorBrush x:Key="ArkTextPrimary"   Color="#F0F0F0"/>
         <SolidColorBrush x:Key="ArkTextSecondary" Color="#888899"/>
     </Application.Resources>

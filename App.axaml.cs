@@ -26,6 +26,7 @@ public partial class App : Application
     public override void OnFrameworkInitializationCompleted()
     {
         ApplyVisualPalette();
+        EnsureIncomingFolders();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
@@ -160,6 +161,12 @@ public partial class App : Application
         {
             // Palette application is best-effort — fallback colors remain in effect
         }
+    }
+
+    private static void EnsureIncomingFolders()
+    {
+        Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "incoming-dats"));
+        Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "incoming-roms"));
     }
 
     private static string? PaletteKeyToResourceKey(string paletteKey) => paletteKey switch
