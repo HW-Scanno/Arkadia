@@ -960,6 +960,16 @@ public partial class MainWindow : Window
     private void OnDiskSelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
         => UpdateDiskDetailPanel(DisksList.SelectedItem as DiskEntry);
 
+    private async void OnAddDisk(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var dialog = new CreateDiskDialog();
+        var ok     = await dialog.ShowDialog<bool>(this);
+        if (!ok || dialog.Result is null) return;
+
+        _catalog.SaveDisk(dialog.Result);
+        RefreshDisks();
+    }
+
     private void UpdateDiskDetailPanel(DiskEntry? entry)
     {
         if (entry is null)
@@ -1077,8 +1087,8 @@ public partial class MainWindow : Window
 
     private void RefreshVolumes()
     {
-        var disks = _catalog.GetDisks().ToDictionary(d => d.Id, d => d.Label, StringComparer.Ordinal);
-        var datLines = _catalog.LoadDatLines().ToDictionary(dl => dl.Id, dl => dl.Name, StringComparer.Ordinal);
+        var disks    = _catalog.GetDisks().ToDictionary(d => d.Id, d => d.Label, StringComparer.Ordinal);
+        var datLines = _catalog.LoadDatLines().ToDictionary(dl => dl.Id, dl => dl, StringComparer.Ordinal);
 
         _allVolumeEntries = _catalog.GetVolumes().Select(v =>
         {
@@ -1088,12 +1098,19 @@ public partial class MainWindow : Window
                     ? $"disk: {dl}"
                 : loc.LocationType;
 
+            datLines.TryGetValue(v.DatLineId, out var dlRecord);
+            var dbPath = dlRecord?.DataStorePath.Length > 0
+                ? Path.Combine(_dataDir, dlRecord.DataStorePath)
+                : "";
+
             return new VolumeEntry
             {
                 Id               = v.Id,
                 Label            = v.Label,
                 PlatformId       = v.PlatformId,
-                DatLineId        = datLines.TryGetValue(v.DatLineId, out var dlName) ? dlName : v.DatLineId,
+                DatLineId        = dlRecord?.Name ?? v.DatLineId,
+                RawDatLineId     = v.DatLineId,
+                DbPath           = dbPath,
                 Status           = v.Status,
                 PlannedSizeBytes = v.PlannedSizeBytes,
                 ActualSizeBytes  = v.ActualSizeBytes,
@@ -1130,6 +1147,51 @@ public partial class MainWindow : Window
     private void OnVolumeSelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
         => UpdateVolumeDetailPanel(VolumesList.SelectedItem as VolumeEntry);
 
+    private async void OnCreateVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var platforms = _catalog.LoadPlatforms();
+        var datLines  = _catalog.LoadDatLines();
+        var dialog    = new CreateVolumeDialog(platforms, datLines);
+        dialog.FinishInit(platforms);
+        var ok = await dialog.ShowDialog<bool>(this);
+        if (!ok || dialog.Result is null) return;
+
+        _catalog.SaveVolume(dialog.Result);
+        RefreshVolumes();
+    }
+
+    private async void OnAssignVolumeToDisk(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = VolumesList.SelectedItem as VolumeEntry;
+        if (entry is null) return;
+
+        var disks  = _catalog.GetDisks();
+        var dialog = new AssignVolumeToDiskDialog(entry.Label, disks);
+        var ok     = await dialog.ShowDialog<bool>(this);
+        if (!ok || dialog.SelectedDisk is null) return;
+
+        var loc = new Data.VolumeLocationRecord
+        {
+            Id           = Guid.NewGuid().ToString("N"),
+            VolumeId     = entry.Id,
+            LocationType = "disk",
+            DiskId       = dialog.SelectedDisk.Id,
+            Path         = null,
+            IsCurrent    = true,
+            CreatedAt    = DateTime.UtcNow,
+        };
+        _catalog.SetCurrentLocation(loc);
+        RefreshVolumes();
+        RefreshDisks();
+        // Re-select the same volume in the refreshed list
+        var updated = _filteredVolumes.FirstOrDefault(v => v.Id == entry.Id);
+        if (updated is not null)
+        {
+            VolumesList.SelectedItem = updated;
+            UpdateVolumeDetailPanel(updated);
+        }
+    }
+
     private void UpdateVolumeDetailPanel(VolumeEntry? entry)
     {
         if (entry is null)
@@ -1139,18 +1201,155 @@ public partial class MainWindow : Window
             return;
         }
 
-        VolumeDetailLabel.Text      = entry.Label;
-        VolumeDetailStatus.Text     = entry.StatusLabel;
+        VolumeDetailLabel.Text        = entry.Label;
+        VolumeDetailStatus.Text       = entry.StatusLabel;
         VolumeDetailStatus.Foreground = entry.StatusBrush;
-        VolumeDetailPlatform.Text   = entry.PlatformId;
-        VolumeDetailDatLine.Text    = entry.DatLineId;
-        VolumeDetailPlanned.Text    = entry.PlannedLabel;
-        VolumeDetailActual.Text     = entry.ActualLabel;
-        VolumeDetailLocation.Text   = entry.CurrentLocation;
-        VolumeDetailDisk.Text       = entry.DiskLabel ?? "—";
+        VolumeDetailPlatform.Text     = entry.PlatformId;
+        VolumeDetailDatLine.Text      = entry.DatLineId;
+        VolumeDetailPlanned.Text      = entry.PlannedLabel;
+        VolumeDetailActual.Text       = entry.ActualLabel;
+        VolumeDetailLocation.Text     = entry.CurrentLocation;
+        VolumeDetailDisk.Text         = entry.DiskLabel ?? "—";
+
+        // Archive artifacts assigned to this volume
+        VolumeDetailArtifactList.Children.Clear();
+        var assignments = _catalog.GetVolumeArtifacts(entry.Id);
+        VolumeDetailArtifactCount.Text = assignments.Count.ToString();
+
+        if (assignments.Count > 0 && entry.DbPath.Length > 0 && File.Exists(entry.DbPath))
+        {
+            var store       = new DatLineStore(entry.DbPath);
+            var derivedById = store.GetDerivedArtifacts()
+                .ToDictionary(d => d.Id, d => d, StringComparer.Ordinal);
+
+            foreach (var va in assignments)
+            {
+                if (!derivedById.TryGetValue(va.DerivedArtifactId, out var da)) continue;
+                VolumeDetailArtifactList.Children.Add(new Grid
+                {
+                    ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("*,Auto"),
+                    Margin = new Avalonia.Thickness(0, 0, 0, 2),
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            [Grid.ColumnProperty] = 0,
+                            Text         = da.FileName,
+                            FontSize     = 11,
+                            Foreground   = new SolidColorBrush(Color.Parse("#AAAACC")),
+                            TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+                        },
+                        new TextBlock
+                        {
+                            [Grid.ColumnProperty] = 1,
+                            Text       = FormatBytes(da.SizeBytes),
+                            FontSize   = 11,
+                            Foreground = new SolidColorBrush(Color.Parse("#555566")),
+                        },
+                    },
+                });
+            }
+        }
 
         VolumeDetailEmpty.IsVisible   = false;
         VolumeDetailContent.IsVisible = true;
+    }
+
+    private async void OnAssignDerivedArtifacts(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = VolumesList.SelectedItem as VolumeEntry;
+        if (entry is null) return;
+
+        try
+        {
+            await AssignDerivedArtifactsCore(entry);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            await new InfoDialog("Error", ex.Message).ShowDialog(this);
+        }
+    }
+
+    private async System.Threading.Tasks.Task AssignDerivedArtifactsCore(VolumeEntry entry)
+    {
+        if (entry.DbPath.Length == 0)
+        {
+            await new InfoDialog(
+                "No DAT Line DB",
+                $"Volume \"{entry.Label}\" is linked to DAT line \"{entry.DatLineId}\" but no matching " +
+                "DAT line database was found in the catalog.\n\n" +
+                "Import the DAT line first before assigning artifacts.")
+                .ShowDialog(this);
+            return;
+        }
+
+        if (!File.Exists(entry.DbPath))
+        {
+            await new InfoDialog(
+                "DAT Line DB Missing",
+                $"The DAT line database file could not be found on disk:\n{entry.DbPath}")
+                .ShowDialog(this);
+            return;
+        }
+
+        var store     = new DatLineStore(entry.DbPath);
+        var artifacts = store.GetDerivedArtifacts();
+
+        if (artifacts.Count == 0)
+        {
+            await new InfoDialog(
+                "No Archive Artifacts",
+                $"No archive artifacts exist for DAT line \"{entry.DatLineId}\" yet.\n\n" +
+                "Run ingestion on this DAT line first. Archive artifacts are created " +
+                "automatically when releases are promoted to source.")
+                .ShowDialog(this);
+            return;
+        }
+
+        // Build set of already-assigned archive artifact IDs for this volume
+        var existing = _catalog.GetVolumeArtifacts(entry.Id)
+            .Select(va => va.DerivedArtifactId)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var dialog = new AssignDerivedArtifactsDialog(entry.Label, artifacts, existing);
+        var ok     = await dialog.ShowDialog<bool>(this);
+        if (!ok || dialog.SelectedArtifacts.Count == 0) return;
+
+        var now          = DateTime.UtcNow;
+        var sizeByDrvId  = new Dictionary<string, long>(StringComparer.Ordinal);
+
+        foreach (var da in dialog.SelectedArtifacts)
+        {
+            if (_catalog.VolumeArtifactExists(entry.Id, da.Id)) continue;
+
+            _catalog.SaveVolumeArtifact(new Data.VolumeArtifactRecord
+            {
+                Id                = Guid.NewGuid().ToString("N"),
+                VolumeId          = entry.Id,
+                DatLineId         = entry.RawDatLineId,
+                DerivedArtifactId = da.Id,
+                Status            = "present_in_final",
+                AddedAtUtc        = now,
+            });
+            sizeByDrvId[da.Id] = da.SizeBytes;
+        }
+
+        // Build full size map for recalculation (include previously assigned artifacts too)
+        foreach (var da in artifacts)
+            sizeByDrvId.TryAdd(da.Id, da.SizeBytes);
+
+        _catalog.RecalculateVolumeActualSize(entry.Id, sizeByDrvId);
+
+        RefreshVolumes();
+        RefreshDisks();
+
+        // Re-select the same volume
+        var updated = _filteredVolumes.FirstOrDefault(v => v.Id == entry.Id);
+        if (updated is not null)
+        {
+            VolumesList.SelectedItem = updated;
+            UpdateVolumeDetailPanel(updated);
+        }
     }
 
     private static string FormatBytes(long b)
@@ -1828,16 +2027,19 @@ public partial class MainWindow : Window
         if (info.CatalogId is null || info.CatalogPlatformId is null || info.DataStorePath.Length == 0)
             return;
 
-        var platformId = info.CatalogPlatformId;
-        var datLineId  = info.CatalogId;
-        var absDbPath  = Path.Combine(_dataDir, info.DataStorePath);
+        var platformId        = info.CatalogPlatformId;
+        var datLineId         = info.CatalogId;
+        var absDbPath         = Path.Combine(_dataDir, info.DataStorePath);
+        var storageStrategyId = info.DataStorePath.Length > 0
+            ? (_catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId)?.StorageStrategyId ?? "")
+            : "";
 
         var progressDialog = new IngestionProgressDialog($"Ingest Files — {info.Name}");
         var progress       = new Progress<IngestionProgress>(p => progressDialog.Update(p));
         IngestionResult? ingestResult = null;
 
         var workTask = System.Threading.Tasks.Task.Run(() =>
-            ingestResult = RunIngestionWork(platformId, datLineId, absDbPath, progress));
+            ingestResult = RunIngestionWork(platformId, datLineId, absDbPath, storageStrategyId, progress));
 
         _ = workTask.ContinueWith(t =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -1879,6 +2081,7 @@ public partial class MainWindow : Window
         string                       platformId,
         string                       datLineId,
         string                       absDbPath,
+        string                       storageStrategyId,
         IProgress<IngestionProgress> progress)
     {
         var result  = new IngestionResult();
@@ -1886,12 +2089,12 @@ public partial class MainWindow : Window
 
         var incomingDir = Path.Combine(appRoot, "incoming-roms",  platformId);
         var stagingRoot = Path.Combine(appRoot, "staging",        platformId, datLineId);
-        var archiveRoot = Path.Combine(appRoot, "archive",        platformId, datLineId);
+        var sourceRoot  = Path.Combine(appRoot, "source",         platformId, datLineId);
         var skipDir     = Path.Combine(appRoot, "incoming-skip");
 
         Directory.CreateDirectory(incomingDir);
         Directory.CreateDirectory(stagingRoot);
-        Directory.CreateDirectory(archiveRoot);
+        Directory.CreateDirectory(sourceRoot);
         Directory.CreateDirectory(skipDir);
 
         // ── Phase 1: Scan ─────────────────────────────────────────────────────
@@ -1988,27 +2191,29 @@ public partial class MainWindow : Window
                 result.FilesMatched++;
             }
 
-            if (hashProcessed % 25 == 0 || hashProcessed == sourceFiles.Count)
-                progress.Report(new IngestionProgress
-                {
-                    PhaseText       = "Hashing and matching files…",
-                    IsIndeterminate = false,
-                    Total           = sourceFiles.Count,
-                    Processed       = hashProcessed,
-                    Accepted        = result.FilesMatched,
-                    Rejected        = hashProcessed - result.FilesMatched,
-                });
+            // Emit a per-file hash operation so the dialog log stays active.
+            var hashOp = new IngestionOperation(Path.GetFileName(srcPath), "hash", "incoming-roms");
+            progress.Report(new IngestionProgress
+            {
+                PhaseText       = "Hashing and matching files…",
+                IsIndeterminate = false,
+                Total           = sourceFiles.Count,
+                Processed       = hashProcessed,
+                Accepted        = result.FilesMatched,
+                Rejected        = hashProcessed - result.FilesMatched,
+                NewOperation    = hashOp,
+            });
         }
 
         // ── Phase 4b: Pre-compute satisfied targets ───────────────────────────────
         // Key: "releaseId|romName". A target is satisfied if equivalent content
-        // already resides at the staging destination OR the archive destination.
-        // Archive takes precedence as source of truth for already-acquired content.
+        // already resides at the staging destination OR the source destination.
+        // Source takes precedence as source of truth for already-acquired content.
         //
-        // Content equivalence for archive: we trust Arkadia's own archive — files
+        // Content equivalence for source: we trust Arkadia's own source — files
         // there were placed after a verified completeness check. We do a size sanity
         // check against the DAT-declared size when available; if sizes differ the
-        // archive file is not trusted and the target is left unsatisfied.
+        // source file is not trusted and the target is left unsatisfied.
 
         // Build a fast lookup: "releaseId|romName" → expected size (from release_files).
         var expectedSizeIndex = new Dictionary<string, long>(StringComparer.Ordinal);
@@ -2041,25 +2246,25 @@ public partial class MainWindow : Window
                     continue;
                 }
 
-                // Check archive (already fully acquired in a previous run).
-                var archivePath = Path.Combine(archiveRoot, safeFolder, romName);
-                if (!File.Exists(archivePath)) continue;
+                // Check source (already fully acquired in a previous run).
+                var sourcePath = Path.Combine(sourceRoot, safeFolder, romName);
+                if (!File.Exists(sourcePath)) continue;
 
                 // Verify size against DAT expectation when available.
                 if (expectedSizeIndex.TryGetValue(key, out var expectedSize))
                 {
                     try
                     {
-                        if (new FileInfo(archivePath).Length == expectedSize)
+                        if (new FileInfo(sourcePath).Length == expectedSize)
                             satisfiedTargets.Add(key);
-                        // Size mismatch → archive file is suspect; leave target unsatisfied
+                        // Size mismatch → source file is suspect; leave target unsatisfied
                         // so a fresh copy goes to staging and will overwrite via Phase 7.
                     }
                     catch { /* can't stat → leave unsatisfied */ }
                 }
                 else
                 {
-                    // No expected size in DAT (older import) → trust archive existence.
+                    // No expected size in DAT (older import) → trust source existence.
                     satisfiedTargets.Add(key);
                 }
             }
@@ -2184,7 +2389,7 @@ public partial class MainWindow : Window
                 successfullyCopied.Add(srcPath);
         }
 
-        // ── Phase 7: Completeness check + archive promotion ───────────────────
+        // ── Phase 7: Completeness check + source promotion ────────────────────
         progress.Report(new IngestionProgress { PhaseText = "Checking completeness…" });
 
         var now = DateTime.UtcNow;
@@ -2195,7 +2400,7 @@ public partial class MainWindow : Window
 
             var safeFolder  = SafeFileName(release.Name);
             var stagingDir  = Path.Combine(stagingRoot, safeFolder);
-            var archiveDir  = Path.Combine(archiveRoot, safeFolder);
+            var sourceDir   = Path.Combine(sourceRoot,  safeFolder);
             var expectedFiles = store.LoadReleaseFiles(releaseId);
 
             if (expectedFiles.Count == 0) continue;
@@ -2205,15 +2410,15 @@ public partial class MainWindow : Window
 
             if (!complete) continue;
 
-            // Move every file from staging → archive
-            bool archiveOk = true;
+            // Move every file from staging → source
+            bool sourceOk = true;
             try
             {
-                Directory.CreateDirectory(archiveDir);
+                Directory.CreateDirectory(sourceDir);
                 foreach (var f in expectedFiles)
                 {
                     var src  = Path.Combine(stagingDir, f.RomName);
-                    var dest = Path.Combine(archiveDir, f.RomName);
+                    var dest = Path.Combine(sourceDir,  f.RomName);
                     File.Move(src, dest, overwrite: true);
                 }
                 // Remove empty staging folder (best-effort)
@@ -2222,20 +2427,20 @@ public partial class MainWindow : Window
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
-                archiveOk = false;
-                var failOp = new IngestionOperation(release.Name, "archive-failed", ex.Message);
+                sourceOk = false;
+                var failOp = new IngestionOperation(release.Name, "source-failed", ex.Message);
                 result.Operations.Add(failOp);
                 progress.Report(new IngestionProgress { NewOperation = failOp });
             }
 
-            if (!archiveOk) continue;
+            if (!sourceOk) continue;
 
             // Save artifact records + link to release
             foreach (var f in expectedFiles)
             {
-                var archivePath = Path.Combine(archiveDir, f.RomName);
-                long fileSize   = 0;
-                try { fileSize = new FileInfo(archivePath).Length; } catch { }
+                var sourceFilePath = Path.Combine(sourceDir, f.RomName);
+                long fileSize      = 0;
+                try { fileSize = new FileInfo(sourceFilePath).Length; } catch { }
 
                 var ck = f.Sha1.Length > 0 ? $"sha1:{f.Sha1}"
                        : f.Md5.Length  > 0 ? $"md5:{f.Md5}"
@@ -2246,13 +2451,13 @@ public partial class MainWindow : Window
                 {
                     Id                 = artifactId,
                     SourceFileName     = f.RomName,
-                    SourceRelativePath = $"archive/{platformId}/{datLineId}/{safeFolder}/{f.RomName}",
+                    SourceRelativePath = $"source/{platformId}/{datLineId}/{safeFolder}/{f.RomName}",
                     SourceSizeBytes    = fileSize,
                     Sha1               = f.Sha1,
                     Md5                = f.Md5,
                     Crc                = f.Crc,
                     ContentIdentityKey = ck,
-                    Status             = "archived",
+                    Status             = "sourced",
                     CreatedAtUtc       = now,
                     VerifiedAtUtc      = now,
                 });
@@ -2263,14 +2468,43 @@ public partial class MainWindow : Window
                     ArtifactId   = artifactId,
                     CreatedAtUtc = now,
                 });
+
+                // ── Transform v1: no_compression ─────────────────────────────
+                if (ck.Length > 0)
+                {
+                    try
+                    {
+                        store.RunNoCompressionTransform(
+                            sourceArtifactId:    artifactId,
+                            sourceFilePath:      sourceFilePath,
+                            fileName:            f.RomName,
+                            sizeBytes:           fileSize,
+                            crc:                 f.Crc,
+                            md5:                 f.Md5,
+                            sha1:                f.Sha1,
+                            contentIdentityKey:  ck,
+                            platformId:          platformId,
+                            datLineId:           datLineId,
+                            releaseFolderName:   safeFolder,
+                            storageStrategyId:   storageStrategyId.Length > 0 ? storageStrategyId : "none",
+                            appRoot:             appRoot);
+                    }
+                    catch (Exception ex) when (ex is not OutOfMemoryException)
+                    {
+                        // Transform failures must never block ingestion.
+                        var failOp = new IngestionOperation(f.RomName, "transform-failed", ex.Message);
+                        result.Operations.Add(failOp);
+                        progress.Report(new IngestionProgress { NewOperation = failOp });
+                    }
+                }
             }
 
             store.UpdateReleaseStatus(releaseId, "present");
             result.ReleasesPresent++;
 
             var archOp = new IngestionOperation(
-                release.Name, "archive",
-                $"archive/{platformId}/{datLineId}/{safeFolder}");
+                release.Name, "source",
+                $"source/{platformId}/{datLineId}/{safeFolder}");
             result.Operations.Add(archOp);
             progress.Report(new IngestionProgress { NewOperation = archOp });
         }

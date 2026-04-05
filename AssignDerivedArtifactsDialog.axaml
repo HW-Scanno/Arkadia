@@ -1,0 +1,121 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:Arkadia"
+        x:Class="Arkadia.AssignDerivedArtifactsDialog"
+        Title="Assign Derived Artifacts"
+        Width="560" Height="480"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="TextBlock.col-header">
+            <Setter Property="FontSize"      Value="10"/>
+            <Setter Property="FontWeight"    Value="SemiBold"/>
+            <Setter Property="Foreground"    Value="#555566"/>
+            <Setter Property="LetterSpacing" Value="1"/>
+        </Style>
+        <Style Selector="ListBox">
+            <Setter Property="Background"      Value="#0D0D13"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"         Value="0"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding"    Value="10,5"/>
+            <Setter Property="FontSize"   Value="12"/>
+            <Setter Property="Foreground" Value="#CCCCDD"/>
+        </Style>
+        <Style Selector="Button.primary">
+            <Setter Property="Background"   Value="#C05020"/>
+            <Setter Property="Foreground"   Value="#FFFFFF"/>
+            <Setter Property="Padding"      Value="16,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"   Value="#1E1E2C"/>
+            <Setter Property="Foreground"   Value="#AAAACC"/>
+            <Setter Property="Padding"      Value="16,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+        <!-- Header -->
+        <Border Grid.Row="0" Padding="20,16,20,12"
+                BorderBrush="#181826" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="3">
+                <TextBlock Text="Assign Derived Artifacts"
+                           FontSize="15" FontWeight="SemiBold" Foreground="#E8E8F0"/>
+                <TextBlock x:Name="SubtitleLabel"
+                           FontSize="11" Foreground="#888899"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Column headers -->
+        <Border Grid.Row="1" Padding="10,6,10,6"
+                BorderBrush="#181826" BorderThickness="0,0,0,1"
+                Background="#0D0D13">
+            <Grid ColumnDefinitions="*,80,120">
+                <TextBlock Grid.Column="0" Classes="col-header" Text="FILE NAME"/>
+                <TextBlock Grid.Column="1" Classes="col-header" Text="SIZE" HorizontalAlignment="Right"/>
+                <TextBlock Grid.Column="2" Classes="col-header" Text="IDENTITY KEY"/>
+            </Grid>
+        </Border>
+
+        <!-- Artifact list (multi-select) -->
+        <ListBox x:Name="ArtifactList"
+                 Grid.Row="2"
+                 SelectionMode="Multiple,Toggle">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="local:ArtifactRow">
+                    <Grid ColumnDefinitions="*,80,120">
+                        <TextBlock Grid.Column="0"
+                                   Text="{Binding FileName}"
+                                   TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding SizeLabel}"
+                                   HorizontalAlignment="Right"
+                                   Foreground="#888899"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="2"
+                                   Text="{Binding KeyShort}"
+                                   Foreground="#555566"
+                                   FontSize="10"
+                                   TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center"/>
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <!-- Footer -->
+        <Border Grid.Row="3" Padding="20,12,20,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <DockPanel>
+                <TextBlock x:Name="SelectionCountLabel"
+                           DockPanel.Dock="Left"
+                           VerticalAlignment="Center"
+                           FontSize="11"
+                           Foreground="#888899"/>
+                <StackPanel DockPanel.Dock="Right"
+                            Orientation="Horizontal" Spacing="8"
+                            HorizontalAlignment="Right">
+                    <Button Classes="secondary" Content="Cancel" Click="OnCancel"/>
+                    <Button x:Name="ConfirmButton" Classes="primary"
+                            Content="Assign Selected"
+                            IsEnabled="False" Click="OnConfirm"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+    </Grid>
+</Window>

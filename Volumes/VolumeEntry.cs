@@ -12,9 +12,13 @@ public sealed class VolumeEntry
     public required string  Status           { get; init; }
     public required long    PlannedSizeBytes { get; init; }
     public required long    ActualSizeBytes  { get; init; }
-    public required string  CurrentLocation  { get; init; }  // "disk:<label>" | "archive" | "workspace" | "—"
+    public required string  CurrentLocation  { get; init; }  // "disk:<label>" | "source" | "workspace" | "—"
     public required string? DiskId           { get; init; }
     public required string? DiskLabel        { get; init; }
+    /// <summary>Raw dat_line_id from the DB (not the display name).</summary>
+    public required string  RawDatLineId     { get; init; }
+    /// <summary>Absolute path to the DAT-line SQLite DB for this volume.</summary>
+    public required string  DbPath           { get; init; }
 
     public double FillRatio => PlannedSizeBytes > 0
         ? System.Math.Clamp((double)ActualSizeBytes / PlannedSizeBytes, 0, 1)

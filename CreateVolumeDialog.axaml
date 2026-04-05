@@ -1,0 +1,113 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.CreateVolumeDialog"
+        Title="Create Volume"
+        Width="420"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="TextBox">
+            <Setter Property="Background"      Value="#0D0D13"/>
+            <Setter Property="Foreground"      Value="#E8E8F0"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="Padding"         Value="8,7"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+        </Style>
+        <Style Selector="TextBox:focus-within">
+            <Setter Property="BorderBrush" Value="#E07040"/>
+        </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="Background"   Value="#0D0D13"/>
+            <Setter Property="Foreground"   Value="#E8E8F0"/>
+            <Setter Property="BorderBrush"  Value="#2A2A3C"/>
+            <Setter Property="FontSize"     Value="12"/>
+            <Setter Property="Padding"      Value="8,7"/>
+            <Setter Property="CornerRadius" Value="4"/>
+        </Style>
+        <Style Selector="TextBlock.field-label">
+            <Setter Property="FontSize"   Value="11"/>
+            <Setter Property="Foreground" Value="#888899"/>
+            <Setter Property="Margin"     Value="0,0,0,4"/>
+        </Style>
+        <Style Selector="Button.primary">
+            <Setter Property="Background"   Value="#C05020"/>
+            <Setter Property="Foreground"   Value="#FFFFFF"/>
+            <Setter Property="Padding"      Value="16,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"   Value="#1E1E2C"/>
+            <Setter Property="Foreground"   Value="#AAAACC"/>
+            <Setter Property="Padding"      Value="16,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- Header -->
+        <Border Grid.Row="0" Padding="24,18,24,14"
+                BorderBrush="#181826" BorderThickness="0,0,0,1">
+            <TextBlock Text="Create Volume"
+                       FontSize="16" FontWeight="SemiBold"
+                       Foreground="#E8E8F0"/>
+        </Border>
+
+        <!-- Fields -->
+        <StackPanel Grid.Row="1" Margin="24,18,24,4" Spacing="12">
+
+            <StackPanel Spacing="4">
+                <TextBlock Classes="field-label" Text="LABEL *"/>
+                <TextBox x:Name="LabelInput" TextChanged="OnFieldChanged"/>
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Classes="field-label" Text="PLATFORM *"/>
+                <ComboBox x:Name="PlatformCombo"
+                          HorizontalAlignment="Stretch"
+                          SelectionChanged="OnFieldChanged"/>
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Classes="field-label" Text="DAT LINE *"/>
+                <ComboBox x:Name="DatLineCombo"
+                          HorizontalAlignment="Stretch"
+                          SelectionChanged="OnFieldChanged"/>
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Classes="field-label" Text="PLANNED SIZE (GB) *"/>
+                <TextBox x:Name="PlannedSizeInput" TextChanged="OnFieldChanged"/>
+            </StackPanel>
+
+            <TextBlock x:Name="ErrorText"
+                       IsVisible="False"
+                       FontSize="11"
+                       Foreground="#EF5350"
+                       TextWrapping="Wrap"/>
+
+        </StackPanel>
+
+        <!-- Footer -->
+        <Border Grid.Row="2" Padding="24,14,24,18"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                <Button Classes="secondary" Content="Cancel" Click="OnCancel"/>
+                <Button x:Name="ConfirmButton" Classes="primary" Content="Create Volume"
+                        IsEnabled="False" Click="OnConfirm"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

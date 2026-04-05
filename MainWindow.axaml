@@ -1463,6 +1463,11 @@
                         BorderBrush="{DynamicResource ArkSurfaceAlt}"
                         BorderThickness="0,0,0,1">
                     <DockPanel>
+                        <Button DockPanel.Dock="Left"
+                                Content="Add Disk"
+                                Classes="view-toggle"
+                                Margin="0,0,8,0"
+                                Click="OnAddDisk"/>
                         <TextBlock x:Name="DisksCountText"
                                    DockPanel.Dock="Right"
                                    VerticalAlignment="Center"
@@ -1670,6 +1675,11 @@
                         BorderBrush="{DynamicResource ArkSurfaceAlt}"
                         BorderThickness="0,0,0,1">
                     <DockPanel>
+                        <Button DockPanel.Dock="Left"
+                                Content="Create Volume"
+                                Classes="view-toggle"
+                                Margin="0,0,8,0"
+                                Click="OnCreateVolume"/>
                         <TextBlock x:Name="VolumesCountText"
                                    DockPanel.Dock="Right"
                                    VerticalAlignment="Center"
@@ -1829,6 +1839,28 @@
                                     <TextBlock Grid.Column="0" Classes="card-key" Text="Disk" Margin="0"/>
                                     <TextBlock Grid.Column="1" x:Name="VolumeDetailDisk" Classes="card-val" Margin="0"/>
                                 </Grid>
+
+                                <!-- Derived artifacts section -->
+                                <Border Classes="card-divider" Margin="0,14,0,10"/>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Artifacts" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailArtifactCount" Classes="card-val" Margin="0"/>
+                                </Grid>
+
+                                <StackPanel x:Name="VolumeDetailArtifactList" Spacing="3" Margin="0,0,0,10"/>
+
+                                <Border Classes="card-divider" Margin="0,4,0,12"/>
+
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button Content="Assign Derived Artifacts"
+                                            Classes="view-toggle"
+                                            HorizontalAlignment="Left"
+                                            Click="OnAssignDerivedArtifacts"/>
+                                    <Button Content="Assign to Disk"
+                                            Classes="view-toggle"
+                                            HorizontalAlignment="Left"
+                                            Click="OnAssignVolumeToDisk"/>
+                                </StackPanel>
 
                             </StackPanel>
                         </ScrollViewer>

@@ -146,6 +146,36 @@ public sealed class DatLineStore
             )
             """);
         RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_files_release_id ON release_files(release_id)");
+
+        RunMigration(conn, """
+            CREATE TABLE IF NOT EXISTS derived_artifacts (
+                id                   TEXT PRIMARY KEY,
+                storage_strategy_id  TEXT NOT NULL,
+                file_name            TEXT NOT NULL,
+                relative_path        TEXT NOT NULL,
+                size_bytes           INTEGER NOT NULL,
+                crc                  TEXT,
+                md5                  TEXT,
+                sha1                 TEXT,
+                content_identity_key TEXT NOT NULL,
+                status               TEXT NOT NULL,
+                created_at_utc       TEXT NOT NULL,
+                verified_at_utc      TEXT
+            )
+            """);
+        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_derived_artifacts_content_key ON derived_artifacts(content_identity_key)");
+
+        RunMigration(conn, """
+            CREATE TABLE IF NOT EXISTS artifact_transforms (
+                id                  TEXT PRIMARY KEY,
+                source_artifact_id  TEXT NOT NULL,
+                derived_artifact_id TEXT NOT NULL,
+                transform_kind      TEXT NOT NULL,
+                created_at_utc      TEXT NOT NULL
+            )
+            """);
+        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_artifact_transforms_source  ON artifact_transforms(source_artifact_id)");
+        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_artifact_transforms_derived ON artifact_transforms(derived_artifact_id)");
     }
 
     private static void RunMigration(SqliteConnection conn, string sql)
@@ -580,6 +610,341 @@ public sealed class DatLineStore
             .ThenBy(x => x.ReleaseName, StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
+
+    // ── Derived Artifacts ─────────────────────────────────────────────────────
+
+    public List<DerivedArtifactRecord> GetDerivedArtifacts()
+    {
+        var list = new List<DerivedArtifactRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, storage_strategy_id, file_name, relative_path, size_bytes,
+                   crc, md5, sha1, content_identity_key, status, created_at_utc, verified_at_utc
+            FROM derived_artifacts
+            ORDER BY file_name
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(ReadDerived(r));
+        return list;
+    }
+
+    public DerivedArtifactRecord? GetDerivedByContentKey(string contentKey)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, storage_strategy_id, file_name, relative_path, size_bytes,
+                   crc, md5, sha1, content_identity_key, status, created_at_utc, verified_at_utc
+            FROM derived_artifacts
+            WHERE content_identity_key = $ck
+            LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("$ck", contentKey);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return ReadDerived(r);
+    }
+
+    public void SaveDerivedArtifact(DerivedArtifactRecord d)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO derived_artifacts(
+                id, storage_strategy_id, file_name, relative_path, size_bytes,
+                crc, md5, sha1, content_identity_key, status, created_at_utc, verified_at_utc)
+            VALUES(
+                $id, $stratId, $fileName, $relPath, $size,
+                $crc, $md5, $sha1, $ck, $status, $created, $verified)
+            ON CONFLICT(id) DO NOTHING
+            """;
+        cmd.Parameters.AddWithValue("$id",       d.Id);
+        cmd.Parameters.AddWithValue("$stratId",  d.StorageStrategyId);
+        cmd.Parameters.AddWithValue("$fileName", d.FileName);
+        cmd.Parameters.AddWithValue("$relPath",  d.RelativePath);
+        cmd.Parameters.AddWithValue("$size",     d.SizeBytes);
+        cmd.Parameters.AddWithValue("$crc",      NullIfEmpty(d.Crc));
+        cmd.Parameters.AddWithValue("$md5",      NullIfEmpty(d.Md5));
+        cmd.Parameters.AddWithValue("$sha1",     NullIfEmpty(d.Sha1));
+        cmd.Parameters.AddWithValue("$ck",       d.ContentIdentityKey);
+        cmd.Parameters.AddWithValue("$status",   d.Status);
+        cmd.Parameters.AddWithValue("$created",  d.CreatedAtUtc.ToString("o"));
+        cmd.Parameters.AddWithValue("$verified", d.VerifiedAtUtc.HasValue
+            ? d.VerifiedAtUtc.Value.ToString("o") : DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void SaveArtifactTransform(string id, string sourceArtifactId,
+        string derivedArtifactId, string transformKind, DateTime createdAtUtc)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO artifact_transforms(id, source_artifact_id, derived_artifact_id, transform_kind, created_at_utc)
+            VALUES($id, $srcId, $drvId, $kind, $created)
+            ON CONFLICT(id) DO NOTHING
+            """;
+        cmd.Parameters.AddWithValue("$id",      id);
+        cmd.Parameters.AddWithValue("$srcId",   sourceArtifactId);
+        cmd.Parameters.AddWithValue("$drvId",   derivedArtifactId);
+        cmd.Parameters.AddWithValue("$kind",    transformKind);
+        cmd.Parameters.AddWithValue("$created", createdAtUtc.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    public bool ArtifactTransformExists(string sourceArtifactId, string derivedArtifactId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT 1 FROM artifact_transforms
+            WHERE source_artifact_id = $srcId AND derived_artifact_id = $drvId
+            LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("$srcId", sourceArtifactId);
+        cmd.Parameters.AddWithValue("$drvId", derivedArtifactId);
+        using var r = cmd.ExecuteReader();
+        return r.Read();
+    }
+
+    /// <summary>
+    /// No-compression transform: copies the source artifact file to archive/ as-is,
+    /// records a DerivedArtifactRecord, and links it via artifact_transforms.
+    /// Idempotent: reuses existing derived artifact if content_identity_key already present.
+    /// Returns the derived artifact id, or null on failure.
+    /// </summary>
+    public string? RunNoCompressionTransform(
+        string         sourceArtifactId,
+        string         sourceFilePath,
+        string         fileName,
+        long           sizeBytes,
+        string         crc,
+        string         md5,
+        string         sha1,
+        string         contentIdentityKey,
+        string         platformId,
+        string         datLineId,
+        string         releaseFolderName,
+        string         storageStrategyId,
+        string         appRoot)
+    {
+        var now = DateTime.UtcNow;
+
+        // ── Idempotency: check if derived artifact already exists ─────────────
+        var existing = GetDerivedByContentKey(contentIdentityKey);
+        string derivedId;
+
+        if (existing is null)
+        {
+            var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId, releaseFolderName);
+            Directory.CreateDirectory(archiveDir);
+            var destPath   = Path.Combine(archiveDir, fileName);
+            var relPath    = $"archive/{platformId}/{datLineId}/{releaseFolderName}/{fileName}";
+
+            // Copy (or verify if already on disk)
+            if (File.Exists(destPath))
+            {
+                long existingSize = 0;
+                try { existingSize = new FileInfo(destPath).Length; } catch { }
+                if (existingSize != sizeBytes)
+                    File.Copy(sourceFilePath, destPath, overwrite: true);
+                // else: correct file already there — reuse
+            }
+            else
+            {
+                File.Copy(sourceFilePath, destPath, overwrite: true);
+            }
+
+            derivedId = Guid.NewGuid().ToString("N");
+            SaveDerivedArtifact(new DerivedArtifactRecord
+            {
+                Id                 = derivedId,
+                StorageStrategyId  = storageStrategyId,
+                FileName           = fileName,
+                RelativePath       = relPath,
+                SizeBytes          = sizeBytes,
+                Crc                = crc,
+                Md5                = md5,
+                Sha1               = sha1,
+                ContentIdentityKey = contentIdentityKey,
+                Status             = "present",
+                CreatedAtUtc       = now,
+                VerifiedAtUtc      = now,
+            });
+        }
+        else
+        {
+            derivedId = existing.Id;
+        }
+
+        // ── Provenance: insert transform link if not already recorded ─────────
+        if (!ArtifactTransformExists(sourceArtifactId, derivedId))
+        {
+            SaveArtifactTransform(
+                Guid.NewGuid().ToString("N"),
+                sourceArtifactId,
+                derivedId,
+                "no_compression",
+                now);
+        }
+
+        return derivedId;
+    }
+
+    // ── Planning ──────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns release-grouped planning candidates for this DAT line.
+    /// Each candidate represents one complete release group with its derived artifacts.
+    /// </summary>
+    /// <param name="appRoot">
+    ///   Application base directory — used to resolve archive paths for completeness check.
+    /// </param>
+    /// <param name="assignedDerivedIds">
+    ///   Set of derived_artifact_id values already present in volume_artifacts (any volume).
+    ///   Build this from <c>CatalogService</c> before calling.
+    /// </param>
+    public List<PlanningCandidate> GetPlanningCandidates(
+        string              appRoot,
+        HashSet<string>     assignedDerivedIds)
+    {
+        // ── 1. Load all derived artifacts per release via the join chain ──────
+        // releases → release_artifacts → artifact_transforms → derived_artifacts
+        var releaseToArtifacts = new Dictionary<string, List<DerivedArtifactRecord>>(
+            StringComparer.Ordinal);
+        var releaseNames = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        using (var conn = Open())
+        {
+            // Collect release names first
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = "SELECT id, name FROM releases";
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                    releaseNames[r.GetString(0)] = r.GetString(1);
+            }
+
+            // Single query: walk the full chain
+            using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = """
+                    SELECT
+                        ra.release_id,
+                        da.id, da.storage_strategy_id, da.file_name, da.relative_path,
+                        da.size_bytes, da.crc, da.md5, da.sha1,
+                        da.content_identity_key, da.status, da.created_at_utc, da.verified_at_utc
+                    FROM release_artifacts   ra
+                    JOIN artifact_transforms at ON at.source_artifact_id  = ra.artifact_id
+                    JOIN derived_artifacts   da ON da.id                  = at.derived_artifact_id
+                    ORDER BY ra.release_id, da.file_name
+                    """;
+
+                using var r = cmd.ExecuteReader();
+                while (r.Read())
+                {
+                    var releaseId = r.GetString(0);
+                    var da = new DerivedArtifactRecord
+                    {
+                        Id                 = r.GetString(1),
+                        StorageStrategyId  = r.GetString(2),
+                        FileName           = r.GetString(3),
+                        RelativePath       = r.GetString(4),
+                        SizeBytes          = r.GetInt64(5),
+                        Crc                = r.IsDBNull(6)  ? "" : r.GetString(6),
+                        Md5                = r.IsDBNull(7)  ? "" : r.GetString(7),
+                        Sha1               = r.IsDBNull(8)  ? "" : r.GetString(8),
+                        ContentIdentityKey = r.GetString(9),
+                        Status             = r.GetString(10),
+                        CreatedAtUtc       = DateTime.Parse(r.GetString(11)),
+                        VerifiedAtUtc      = r.IsDBNull(12) ? null : DateTime.Parse(r.GetString(12)),
+                    };
+
+                    if (!releaseToArtifacts.TryGetValue(releaseId, out var list))
+                    {
+                        list = [];
+                        releaseToArtifacts[releaseId] = list;
+                    }
+                    list.Add(da);
+                }
+            }
+        }
+
+        if (releaseToArtifacts.Count == 0)
+            return [];
+
+        // ── 2. Build candidates ───────────────────────────────────────────────
+        var candidates = new List<PlanningCandidate>(releaseToArtifacts.Count);
+
+        foreach (var (releaseId, artifacts) in releaseToArtifacts)
+        {
+            if (!releaseNames.TryGetValue(releaseId, out var releaseName))
+                releaseName = releaseId;
+
+            long totalSize   = 0;
+            bool anyAssigned = false;
+            bool allOnDisk   = artifacts.Count > 0;
+
+            foreach (var da in artifacts)
+            {
+                totalSize += da.SizeBytes;
+
+                if (assignedDerivedIds.Contains(da.Id))
+                    anyAssigned = true;
+
+                // Resolve physical path from relative_path (uses forward slashes).
+                var physicalPath = Path.Combine(
+                    appRoot,
+                    da.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+
+                if (!File.Exists(physicalPath))
+                    allOnDisk = false;
+            }
+
+            candidates.Add(new PlanningCandidate
+            {
+                ReleaseId                    = releaseId,
+                ReleaseName                  = releaseName,
+                TotalSizeBytes               = totalSize,
+                DerivedCount                 = artifacts.Count,
+                IsAlreadyAssignedToAnyVolume = anyAssigned,
+                IsCompleteInArchive          = allOnDisk,
+            });
+        }
+
+        return candidates
+            .OrderBy(c => c.ReleaseName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string SafeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb      = new System.Text.StringBuilder(name.Length);
+        foreach (var c in name)
+            sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+        return sb.ToString();
+    }
+
+    private static object NullIfEmpty(string s) => s.Length > 0 ? s : DBNull.Value;
+
+    private static DerivedArtifactRecord ReadDerived(SqliteDataReader r) => new()
+    {
+        Id                 = r.GetString(0),
+        StorageStrategyId  = r.GetString(1),
+        FileName           = r.GetString(2),
+        RelativePath       = r.GetString(3),
+        SizeBytes          = r.GetInt64(4),
+        Crc                = r.IsDBNull(5)  ? "" : r.GetString(5),
+        Md5                = r.IsDBNull(6)  ? "" : r.GetString(6),
+        Sha1               = r.IsDBNull(7)  ? "" : r.GetString(7),
+        ContentIdentityKey = r.GetString(8),
+        Status             = r.GetString(9),
+        CreatedAtUtc       = DateTime.Parse(r.GetString(10)),
+        VerifiedAtUtc      = r.IsDBNull(11) ? null : DateTime.Parse(r.GetString(11)),
+    };
 
     private SqliteConnection Open()
     {

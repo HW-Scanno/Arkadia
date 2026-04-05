@@ -1,7 +1,8 @@
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using Arkadia.Ingestion;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Avalonia.Media;
 
 namespace Arkadia;
 
@@ -9,16 +10,19 @@ public partial class IngestionProgressDialog : Window
 {
     private bool _isRunning = true;
 
-    // Parameterless ctor required by Avalonia XAML compiler
+    private readonly List<IngestionOperation>              _allOps      = [];
+    private readonly ObservableCollection<IngestionOperation> _filteredOps = [];
+
     public IngestionProgressDialog() : this("") { }
 
     public IngestionProgressDialog(string title)
     {
         InitializeComponent();
-        OpTitle.Text = title;
+        OpTitle.Text        = title;
+        OpsList.ItemsSource = _filteredOps;
     }
 
-    // ── Progress update (marshalled to UI thread by Progress<T>) ──────────────
+    // ── Progress update ───────────────────────────────────────────────────────
 
     public void Update(IngestionProgress p)
     {
@@ -38,38 +42,71 @@ public partial class IngestionProgressDialog : Window
 
     private void AppendOperation(IngestionOperation op)
     {
-        OpsPanel.IsVisible = true;
+        _allOps.Add(op);
 
-        var color = op.Action switch
+        if (PassesFilter(op))
         {
-            "copy"    => "#4CAF50",
-            "archive" => "#7B68EE",
-            "delete"  => "#888899",
-            _         => "#FFA726",  // skip, *-failed
-        };
+            _filteredOps.Add(op);
+            UpdateCountLabel();
+            ScrollToEnd();
+        }
+    }
 
-        var row = new TextBlock
-        {
-            Text         = $"{op.Object}  |  {op.Action}  |  {op.Destination}",
-            FontSize     = 10,
-            FontFamily   = new FontFamily("Consolas,Courier New,monospace"),
-            Foreground   = new SolidColorBrush(Color.Parse(color)),
-            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-        };
+    private bool PassesFilter(IngestionOperation op)
+    {
+        var action = op.Action;
+        if (action == "hash"   && FilterHash.IsChecked   == true) return true;
+        if (action == "copy"   && FilterCopy.IsChecked   == true) return true;
+        if (action == "delete" && FilterDelete.IsChecked == true) return true;
+        if (action == "source" && FilterSource.IsChecked == true) return true;
+        if (action == "skip"   && FilterSkip.IsChecked   == true) return true;
+        if (action.EndsWith("-failed") && FilterFailed.IsChecked == true) return true;
+        // catch-all (e.g. unrecognized actions) — bucket with Skip
+        if (action != "hash" && action != "copy" && action != "delete"
+            && action != "source" && !action.EndsWith("-failed")
+            && FilterSkip.IsChecked == true) return true;
+        return false;
+    }
 
-        OpsList.Children.Add(row);
+    private void OnFilterChanged(object? sender, RoutedEventArgs e)
+    {
+        _filteredOps.Clear();
+        foreach (var op in _allOps)
+            if (PassesFilter(op))
+                _filteredOps.Add(op);
 
+        UpdateCountLabel();
+        ScrollToEnd();
+    }
+
+    private void UpdateCountLabel()
+    {
+        OpsCountLabel.Text = _allOps.Count == _filteredOps.Count
+            ? $"{_allOps.Count} ops"
+            : $"{_filteredOps.Count} / {_allOps.Count} ops";
+    }
+
+    private void ScrollToEnd() =>
         _ = Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
             () => OpsScrollViewer.ScrollToEnd(),
             Avalonia.Threading.DispatcherPriority.Background);
-    }
 
     // ── Completion ────────────────────────────────────────────────────────────
 
     public void SetCompleted(IngestionResult result)
     {
-        _isRunning             = false;
-        RunningPanel.IsVisible = false;
+        _isRunning = false;
+
+        // Progress bar stays visible — snap to 100% and update phase label.
+        OpProgress.IsIndeterminate = false;
+        OpProgress.Maximum         = 100;
+        OpProgress.Value           = 100;
+        PhaseText.Text             = "Completed.";
+
+        // Sync top counters with final result values.
+        CountProcessed.Text = result.FilesScanned.ToString("N0");
+        CountAccepted.Text  = result.FilesMatched.ToString("N0");
+        CountRejected.Text  = result.FilesSkipped.ToString("N0");
 
         if (result.Success)
         {
@@ -82,8 +119,8 @@ public partial class IngestionProgressDialog : Window
         }
         else
         {
-            FailedPanel.IsVisible  = true;
-            FailedMessage.Text     = result.Error ?? "Unknown error";
+            FailedPanel.IsVisible = true;
+            FailedMessage.Text    = result.Error ?? "Unknown error";
         }
 
         OkButton.IsEnabled = true;
@@ -91,8 +128,13 @@ public partial class IngestionProgressDialog : Window
 
     public void SetFailed(string errorMessage)
     {
-        _isRunning             = false;
-        RunningPanel.IsVisible = false;
+        _isRunning = false;
+
+        OpProgress.IsIndeterminate = false;
+        OpProgress.Maximum         = 100;
+        OpProgress.Value           = 100;
+        PhaseText.Text             = "Failed.";
+
         FailedPanel.IsVisible  = true;
         FailedMessage.Text     = errorMessage;
         OkButton.IsEnabled     = true;

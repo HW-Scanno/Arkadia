@@ -122,6 +122,19 @@ public sealed class CatalogService
             CREATE INDEX IF NOT EXISTS idx_volume_locations_volume_id ON volume_locations(volume_id);
             CREATE INDEX IF NOT EXISTS idx_volume_locations_disk_id   ON volume_locations(disk_id);
 
+            CREATE TABLE IF NOT EXISTS volume_artifacts (
+                id                   TEXT PRIMARY KEY,
+                volume_id            TEXT NOT NULL,
+                dat_line_id          TEXT NOT NULL,
+                derived_artifact_id  TEXT NOT NULL,
+                status               TEXT NOT NULL,
+                added_at_utc         TEXT NOT NULL,
+                UNIQUE(volume_id, derived_artifact_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_volume_artifacts_volume  ON volume_artifacts(volume_id);
+            CREATE INDEX IF NOT EXISTS idx_volume_artifacts_datline ON volume_artifacts(dat_line_id);
+
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -700,6 +713,121 @@ public sealed class CatalogService
             IsCurrent    = r.GetInt32(5) == 1,
             CreatedAt    = DateTime.Parse(r.GetString(6)),
         };
+    }
+
+    // ── Volume Artifacts ──────────────────────────────────────────────────────
+
+    public List<VolumeArtifactRecord> GetVolumeArtifacts(string volumeId)
+    {
+        var list = new List<VolumeArtifactRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, volume_id, dat_line_id, derived_artifact_id, status, added_at_utc
+            FROM volume_artifacts
+            WHERE volume_id = $vid
+            ORDER BY added_at_utc
+            """;
+        cmd.Parameters.AddWithValue("$vid", volumeId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new VolumeArtifactRecord
+            {
+                Id                = r.GetString(0),
+                VolumeId          = r.GetString(1),
+                DatLineId         = r.GetString(2),
+                DerivedArtifactId = r.GetString(3),
+                Status            = r.GetString(4),
+                AddedAtUtc        = DateTime.Parse(r.GetString(5)),
+            });
+        return list;
+    }
+
+    public bool VolumeArtifactExists(string volumeId, string derivedArtifactId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT 1 FROM volume_artifacts WHERE volume_id = $vid AND derived_artifact_id = $did LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("$vid", volumeId);
+        cmd.Parameters.AddWithValue("$did", derivedArtifactId);
+        using var r = cmd.ExecuteReader();
+        return r.Read();
+    }
+
+    public void SaveVolumeArtifact(VolumeArtifactRecord va)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO volume_artifacts(id, volume_id, dat_line_id, derived_artifact_id, status, added_at_utc)
+            VALUES($id, $vid, $dlid, $daid, $status, $added)
+            ON CONFLICT(volume_id, derived_artifact_id) DO NOTHING
+            """;
+        cmd.Parameters.AddWithValue("$id",     va.Id);
+        cmd.Parameters.AddWithValue("$vid",    va.VolumeId);
+        cmd.Parameters.AddWithValue("$dlid",   va.DatLineId);
+        cmd.Parameters.AddWithValue("$daid",   va.DerivedArtifactId);
+        cmd.Parameters.AddWithValue("$status", va.Status);
+        cmd.Parameters.AddWithValue("$added",  va.AddedAtUtc.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Recalculates volumes.actual_size_bytes as the sum of size_bytes of all
+    /// derived artifacts assigned to the volume with status = "present_in_final".
+    /// The size_bytes values are read from the supplied <paramref name="sizeByDerivedId"/> map
+    /// (keyed by derived_artifact_id), which the caller builds from the DAT-line DB.
+    /// </summary>
+    public void RecalculateVolumeActualSize(string volumeId,
+        System.Collections.Generic.Dictionary<string, long> sizeByDerivedId)
+    {
+        var assignments = GetVolumeArtifacts(volumeId);
+        long total = 0;
+        foreach (var va in assignments)
+        {
+            if (va.Status == "present_in_final" &&
+                sizeByDerivedId.TryGetValue(va.DerivedArtifactId, out var sz))
+                total += sz;
+        }
+
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "UPDATE volumes SET actual_size_bytes = $sz WHERE id = $vid";
+        cmd.Parameters.AddWithValue("$sz",  total);
+        cmd.Parameters.AddWithValue("$vid", volumeId);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Sets all existing locations for a volume to is_current = 0, then inserts the new location
+    /// with is_current = 1. Maintains the one-current-location invariant.
+    /// </summary>
+    public void SetCurrentLocation(VolumeLocationRecord loc)
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        using var clear = conn.CreateCommand();
+        clear.CommandText = "UPDATE volume_locations SET is_current = 0 WHERE volume_id = $vid";
+        clear.Parameters.AddWithValue("$vid", loc.VolumeId);
+        clear.ExecuteNonQuery();
+
+        using var ins = conn.CreateCommand();
+        ins.CommandText = """
+            INSERT INTO volume_locations(id, volume_id, location_type, disk_id, path, is_current, created_at)
+            VALUES($id, $volId, $locType, $diskId, $path, 1, $created)
+            """;
+        ins.Parameters.AddWithValue("$id",      loc.Id);
+        ins.Parameters.AddWithValue("$volId",   loc.VolumeId);
+        ins.Parameters.AddWithValue("$locType", loc.LocationType);
+        ins.Parameters.AddWithValue("$diskId",  (object?)loc.DiskId ?? DBNull.Value);
+        ins.Parameters.AddWithValue("$path",    (object?)loc.Path   ?? DBNull.Value);
+        ins.Parameters.AddWithValue("$created", loc.CreatedAt.ToString("o"));
+        ins.ExecuteNonQuery();
+
+        tx.Commit();
     }
 
     public void SaveVolumeLocation(VolumeLocationRecord loc)
