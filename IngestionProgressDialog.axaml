@@ -1,0 +1,133 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.IngestionProgressDialog"
+        Title="Ingest Files"
+        Width="560"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <StackPanel Margin="28,24,28,24" Spacing="0">
+
+        <!-- Title -->
+        <TextBlock x:Name="OpTitle"
+                   FontSize="13" FontWeight="SemiBold"
+                   Foreground="#F0F0F0"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,16"/>
+
+        <!-- Running panel (phase + progress bar + counters) -->
+        <Border x:Name="RunningPanel"
+                Background="#1A1A24" CornerRadius="6" Padding="16,14"
+                Margin="0,0,0,12">
+            <StackPanel Spacing="10">
+                <TextBlock x:Name="PhaseText"
+                           FontSize="12" Foreground="#888899"/>
+
+                <ProgressBar x:Name="OpProgress"
+                             IsIndeterminate="True"
+                             Height="4"
+                             Foreground="#7B68EE"
+                             Background="#242433"
+                             CornerRadius="2"
+                             Minimum="0" Maximum="100" Value="0"/>
+
+                <Grid ColumnDefinitions="*,*,*" Margin="0,4,0,0">
+                    <StackPanel Grid.Column="0" Spacing="2" HorizontalAlignment="Center">
+                        <TextBlock Text="PROCESSED" FontSize="9" LetterSpacing="1.2"
+                                   Foreground="#555566" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="CountProcessed" Text="0"
+                                   FontSize="16" FontWeight="SemiBold"
+                                   Foreground="#888899" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Spacing="2" HorizontalAlignment="Center">
+                        <TextBlock Text="MATCHED" FontSize="9" LetterSpacing="1.2"
+                                   Foreground="#555566" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="CountAccepted" Text="0"
+                                   FontSize="16" FontWeight="SemiBold"
+                                   Foreground="#4CAF50" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="2" HorizontalAlignment="Center">
+                        <TextBlock Text="SKIPPED" FontSize="9" LetterSpacing="1.2"
+                                   Foreground="#555566" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="CountRejected" Text="0"
+                                   FontSize="16" FontWeight="SemiBold"
+                                   Foreground="#FFA726" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- Operations list (visible once first operation arrives) -->
+        <Border x:Name="OpsPanel"
+                IsVisible="False"
+                Background="#1A1A24" CornerRadius="6"
+                Margin="0,0,0,12">
+            <ScrollViewer x:Name="OpsScrollViewer"
+                          MaxHeight="200"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto"
+                          Padding="12,10,12,10">
+                <StackPanel x:Name="OpsList" Spacing="1"/>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Summary panel (shown on success) -->
+        <StackPanel x:Name="SummaryPanel" IsVisible="False" Spacing="0">
+            <TextBlock Text="INGESTION COMPLETED"
+                       FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                       Foreground="#888899" Margin="0,0,0,12"/>
+
+            <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,16">
+                <StackPanel Spacing="6">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Files scanned"     FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="1" x:Name="SumScanned"      FontSize="12" FontWeight="Medium" Foreground="#888899"/>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Files matched"     FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="1" x:Name="SumMatched"      FontSize="12" FontWeight="Medium" Foreground="#F0F0F0"/>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Files copied"      FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="1" x:Name="SumCopied"       FontSize="12" FontWeight="Medium" Foreground="#4CAF50"/>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Releases present"  FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="1" x:Name="SumPresent"      FontSize="12" FontWeight="SemiBold" Foreground="#7B68EE"/>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Files skipped"     FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="1" x:Name="SumSkipped"      FontSize="12" FontWeight="Medium" Foreground="#FFA726"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <!-- Failed panel -->
+        <StackPanel x:Name="FailedPanel" IsVisible="False" Spacing="0">
+            <TextBlock Text="OPERATION FAILED"
+                       FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                       Foreground="#EF5350" Margin="0,0,0,12"/>
+
+            <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,16">
+                <TextBlock x:Name="FailedMessage"
+                           FontSize="12" Foreground="#EF5350"
+                           TextWrapping="Wrap"/>
+            </Border>
+        </StackPanel>
+
+        <!-- OK button -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="OkButton"
+                    Content="OK"
+                    IsEnabled="False"
+                    Background="#7B68EE" Foreground="#FFFFFF"
+                    Padding="24,8" CornerRadius="6" BorderThickness="0"
+                    Click="OnOk"/>
+        </StackPanel>
+
+    </StackPanel>
+</Window>

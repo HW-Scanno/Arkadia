@@ -1765,11 +1765,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\Projects\\Arkadia\\Arkadia.csproj",
+      "projectUniqueName": "d:\\Projects\\Arkadia\\Arkadia.csproj",
       "projectName": "Arkadia",
-      "projectPath": "D:\\Projects\\Arkadia\\Arkadia.csproj",
+      "projectPath": "d:\\Projects\\Arkadia\\Arkadia.csproj",
       "packagesPath": "C:\\Users\\HWS\\.nuget\\packages\\",
-      "outputPath": "D:\\Projects\\Arkadia\\obj\\",
+      "outputPath": "d:\\Projects\\Arkadia\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\HWS\\AppData\\Roaming\\NuGet\\NuGet.Config"

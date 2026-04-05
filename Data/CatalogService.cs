@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Microsoft.Data.Sqlite;
 
 namespace Arkadia.Data;
@@ -78,6 +79,53 @@ public sealed class CatalogService
             );
 
             CREATE INDEX IF NOT EXISTS idx_dat_lines_platform_id ON dat_lines(platform_id);
+
+            CREATE TABLE IF NOT EXISTS disks (
+                id                       TEXT PRIMARY KEY,
+                label                    TEXT NOT NULL,
+                status                   TEXT NOT NULL,
+                declared_capacity_bytes  INTEGER NOT NULL,
+                filesystem               TEXT,
+                brand                    TEXT,
+                model                    TEXT,
+                serial                   TEXT,
+                created_at               TEXT NOT NULL,
+                updated_at               TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS volumes (
+                id                  TEXT PRIMARY KEY,
+                label               TEXT NOT NULL,
+                platform_id         TEXT NOT NULL,
+                dat_line_id         TEXT NOT NULL,
+                status              TEXT NOT NULL,
+                planned_size_bytes  INTEGER NOT NULL,
+                actual_size_bytes   INTEGER NOT NULL,
+                created_at          TEXT NOT NULL,
+                verified_at         TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_volumes_dat_line_id ON volumes(dat_line_id);
+
+            CREATE TABLE IF NOT EXISTS volume_locations (
+                id             TEXT PRIMARY KEY,
+                volume_id      TEXT NOT NULL,
+                location_type  TEXT NOT NULL,
+                disk_id        TEXT,
+                path           TEXT,
+                is_current     INTEGER NOT NULL DEFAULT 0,
+                created_at     TEXT NOT NULL,
+                FOREIGN KEY(volume_id) REFERENCES volumes(id) ON DELETE CASCADE,
+                FOREIGN KEY(disk_id)   REFERENCES disks(id)   ON DELETE SET NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_volume_locations_volume_id ON volume_locations(volume_id);
+            CREATE INDEX IF NOT EXISTS idx_volume_locations_disk_id   ON volume_locations(disk_id);
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """;
         cmd.ExecuteNonQuery();
 
@@ -115,6 +163,15 @@ public sealed class CatalogService
                 """;
             stratSeed.ExecuteNonQuery();
         }
+
+        // ── Seed default settings if missing ─────────────────────────────────
+        using var settingSeed = conn.CreateCommand();
+        settingSeed.CommandText = """
+            INSERT OR IGNORE INTO settings(key, value) VALUES
+                ('show_debug_artifact_info', 'false'),
+                ('auto_export_ingestion_logs', 'true')
+            """;
+        settingSeed.ExecuteNonQuery();
 
         // ── Seed hardware_types if empty ──────────────────────────────────────
         using var seedCheck = conn.CreateCommand();
@@ -296,6 +353,37 @@ public sealed class CatalogService
         return list;
     }
 
+    // ── Settings ──────────────────────────────────────────────────────────────
+
+    public string GetSetting(string key, string defaultValue = "")
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT value FROM settings WHERE key = $key";
+        cmd.Parameters.AddWithValue("$key", key);
+        var raw = cmd.ExecuteScalar() as string;
+        return raw ?? defaultValue;
+    }
+
+    public bool GetBoolSetting(string key, bool defaultValue = false)
+    {
+        var raw = GetSetting(key, defaultValue ? "true" : "false");
+        return string.Equals(raw, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public void SetSetting(string key, string value)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO settings(key, value) VALUES($key, $value)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """;
+        cmd.Parameters.AddWithValue("$key",   key);
+        cmd.Parameters.AddWithValue("$value", value);
+        cmd.ExecuteNonQuery();
+    }
+
     private static object NullIfEmpty(string s) => s.Length > 0 ? s : DBNull.Value;
 
     // ── DAT Lines ─────────────────────────────────────────────────────────────
@@ -363,6 +451,29 @@ public sealed class CatalogService
         tx.Commit();
     }
 
+    /// <summary>
+    /// Updates only the mutable metadata fields on an existing DAT line.
+    /// Identity fields (platform_id, authority, dat_category, storage_strategy_id,
+    /// data_store_path) are intentionally not touched.
+    /// </summary>
+    public void UpdateDatLineMetadata(string id, string version, int releaseCount, DateTime importedAtUtc)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dat_lines
+            SET version         = $version,
+                release_count   = $releaseCount,
+                imported_at_utc = $importedAt
+            WHERE id = $id
+            """;
+        cmd.Parameters.AddWithValue("$id",           id);
+        cmd.Parameters.AddWithValue("$version",      version);
+        cmd.Parameters.AddWithValue("$releaseCount", releaseCount);
+        cmd.Parameters.AddWithValue("$importedAt",   importedAtUtc.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
     // ── Stats ─────────────────────────────────────────────────────────────────
 
     public (int DatLines, int Total, int Present, int Missing, int Lost)
@@ -415,6 +526,217 @@ public sealed class CatalogService
                 try { File.Delete(absPath); } catch { /* best-effort */ }
         }
     }
+
+    // ── Disks ─────────────────────────────────────────────────────────────────
+
+    public List<DiskRecord> GetDisks()
+    {
+        var list = new List<DiskRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, label, status, declared_capacity_bytes, filesystem, brand, model, serial, created_at, updated_at
+            FROM disks
+            ORDER BY label
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(ReadDisk(r));
+        return list;
+    }
+
+    public void SaveDisk(DiskRecord d)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO disks(id, label, status, declared_capacity_bytes, filesystem, brand, model, serial, created_at, updated_at)
+            VALUES($id, $label, $status, $cap, $fs, $brand, $model, $serial, $created, $updated)
+            ON CONFLICT(id) DO UPDATE SET
+                label                   = excluded.label,
+                status                  = excluded.status,
+                declared_capacity_bytes = excluded.declared_capacity_bytes,
+                filesystem              = excluded.filesystem,
+                brand                   = excluded.brand,
+                model                   = excluded.model,
+                serial                  = excluded.serial,
+                updated_at              = excluded.updated_at
+            """;
+        cmd.Parameters.AddWithValue("$id",      d.Id);
+        cmd.Parameters.AddWithValue("$label",   d.Label);
+        cmd.Parameters.AddWithValue("$status",  d.Status);
+        cmd.Parameters.AddWithValue("$cap",     d.DeclaredCapacityBytes);
+        cmd.Parameters.AddWithValue("$fs",      NullIfEmpty(d.Filesystem));
+        cmd.Parameters.AddWithValue("$brand",   NullIfEmpty(d.Brand));
+        cmd.Parameters.AddWithValue("$model",   NullIfEmpty(d.Model));
+        cmd.Parameters.AddWithValue("$serial",  NullIfEmpty(d.Serial));
+        cmd.Parameters.AddWithValue("$created", d.CreatedAt.ToString("o"));
+        cmd.Parameters.AddWithValue("$updated", d.UpdatedAt.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    public (long Capacity, long Used, long Free) GetDiskUsage(string diskId)
+    {
+        using var conn = Open();
+
+        // capacity
+        using var capCmd = conn.CreateCommand();
+        capCmd.CommandText = "SELECT declared_capacity_bytes FROM disks WHERE id = $id";
+        capCmd.Parameters.AddWithValue("$id", diskId);
+        var capacity = (long)(capCmd.ExecuteScalar() ?? 0L);
+
+        // used = sum of actual_size_bytes of volumes whose current location is this disk
+        using var usedCmd = conn.CreateCommand();
+        usedCmd.CommandText = """
+            SELECT COALESCE(SUM(v.actual_size_bytes), 0)
+            FROM volumes v
+            JOIN volume_locations vl ON vl.volume_id = v.id
+            WHERE vl.disk_id = $diskId AND vl.is_current = 1
+            """;
+        usedCmd.Parameters.AddWithValue("$diskId", diskId);
+        var used = (long)(usedCmd.ExecuteScalar() ?? 0L);
+
+        return (capacity, used, Math.Max(0, capacity - used));
+    }
+
+    private static DiskRecord ReadDisk(SqliteDataReader r) => new()
+    {
+        Id                    = r.GetString(0),
+        Label                 = r.GetString(1),
+        Status                = r.GetString(2),
+        DeclaredCapacityBytes = r.GetInt64(3),
+        Filesystem            = r.IsDBNull(4) ? "" : r.GetString(4),
+        Brand                 = r.IsDBNull(5) ? "" : r.GetString(5),
+        Model                 = r.IsDBNull(6) ? "" : r.GetString(6),
+        Serial                = r.IsDBNull(7) ? "" : r.GetString(7),
+        CreatedAt             = DateTime.Parse(r.GetString(8)),
+        UpdatedAt             = DateTime.Parse(r.GetString(9)),
+    };
+
+    // ── Volumes ───────────────────────────────────────────────────────────────
+
+    public List<VolumeRecord> GetVolumes()
+    {
+        var list = new List<VolumeRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, label, platform_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at
+            FROM volumes
+            ORDER BY label
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(ReadVolume(r));
+        return list;
+    }
+
+    public List<VolumeRecord> GetVolumesByDisk(string diskId)
+    {
+        var list = new List<VolumeRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT v.id, v.label, v.platform_id, v.dat_line_id, v.status,
+                   v.planned_size_bytes, v.actual_size_bytes, v.created_at, v.verified_at
+            FROM volumes v
+            JOIN volume_locations vl ON vl.volume_id = v.id
+            WHERE vl.disk_id = $diskId AND vl.is_current = 1
+            ORDER BY v.label
+            """;
+        cmd.Parameters.AddWithValue("$diskId", diskId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(ReadVolume(r));
+        return list;
+    }
+
+    public void SaveVolume(VolumeRecord v)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO volumes(id, label, platform_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at)
+            VALUES($id, $label, $platId, $dlId, $status, $planned, $actual, $created, $verified)
+            ON CONFLICT(id) DO UPDATE SET
+                label              = excluded.label,
+                status             = excluded.status,
+                planned_size_bytes = excluded.planned_size_bytes,
+                actual_size_bytes  = excluded.actual_size_bytes,
+                verified_at        = excluded.verified_at
+            """;
+        cmd.Parameters.AddWithValue("$id",       v.Id);
+        cmd.Parameters.AddWithValue("$label",    v.Label);
+        cmd.Parameters.AddWithValue("$platId",   v.PlatformId);
+        cmd.Parameters.AddWithValue("$dlId",     v.DatLineId);
+        cmd.Parameters.AddWithValue("$status",   v.Status);
+        cmd.Parameters.AddWithValue("$planned",  v.PlannedSizeBytes);
+        cmd.Parameters.AddWithValue("$actual",   v.ActualSizeBytes);
+        cmd.Parameters.AddWithValue("$created",  v.CreatedAt.ToString("o"));
+        cmd.Parameters.AddWithValue("$verified", v.VerifiedAt.HasValue ? v.VerifiedAt.Value.ToString("o") : DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public VolumeLocationRecord? GetCurrentLocation(string volumeId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, volume_id, location_type, disk_id, path, is_current, created_at
+            FROM volume_locations
+            WHERE volume_id = $vid AND is_current = 1
+            LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("$vid", volumeId);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new VolumeLocationRecord
+        {
+            Id           = r.GetString(0),
+            VolumeId     = r.GetString(1),
+            LocationType = r.GetString(2),
+            DiskId       = r.IsDBNull(3) ? null : r.GetString(3),
+            Path         = r.IsDBNull(4) ? null : r.GetString(4),
+            IsCurrent    = r.GetInt32(5) == 1,
+            CreatedAt    = DateTime.Parse(r.GetString(6)),
+        };
+    }
+
+    public void SaveVolumeLocation(VolumeLocationRecord loc)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO volume_locations(id, volume_id, location_type, disk_id, path, is_current, created_at)
+            VALUES($id, $volId, $locType, $diskId, $path, $isCurrent, $created)
+            ON CONFLICT(id) DO UPDATE SET
+                location_type = excluded.location_type,
+                disk_id       = excluded.disk_id,
+                path          = excluded.path,
+                is_current    = excluded.is_current
+            """;
+        cmd.Parameters.AddWithValue("$id",        loc.Id);
+        cmd.Parameters.AddWithValue("$volId",     loc.VolumeId);
+        cmd.Parameters.AddWithValue("$locType",   loc.LocationType);
+        cmd.Parameters.AddWithValue("$diskId",    (object?)loc.DiskId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$path",      (object?)loc.Path   ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$isCurrent", loc.IsCurrent ? 1 : 0);
+        cmd.Parameters.AddWithValue("$created",   loc.CreatedAt.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    private static VolumeRecord ReadVolume(SqliteDataReader r) => new()
+    {
+        Id               = r.GetString(0),
+        Label            = r.GetString(1),
+        PlatformId       = r.GetString(2),
+        DatLineId        = r.GetString(3),
+        Status           = r.GetString(4),
+        PlannedSizeBytes = r.GetInt64(5),
+        ActualSizeBytes  = r.GetInt64(6),
+        CreatedAt        = DateTime.Parse(r.GetString(7)),
+        VerifiedAt       = r.IsDBNull(8) ? null : DateTime.Parse(r.GetString(8)),
+    };
 
     // ── Connection ────────────────────────────────────────────────────────────
 

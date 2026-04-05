@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Arkadia.Data;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 
@@ -22,6 +23,15 @@ public sealed class LibraryEntry
 
     /// <summary>Resolved flag bitmaps for each language code. Set after theme is loaded; empty until then.</summary>
     public IReadOnlyList<Bitmap> FlagImages { get; set; } = [];
+
+    /// <summary>ROM file entries declared by the DAT for this release. Empty until populated from the store.</summary>
+    public IReadOnlyList<ReleaseFileRecord> RomFiles { get; set; } = [];
+
+    /// <summary>Internal release ID in the DAT-line DB. Used for cross-release queries.</summary>
+    public string ReleaseId { get; init; } = "";
+
+    /// <summary>Absolute path to the DAT-line SQLite DB that owns this release.</summary>
+    public string DbPath { get; init; } = "";
 
     /// <summary>Display value: "—" for Missing/Pending status or unassigned tier; otherwise the raw tier.</summary>
     public string TierDisplay => Status is "Missing" or "Pending" || Tier == "" ? "—" : Tier;

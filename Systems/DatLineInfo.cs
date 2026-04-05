@@ -10,7 +10,11 @@ public sealed record DatLineInfo(
     int     Releases,
     string  LastImport,
     string  StorageStrategy    = "",
+    string  Authority          = "",
+    string  DatCategory        = "",
+    string  DataStorePath      = "",
     string? LibraryPlatform    = null,
     string? LibraryDatLine     = null,
     string? CatalogId          = null,
-    string? CatalogPlatformId  = null);
+    string? CatalogPlatformId  = null,
+    int     Outdated           = 0);

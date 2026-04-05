@@ -3,6 +3,9 @@
         xmlns:dash="using:Arkadia.Dashboard"
         xmlns:lib="using:Arkadia.Library"
         xmlns:sys="using:Arkadia.Systems"
+        xmlns:pend="using:Arkadia.Pending"
+        xmlns:disks="using:Arkadia.Disks"
+        xmlns:vols="using:Arkadia.Volumes"
         x:Class="Arkadia.MainWindow"
         Title="Arkadia"
         Width="1400" Height="720"
@@ -160,6 +163,32 @@
         </Style>
 
         <!-- ══════════════════════════════════════════════════════════
+             Text action links (Update DAT, Delete, Open in Library, etc.)
+        ══════════════════════════════════════════════════════════════ -->
+
+        <Style Selector="TextBlock.text-action">
+            <Setter Property="FontSize"          Value="12"/>
+            <Setter Property="FontWeight"        Value="SemiBold"/>
+            <Setter Property="TextDecorations"   Value="{x:Null}"/>
+            <Setter Property="Cursor"            Value="Hand"/>
+        </Style>
+        <Style Selector="TextBlock.text-action:pointerover">
+            <Setter Property="TextDecorations" Value="Underline"/>
+        </Style>
+        <Style Selector="TextBlock.text-action.accent">
+            <Setter Property="Foreground" Value="#7B68EE"/>
+        </Style>
+        <Style Selector="TextBlock.text-action.accent:pointerover">
+            <Setter Property="Foreground" Value="#9B8EFF"/>
+        </Style>
+        <Style Selector="TextBlock.text-action.danger">
+            <Setter Property="Foreground" Value="#EF5350"/>
+        </Style>
+        <Style Selector="TextBlock.text-action.danger:pointerover">
+            <Setter Property="Foreground" Value="#FF6B68"/>
+        </Style>
+
+        <!-- ══════════════════════════════════════════════════════════
              Library view styles
         ══════════════════════════════════════════════════════════════ -->
 
@@ -239,6 +268,18 @@
                         <StackPanel Orientation="Horizontal" Spacing="10">
                             <PathIcon Width="14" Height="14" Data="M0 0H14V4H0Z M0 5H6V9H0Z M8 5H14V9H8Z M0 10H6V14H0Z M8 10H14V14H8Z"/>
                             <TextBlock Text="Systems" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="NavPending" Classes="nav" Tag="Pending" Click="OnNavClick">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <PathIcon Width="14" Height="14" Data="F1 M7 1A6 6 0 1 0 7 13A6 6 0 1 0 7 1Z M7 4V7.5L9.5 9"/>
+                            <TextBlock Text="Pending" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="NavStaging" Classes="nav" Tag="Staging" Click="OnNavClick">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <PathIcon Width="14" Height="14" Data="M1 1H13V3H1Z M1 5H10V7H1Z M1 9H8V11H1Z M11 7L14 10.5L11 14V11.5H7V9H11Z"/>
+                            <TextBlock Text="Staging" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="NavLibrary" Classes="nav" Tag="Library" Click="OnNavClick">
@@ -745,6 +786,12 @@
                                     <TextBlock Grid.Column="1" x:Name="SystemsDetailPresent"     Classes="card-val" Margin="0"
                                                HorizontalAlignment="Center" TextAlignment="Center"/>
                                 </Grid>
+                                <Grid x:Name="SystemsDetailOutdatedRow" ColumnDefinitions="*,72" Margin="0,0,0,8" IsVisible="False">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Outdated"     Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailOutdated"    Classes="card-val" Margin="0"
+                                               Foreground="#888899"
+                                               HorizontalAlignment="Center" TextAlignment="Center"/>
+                                </Grid>
                                 <Grid ColumnDefinitions="*,72" Margin="0,0,0,8">
                                     <TextBlock Grid.Column="0" Classes="card-key" Text="Missing"      Margin="0"/>
                                     <TextBlock Grid.Column="1" x:Name="SystemsDetailMissing"     Classes="card-val" Margin="0"
@@ -1011,18 +1058,23 @@
                                     <TextBlock Grid.Column="1" x:Name="DetailSize"     Classes="card-val" Margin="0"/>
                                 </Grid>
 
-                                <!-- DAT FILES section -->
+                                <!-- ROM FILES section -->
                                 <Border Classes="card-divider" Margin="0,16,0,14"/>
-                                <TextBlock Classes="widget-title" Text="DAT FILES" Margin="0,0,0,10"/>
+                                <TextBlock Classes="widget-title" Text="ROM FILES" Margin="0,0,0,10"/>
                                 <StackPanel x:Name="DetailDatFiles" Spacing="10"/>
 
-                                <!-- ARKADIA ARTIFACTS section -->
-                                <Border Classes="card-divider" Margin="0,16,0,14"/>
-                                <TextBlock Classes="widget-title" Text="ARKADIA ARTIFACTS" Margin="0,0,0,10"/>
-                                <StackPanel x:Name="DetailArtifacts" Spacing="10"/>
+                                <!-- PREVIOUSLY SEEN IN section -->
+                                <Border x:Name="DetailOverlapDivider" Classes="card-divider" Margin="0,16,0,14" IsVisible="False"/>
+                                <TextBlock x:Name="DetailOverlapTitle" Classes="widget-title" Text="PREVIOUSLY SEEN IN" Margin="0,0,0,10" IsVisible="False"/>
+                                <StackPanel x:Name="DetailOverlapList" Spacing="6" IsVisible="False"/>
+
+                                <!-- DEBUG INFO section (visibility controlled by show_debug_artifact_info setting) -->
+                                <Border x:Name="DetailDebugDivider"    Classes="card-divider" Margin="0,16,0,14" IsVisible="False"/>
+                                <TextBlock x:Name="DetailDebugTitle"   Classes="widget-title" Text="DEBUG INFO" Margin="0,0,0,10" IsVisible="False"/>
+                                <StackPanel x:Name="DetailArtifacts"   Spacing="10" IsVisible="False"/>
                                 <TextBlock x:Name="DetailArtifactsEmpty"
                                            IsVisible="False"
-                                           Text="No local artifacts"
+                                           Text="No debug artifact data"
                                            FontSize="12"
                                            Foreground="{DynamicResource ArkTextSecondary}"/>
 
@@ -1034,6 +1086,758 @@
                 </Grid><!-- /list+detail -->
 
             </Grid><!-- /ViewLibrary -->
+
+            <!-- ── Pending view ── -->
+            <Grid x:Name="ViewPending"
+                  Grid.Row="1"
+                  IsVisible="False"
+                  RowDefinitions="Auto,*">
+
+                <!-- Toolbar -->
+                <Border Grid.Row="0"
+                        Padding="20,10"
+                        Background="{DynamicResource ArkSurface}"
+                        BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                        BorderThickness="0,0,0,1">
+                    <DockPanel>
+                        <TextBlock x:Name="PendingCountText"
+                                   DockPanel.Dock="Right"
+                                   VerticalAlignment="Center"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource ArkTextSecondary}"/>
+                        <TextBlock Text="Pending Reconciliations"
+                                   VerticalAlignment="Center"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ArkTextSecondary}"/>
+                    </DockPanel>
+                </Border>
+
+                <!-- List + detail -->
+                <Grid Grid.Row="1" ColumnDefinitions="*,1,300">
+
+                    <!-- List column -->
+                    <Grid Grid.Column="0" RowDefinitions="Auto,*">
+
+                        <!-- Column headers -->
+                        <Border Grid.Row="0"
+                                Padding="24,10"
+                                BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                BorderThickness="0,0,0,1">
+                            <Grid ColumnDefinitions="*,130,90,100,80">
+                                <TextBlock Grid.Column="0" Classes="col-header" Text="RELEASE"/>
+                                <TextBlock Grid.Column="1" Classes="col-header" Text="DAT LINE"/>
+                                <TextBlock Grid.Column="2" Classes="col-header" Text="PLATFORM"/>
+                                <TextBlock Grid.Column="3" Classes="col-header" Text="REASON"/>
+                                <TextBlock Grid.Column="4" Classes="col-header" Text="CREATED" HorizontalAlignment="Right"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Empty state -->
+                        <TextBlock x:Name="PendingListEmpty"
+                                   Grid.Row="1"
+                                   IsVisible="False"
+                                   Text="No pending reconciliations"
+                                   TextAlignment="Center"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+
+                        <!-- Rows -->
+                        <ListBox x:Name="PendingList"
+                                 Grid.Row="1"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 Padding="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 SelectionChanged="OnPendingSelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="pend:PendingItem">
+                                    <Grid ColumnDefinitions="*,130,90,100,80" Margin="24,0,24,0">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding ReleaseName}"
+                                                   FontSize="13"
+                                                   Foreground="{DynamicResource ArkTextPrimary}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding DatLineName}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding PlatformName}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding ReasonDisplay}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="4"
+                                                   Text="{Binding CreatedLabel}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   HorizontalAlignment="Right"
+                                                   VerticalAlignment="Center"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                    </Grid><!-- /list column -->
+
+                    <!-- Vertical divider -->
+                    <Border Grid.Column="1"
+                            Background="{DynamicResource ArkSurfaceAlt}"/>
+
+                    <!-- Detail panel -->
+                    <Grid Grid.Column="2"
+                          Background="{DynamicResource ArkSurface}">
+
+                        <TextBlock x:Name="PendingDetailEmptyState"
+                                   Text="Select an item&#x0a;to view details"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="PendingDetailContent"
+                                        IsVisible="False"
+                                        Margin="24,22,24,22"
+                                        Spacing="0">
+
+                                <TextBlock Classes="widget-title" Text="PENDING RECONCILIATION"/>
+
+                                <TextBlock x:Name="PendingDetailReleaseName"
+                                           FontSize="15" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource ArkTextPrimary}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,18"/>
+
+                                <Border Classes="card-divider" Margin="0,0,0,12"/>
+
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="DAT Line" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="PendingDetailDatLine" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Platform" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="PendingDetailPlatform" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Reason" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="PendingDetailReason" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Status" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="PendingDetailStatus" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Created" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="PendingDetailCreated" Classes="card-val" Margin="0"/>
+                                </Grid>
+
+                                <!-- NEW RELEASE -->
+                                <Border Classes="card-divider" Margin="0,16,0,14"/>
+                                <TextBlock Classes="widget-title" Text="NEW RELEASE" Margin="0,0,0,10"/>
+                                <StackPanel x:Name="PendingDetailNewRelease" Spacing="8"/>
+
+                                <!-- MATCHED OUTDATED RELEASE (shown when OutdatedRelease is set) -->
+                                <Border x:Name="PendingDetailOutdatedDivider"
+                                        Classes="card-divider" Margin="0,16,0,14" IsVisible="False"/>
+                                <TextBlock x:Name="PendingDetailOutdatedTitle"
+                                           Classes="widget-title" Text="MATCHED OUTDATED RELEASE"
+                                           Margin="0,0,0,10" IsVisible="False"/>
+                                <StackPanel x:Name="PendingDetailOutdated" Spacing="8" IsVisible="False"/>
+
+                                <!-- TARGET -->
+                                <Border Classes="card-divider" Margin="0,16,0,14"/>
+                                <TextBlock Classes="widget-title" Text="TARGET" Margin="0,0,0,10"/>
+                                <StackPanel x:Name="PendingDetailTarget" Spacing="8"/>
+
+                                <!-- PHYSICAL LOCATOR (shown when any locator field is set) -->
+                                <Border x:Name="PendingDetailLocatorDivider"
+                                        Classes="card-divider" Margin="0,16,0,14" IsVisible="False"/>
+                                <TextBlock x:Name="PendingDetailLocatorTitle"
+                                           Classes="widget-title" Text="PHYSICAL LOCATOR"
+                                           Margin="0,0,0,10" IsVisible="False"/>
+                                <StackPanel x:Name="PendingDetailLocator" Spacing="8" IsVisible="False"/>
+
+                            </StackPanel>
+                        </ScrollViewer>
+
+                    </Grid><!-- /detail panel -->
+
+                </Grid><!-- /list+detail -->
+
+            </Grid><!-- /ViewPending -->
+
+            <!-- ══════════════════════════ Staging view ══════════════════════════ -->
+            <Grid x:Name="ViewStaging"
+                  Grid.Row="1"
+                  IsVisible="False"
+                  RowDefinitions="Auto,Auto,*">
+
+                <!-- Toolbar -->
+                <Border Grid.Row="0"
+                        Padding="20,10"
+                        Background="{DynamicResource ArkSurface}"
+                        BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                        BorderThickness="0,0,0,1">
+                    <DockPanel>
+                        <TextBlock x:Name="StagingCountText"
+                                   DockPanel.Dock="Right"
+                                   VerticalAlignment="Center"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource ArkTextSecondary}"/>
+                        <TextBlock Text="Pending Assembly"
+                                   VerticalAlignment="Center"
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ArkTextSecondary}"/>
+                    </DockPanel>
+                </Border>
+
+                <!-- Summary card -->
+                <Border Grid.Row="1"
+                        Margin="20,12,20,0"
+                        Background="{DynamicResource ArkSurface}"
+                        BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="16,12">
+                    <Grid ColumnDefinitions="*,*,*">
+                        <StackPanel Grid.Column="0" Spacing="2">
+                            <TextBlock Text="FILES PRESENT" FontSize="9" LetterSpacing="1.2"
+                                       Foreground="#555566"/>
+                            <TextBlock x:Name="StagingSumFiles"
+                                       Text="0" FontSize="20" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource ArkTextPrimary}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="2">
+                            <TextBlock Text="SIZE IN GB" FontSize="9" LetterSpacing="1.2"
+                                       Foreground="#555566"/>
+                            <TextBlock x:Name="StagingSumSize"
+                                       Text="0.00 GB" FontSize="20" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource ArkTextPrimary}"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Spacing="2">
+                            <TextBlock Text="INCOMPLETE RELEASES" FontSize="9" LetterSpacing="1.2"
+                                       Foreground="#555566"/>
+                            <TextBlock x:Name="StagingSumReleases"
+                                       Text="0" FontSize="20" FontWeight="SemiBold"
+                                       Foreground="{DynamicResource ArkTextPrimary}"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Tree + detail -->
+                <Grid Grid.Row="2" Margin="0,12,0,0" ColumnDefinitions="*,1,340">
+
+                    <!-- Left: tree -->
+                    <Grid Grid.Column="0" RowDefinitions="Auto,*">
+
+                        <!-- Column header -->
+                        <Border Grid.Row="0"
+                                Padding="20,8"
+                                BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                BorderThickness="0,0,0,1">
+                            <Grid ColumnDefinitions="*,80">
+                                <TextBlock Grid.Column="0" Classes="col-header" Text="RELEASE"/>
+                                <TextBlock Grid.Column="1" Classes="col-header" Text="PROGRESS"
+                                           HorizontalAlignment="Right"/>
+                            </Grid>
+                        </Border>
+
+                        <!-- Empty state -->
+                        <TextBlock x:Name="StagingTreeEmpty"
+                                   Grid.Row="1"
+                                   IsVisible="True"
+                                   Text="No incomplete releases in staging"
+                                   TextAlignment="Center"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+
+                        <!-- Tree scroll area -->
+                        <ScrollViewer x:Name="StagingTreeScroll"
+                                      Grid.Row="1"
+                                      IsVisible="False"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="StagingTree"
+                                        Margin="0,8,0,16"
+                                        Spacing="0"/>
+                        </ScrollViewer>
+
+                    </Grid>
+
+                    <!-- Splitter -->
+                    <Border Grid.Column="1"
+                            Background="{DynamicResource ArkSurfaceAlt}"/>
+
+                    <!-- Right: detail panel -->
+                    <Grid Grid.Column="2">
+                        <!-- Empty state -->
+                        <TextBlock x:Name="StagingDetailEmpty"
+                                   Text="Select a release&#x0a;to view details"
+                                   TextAlignment="Center" TextWrapping="Wrap"
+                                   FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"
+                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="StagingDetailContent"
+                                        IsVisible="False"
+                                        Margin="20,18,20,18"
+                                        Spacing="0">
+
+                                <!-- Header -->
+                                <TextBlock Classes="widget-title" Text="RELEASE"/>
+                                <TextBlock x:Name="StagingDetailName"
+                                           FontSize="14" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource ArkTextPrimary}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,14"/>
+                                <Border Classes="card-divider" Margin="0,0,0,10"/>
+
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Platform" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="StagingDetailPlatform" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="DAT Line" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="StagingDetailDatLine"
+                                               FontSize="11" FontFamily="Consolas,Courier New,monospace"
+                                               Foreground="#E07040" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Progress" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="StagingDetailProgress" Classes="card-val" Margin="0"/>
+                                </Grid>
+
+                                <!-- Files section -->
+                                <Border Classes="card-divider" Margin="0,0,0,10"/>
+                                <TextBlock Classes="widget-title" Text="FILES" Margin="0,0,0,8"/>
+
+                                <StackPanel x:Name="StagingDetailFiles" Spacing="4"/>
+
+                                <!-- Actions -->
+                                <Border Classes="card-divider" Margin="0,14,0,12"/>
+                                <Button x:Name="StagingOpenFolderBtn"
+                                        Content="Open Folder"
+                                        Background="{DynamicResource ArkSurface}"
+                                        Foreground="{DynamicResource ArkTextPrimary}"
+                                        BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                        BorderThickness="1"
+                                        Padding="14,7" CornerRadius="5"
+                                        HorizontalAlignment="Left"
+                                        Click="OnStagingOpenFolder"/>
+
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+
+                </Grid>
+
+            </Grid><!-- /ViewStaging -->
+
+            <!-- ══════════════════════════ Disks view ══════════════════════════ -->
+            <Grid x:Name="ViewDisks"
+                  Grid.Row="1"
+                  IsVisible="False"
+                  RowDefinitions="Auto,*">
+
+                <!-- Toolbar -->
+                <Border Grid.Row="0"
+                        Padding="20,10"
+                        Background="{DynamicResource ArkSurface}"
+                        BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                        BorderThickness="0,0,0,1">
+                    <DockPanel>
+                        <TextBlock x:Name="DisksCountText"
+                                   DockPanel.Dock="Right"
+                                   VerticalAlignment="Center"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                   Margin="16,0,0,0"/>
+                        <TextBox x:Name="DisksSearchBox"
+                                 Watermark="Search disks…"
+                                 FontSize="13"
+                                 TextChanged="OnDisksSearchChanged"/>
+                    </DockPanel>
+                </Border>
+
+                <!-- List + detail -->
+                <Grid Grid.Row="1" ColumnDefinitions="*,1,300">
+
+                    <!-- Table -->
+                    <Grid Grid.Column="0" RowDefinitions="Auto,*">
+
+                        <Border Grid.Row="0"
+                                Padding="20,8"
+                                BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                BorderThickness="0,0,0,1">
+                            <Grid ColumnDefinitions="52,*,90,90,90,100,140,90">
+                                <TextBlock Grid.Column="0" Classes="col-header" Text="STATUS" HorizontalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Classes="col-header" Text="LABEL"/>
+                                <TextBlock Grid.Column="2" Classes="col-header" Text="CAPACITY" HorizontalAlignment="Right"/>
+                                <TextBlock Grid.Column="3" Classes="col-header" Text="USED" HorizontalAlignment="Right"/>
+                                <TextBlock Grid.Column="4" Classes="col-header" Text="FREE" HorizontalAlignment="Right"/>
+                                <TextBlock Grid.Column="5" Classes="col-header" Text="FILESYSTEM" HorizontalAlignment="Center"/>
+                                <TextBlock Grid.Column="6" Classes="col-header" Text="MODEL"/>
+                                <TextBlock Grid.Column="7" Classes="col-header" Text="USAGE" HorizontalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+
+                        <ListBox x:Name="DisksList"
+                                 Grid.Row="1"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 Padding="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 SelectionChanged="OnDiskSelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="disks:DiskEntry">
+                                    <Grid ColumnDefinitions="52,*,90,90,90,100,140,90" Margin="20,0">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding StatusLabel}"
+                                                   FontSize="11" FontWeight="SemiBold"
+                                                   Foreground="{Binding StatusBrush}"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Label}"
+                                                   FontSize="13"
+                                                   Foreground="{DynamicResource ArkTextPrimary}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding CapacityLabel}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   HorizontalAlignment="Right"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding UsedLabel}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   HorizontalAlignment="Right"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="4"
+                                                   Text="{Binding FreeLabel}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   HorizontalAlignment="Right"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="5"
+                                                   Text="{Binding FilesystemLabel}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="6"
+                                                   Text="{Binding ModelLabel}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <!-- Usage bar -->
+                                        <Border Grid.Column="7"
+                                                Height="8"
+                                                CornerRadius="1"
+                                                Background="{DynamicResource ArkSurfaceAlt}"
+                                                VerticalAlignment="Center"
+                                                Margin="8,0">
+                                            <Border HorizontalAlignment="Left"
+                                                    Height="8"
+                                                    CornerRadius="1"
+                                                    Background="#4CAF50"
+                                                    Width="{Binding UsageRatio, Converter={x:Static disks:DiskUsageBarConverter.Instance}}"/>
+                                        </Border>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                    </Grid><!-- /table column -->
+
+                    <Border Grid.Column="1" Background="{DynamicResource ArkSurfaceAlt}"/>
+
+                    <!-- Disk detail panel -->
+                    <Grid Grid.Column="2" Background="{DynamicResource ArkSurface}">
+
+                        <TextBlock x:Name="DiskDetailEmpty"
+                                   Text="Select a disk&#x0a;to view details"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="DiskDetailContent"
+                                        IsVisible="False"
+                                        Margin="20,18,20,18"
+                                        Spacing="0">
+
+                                <TextBlock Classes="widget-title" Text="DISK DETAILS"/>
+
+                                <TextBlock x:Name="DiskDetailLabel"
+                                           FontSize="15" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource ArkTextPrimary}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,14"/>
+
+                                <Border Classes="card-divider" Margin="0,0,0,10"/>
+
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Status" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="DiskDetailStatus" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Capacity" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="DiskDetailCapacity" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Used" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="DiskDetailUsed" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Free" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="DiskDetailFree" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Filesystem" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="DiskDetailFilesystem" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Brand" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="DiskDetailBrand" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Model" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="DiskDetailModel" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Serial" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="DiskDetailSerial" Classes="card-val" Margin="0"/>
+                                </Grid>
+
+                                <!-- Segmented usage bar -->
+                                <Border Classes="card-divider" Margin="0,14,0,10"/>
+                                <TextBlock Classes="widget-title" Text="VOLUME USAGE" Margin="0,0,0,8"/>
+                                <Border x:Name="DiskSegmentBar"
+                                        Height="14"
+                                        CornerRadius="2"
+                                        Background="{DynamicResource ArkSurfaceAlt}"
+                                        Margin="0,0,0,10"/>
+
+                                <!-- Volumes on disk -->
+                                <Border Classes="card-divider" Margin="0,4,0,10"/>
+                                <TextBlock Classes="widget-title" Text="VOLUMES" Margin="0,0,0,8"/>
+                                <StackPanel x:Name="DiskVolumeList" Spacing="4"/>
+
+                            </StackPanel>
+                        </ScrollViewer>
+
+                    </Grid><!-- /disk detail -->
+
+                </Grid><!-- /list+detail -->
+
+            </Grid><!-- /ViewDisks -->
+
+            <!-- ══════════════════════════ Volumes view ══════════════════════════ -->
+            <Grid x:Name="ViewVolumes"
+                  Grid.Row="1"
+                  IsVisible="False"
+                  RowDefinitions="Auto,*">
+
+                <!-- Toolbar -->
+                <Border Grid.Row="0"
+                        Padding="20,10"
+                        Background="{DynamicResource ArkSurface}"
+                        BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                        BorderThickness="0,0,0,1">
+                    <DockPanel>
+                        <TextBlock x:Name="VolumesCountText"
+                                   DockPanel.Dock="Right"
+                                   VerticalAlignment="Center"
+                                   FontSize="11"
+                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                   Margin="16,0,0,0"/>
+                        <TextBox x:Name="VolumesSearchBox"
+                                 Watermark="Search volumes…"
+                                 FontSize="13"
+                                 TextChanged="OnVolumesSearchChanged"/>
+                    </DockPanel>
+                </Border>
+
+                <!-- List + detail -->
+                <Grid Grid.Row="1" ColumnDefinitions="*,1,300">
+
+                    <!-- Table -->
+                    <Grid Grid.Column="0" RowDefinitions="Auto,*">
+
+                        <Border Grid.Row="0"
+                                Padding="20,8"
+                                BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                BorderThickness="0,0,0,1">
+                            <Grid ColumnDefinitions="52,*,120,90,90,*,80">
+                                <TextBlock Grid.Column="0" Classes="col-header" Text="STATUS" HorizontalAlignment="Center"/>
+                                <TextBlock Grid.Column="1" Classes="col-header" Text="LABEL"/>
+                                <TextBlock Grid.Column="2" Classes="col-header" Text="DAT LINE"/>
+                                <TextBlock Grid.Column="3" Classes="col-header" Text="PLANNED" HorizontalAlignment="Right"/>
+                                <TextBlock Grid.Column="4" Classes="col-header" Text="ACTUAL" HorizontalAlignment="Right"/>
+                                <TextBlock Grid.Column="5" Classes="col-header" Text="LOCATION"/>
+                                <TextBlock Grid.Column="6" Classes="col-header" Text="FILL" HorizontalAlignment="Center"/>
+                            </Grid>
+                        </Border>
+
+                        <ListBox x:Name="VolumesList"
+                                 Grid.Row="1"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 Padding="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 SelectionChanged="OnVolumeSelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="vols:VolumeEntry">
+                                    <Grid ColumnDefinitions="52,*,120,90,90,*,80" Margin="20,0">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding StatusLabel}"
+                                                   FontSize="11" FontWeight="SemiBold"
+                                                   Foreground="{Binding StatusBrush}"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Label}"
+                                                   FontSize="13"
+                                                   Foreground="{DynamicResource ArkTextPrimary}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding DatLineId}"
+                                                   FontSize="11"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding PlannedLabel}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   HorizontalAlignment="Right"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="4"
+                                                   Text="{Binding ActualLabel}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   HorizontalAlignment="Right"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="5"
+                                                   Text="{Binding CurrentLocation}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <!-- Fill bar -->
+                                        <Border Grid.Column="6"
+                                                Height="8"
+                                                CornerRadius="1"
+                                                Background="{DynamicResource ArkSurfaceAlt}"
+                                                VerticalAlignment="Center"
+                                                Margin="8,0">
+                                            <Border HorizontalAlignment="Left"
+                                                    Height="8"
+                                                    CornerRadius="1"
+                                                    Background="#5C6BC0"
+                                                    Width="{Binding FillRatio, Converter={x:Static vols:VolumeFillBarConverter.Instance}}"/>
+                                        </Border>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                    </Grid><!-- /table column -->
+
+                    <Border Grid.Column="1" Background="{DynamicResource ArkSurfaceAlt}"/>
+
+                    <!-- Volume detail panel -->
+                    <Grid Grid.Column="2" Background="{DynamicResource ArkSurface}">
+
+                        <TextBlock x:Name="VolumeDetailEmpty"
+                                   Text="Select a volume&#x0a;to view details"
+                                   TextAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   FontSize="12"
+                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="VolumeDetailContent"
+                                        IsVisible="False"
+                                        Margin="20,18,20,18"
+                                        Spacing="0">
+
+                                <TextBlock Classes="widget-title" Text="VOLUME DETAILS"/>
+
+                                <TextBlock x:Name="VolumeDetailLabel"
+                                           FontSize="15" FontWeight="SemiBold"
+                                           Foreground="{DynamicResource ArkTextPrimary}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,14"/>
+
+                                <Border Classes="card-divider" Margin="0,0,0,10"/>
+
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Status" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailStatus" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Platform" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailPlatform" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="DAT Line" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailDatLine" Classes="card-val" Margin="0" TextWrapping="Wrap"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Planned" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailPlanned" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Actual" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailActual" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Location" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailLocation" Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Disk" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailDisk" Classes="card-val" Margin="0"/>
+                                </Grid>
+
+                            </StackPanel>
+                        </ScrollViewer>
+
+                    </Grid><!-- /volume detail -->
+
+                </Grid><!-- /list+detail -->
+
+            </Grid><!-- /ViewVolumes -->
 
         </Grid>
     </Grid>

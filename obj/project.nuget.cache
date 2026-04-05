@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "whMdUmN3qz0=",
+  "dgSpecHash": "4pZk1c008+I=",
   "success": true,
-  "projectFilePath": "D:\\Projects\\Arkadia\\Arkadia.csproj",
+  "projectFilePath": "d:\\Projects\\Arkadia\\Arkadia.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\HWS\\.nuget\\packages\\avalonia\\11.3.12\\avalonia.11.3.12.nupkg.sha512",
     "C:\\Users\\HWS\\.nuget\\packages\\avalonia.angle.windows.natives\\2.1.25547.20250602\\avalonia.angle.windows.natives.2.1.25547.20250602.nupkg.sha512",

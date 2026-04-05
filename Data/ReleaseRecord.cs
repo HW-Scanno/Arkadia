@@ -14,7 +14,13 @@ public sealed class ReleaseRecord
     public string Tier      { get; set; } = "";
     public string Region    { get; set; } = "";
     /// <summary>Comma-separated lowercase codes, e.g. "en,fr,de".</summary>
-    public string Languages { get; set; } = "";
-    public string Format    { get; set; } = "";
-    public string Size      { get; set; } = "";
+    public string Languages  { get; set; } = "";
+    public string Format     { get; set; } = "";
+    public string Size       { get; set; } = "";
+    /// <summary>
+    /// Trusted-source content identity derived from ROM SHA1 (or MD5) checksums.
+    /// Format: "sha1:&lt;hex&gt;[,sha1:&lt;hex&gt;...]" — see DatParser.ComputeContentKey.
+    /// Empty string for releases imported before this field was introduced.
+    /// </summary>
+    public string ContentKey { get; set; } = "";
 }

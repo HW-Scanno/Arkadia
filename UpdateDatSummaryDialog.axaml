@@ -1,0 +1,65 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.UpdateDatSummaryDialog"
+        Title="Update completed"
+        Width="400" Height="340"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <StackPanel Margin="28,24,28,24" Spacing="0">
+
+        <!-- Header -->
+        <TextBlock Text="UPDATE COMPLETED"
+                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                   Foreground="#888899" Margin="0,0,0,12"/>
+
+        <!-- Context -->
+        <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,16">
+            <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="120,*">
+                    <TextBlock Grid.Column="0" Text="Platform"   FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumPlatform"  FontSize="12" Foreground="#F0F0F0"/>
+                </Grid>
+                <Grid ColumnDefinitions="120,*">
+                    <TextBlock Grid.Column="0" Text="DAT Line ID" FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumId"
+                               FontSize="12" Foreground="#E07040"
+                               FontFamily="Consolas,Courier New,monospace"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- Counts -->
+        <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,20">
+            <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="Kept"     FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumKept"     FontSize="12" FontWeight="Medium" Foreground="#4CAF50"/>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="Outdated" FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumOutdated" FontSize="12" FontWeight="Medium" Foreground="#888899"/>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="Pending"  FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumPending"  FontSize="12" FontWeight="Medium" Foreground="#FFD54F"/>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto">
+                    <TextBlock Grid.Column="0" Text="Missing"  FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumMissing"  FontSize="12" FontWeight="Medium" Foreground="#FFA726"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- Close -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="Close"
+                    Background="#7B68EE" Foreground="#FFFFFF"
+                    Padding="16,8" CornerRadius="6" BorderThickness="0"
+                    Click="OnClose"/>
+        </StackPanel>
+
+    </StackPanel>
+</Window>

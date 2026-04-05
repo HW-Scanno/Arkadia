@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Xml;
 
 namespace Arkadia.Data;
@@ -19,11 +20,35 @@ public static class DatParser
         public string            ErrorMessage { get; init; } = "";
     }
 
+    /// <summary>
+    /// One ROM entry inside a &lt;game&gt; element.
+    /// Fields map directly to Logiqx XML attributes; empty string means absent.
+    /// </summary>
+    public sealed class ParsedRom
+    {
+        public string Name { get; init; } = "";
+        public string Size { get; init; } = "";
+        public string Crc  { get; init; } = "";
+        public string Md5  { get; init; } = "";
+        public string Sha1 { get; init; } = "";
+    }
+
     public sealed class ParsedGame
     {
-        public string Name        { get; init; } = "";
-        public string Region      { get; init; } = "";
-        public string Languages   { get; init; } = "";
+        public string           Name        { get; init; } = "";
+        public string           Region      { get; init; } = "";
+        public string           Languages   { get; init; } = "";
+
+        /// <summary>All &lt;rom&gt; children of this &lt;game&gt; element.</summary>
+        public List<ParsedRom>  Roms        { get; init; } = [];
+
+        /// <summary>
+        /// Stable content identity derived from ROM checksums.
+        /// Format: "sha1:&lt;hex&gt;[,sha1:&lt;hex&gt;...]" sorted ascending.
+        /// Falls back to "md5:..." if SHA1 is absent.
+        /// Empty string if no usable checksums are present.
+        /// </summary>
+        public string           ContentKey  { get; init; } = "";
     }
 
     public static Result Parse(string path)
@@ -57,11 +82,28 @@ public static class DatParser
                 var gameName  = el.GetAttribute("name");
                 if (gameName.Length == 0) continue;
 
+                var roms = new List<ParsedRom>();
+                foreach (XmlNode child in el.ChildNodes)
+                {
+                    if (child is not XmlElement rom) continue;
+                    if (rom.Name != "rom") continue;
+                    roms.Add(new ParsedRom
+                    {
+                        Name = rom.GetAttribute("name"),
+                        Size = rom.GetAttribute("size"),
+                        Crc  = rom.GetAttribute("crc"),
+                        Md5  = rom.GetAttribute("md5"),
+                        Sha1 = rom.GetAttribute("sha1"),
+                    });
+                }
+
                 games.Add(new ParsedGame
                 {
-                    Name      = gameName,
-                    Region    = ExtractRegion(gameName),
-                    Languages = ExtractLanguages(gameName),
+                    Name       = gameName,
+                    Region     = ExtractRegion(gameName),
+                    Languages  = ExtractLanguages(gameName),
+                    Roms       = roms,
+                    ContentKey = ComputeContentKey(roms),
                 });
             }
 
@@ -94,6 +136,34 @@ public static class DatParser
 
     private static Result Fail(string message) =>
         new() { Success = false, ErrorMessage = message };
+
+    /// <summary>
+    /// Derives a stable content identity from a game's ROM list.
+    /// Uses SHA1 when present; falls back to MD5.
+    /// Returns empty string if no usable checksums are available.
+    /// </summary>
+    internal static string ComputeContentKey(List<ParsedRom> roms)
+    {
+        var sha1s = roms
+            .Select(r => r.Sha1.Trim().ToLowerInvariant())
+            .Where(s => s.Length == 40)   // SHA1 is 40 hex chars
+            .OrderBy(s => s)
+            .ToList();
+
+        if (sha1s.Count > 0)
+            return string.Join(",", sha1s.Select(s => $"sha1:{s}"));
+
+        var md5s = roms
+            .Select(r => r.Md5.Trim().ToLowerInvariant())
+            .Where(m => m.Length == 32)   // MD5 is 32 hex chars
+            .OrderBy(m => m)
+            .ToList();
+
+        if (md5s.Count > 0)
+            return string.Join(",", md5s.Select(m => $"md5:{m}"));
+
+        return "";
+    }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
