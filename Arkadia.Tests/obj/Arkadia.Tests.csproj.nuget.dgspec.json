@@ -70,6 +70,14 @@
             "Semi.Avalonia": {
               "target": "Package",
               "version": "[11.3.7.3, )"
+            },
+            "SharpCompress": {
+              "target": "Package",
+              "version": "[0.38.0, )"
+            },
+            "System.Management": {
+              "target": "Package",
+              "version": "[8.0.0, )"
             }
           },
           "imports": [

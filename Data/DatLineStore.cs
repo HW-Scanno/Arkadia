@@ -613,6 +613,29 @@ public sealed class DatLineStore
 
     // ── Derived Artifacts ─────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Returns the set of derived_artifact IDs linked to the given release
+    /// via release_artifacts → artifact_transforms → derived_artifacts.
+    /// </summary>
+    public HashSet<string> GetDerivedArtifactIdsByRelease(string releaseId)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT da.id
+            FROM release_artifacts ra
+            JOIN artifact_transforms at ON at.source_artifact_id = ra.artifact_id
+            JOIN derived_artifacts   da ON da.id = at.derived_artifact_id
+            WHERE ra.release_id = $releaseId
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            set.Add(r.GetString(0));
+        return set;
+    }
+
     public List<DerivedArtifactRecord> GetDerivedArtifacts()
     {
         var list = new List<DerivedArtifactRecord>();

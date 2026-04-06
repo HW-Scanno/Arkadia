@@ -28,10 +28,11 @@ public static class DiskDiscoveryService
             if (drive.DriveType != DriveType.Fixed &&
                 drive.DriveType != DriveType.Removable) continue;
 
-            var mountpoint = drive.RootDirectory.FullName;
-            var fsLabel    = drive.VolumeLabel ?? "";
-            long total     = drive.TotalSize;
-            long free      = drive.AvailableFreeSpace;
+            var mountpoint  = drive.RootDirectory.FullName;
+            var fsLabel     = drive.VolumeLabel  ?? "";
+            var driveFormat = drive.DriveFormat  ?? "";
+            long total      = drive.TotalSize;
+            long free       = drive.AvailableFreeSpace;
 
             var markerPath = Path.Combine(mountpoint, MarkerFileName);
             if (File.Exists(markerPath))
@@ -47,6 +48,7 @@ public static class DiskDiscoveryService
                         TotalCapacityBytes = total,
                         FreeSpaceBytes     = free,
                         FileSystemLabel    = fsLabel,
+                        DriveFormat        = driveFormat,
                         MarkerVersion      = marker.Value.Version,
                         InitializedUtc     = marker.Value.InitializedUtc,
                     });
@@ -60,6 +62,7 @@ public static class DiskDiscoveryService
                 TotalCapacityBytes = total,
                 FreeSpaceBytes     = free,
                 FileSystemLabel    = fsLabel,
+                DriveFormat        = driveFormat,
                 DiskLabel          = fsLabel,
             });
         }

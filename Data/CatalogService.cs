@@ -622,6 +622,45 @@ public sealed class CatalogService
     /// <summary>
     /// Updates declared_capacity_bytes and updated_at for an existing disk record.
     /// </summary>
+    /// <summary>
+    /// Atomically marks a disk and all volumes currently assigned to it as lost.
+    /// Returns the number of volumes updated.
+    /// This is a manual administrative action — it must never be called from
+    /// runtime discovery or mount-failure paths.
+    /// </summary>
+    public int MarkDiskLost(string diskId)
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        using var diskCmd = conn.CreateCommand();
+        diskCmd.Transaction = tx;
+        diskCmd.CommandText = """
+            UPDATE disks
+            SET status = 'lost', updated_at = $now
+            WHERE id = $id
+            """;
+        diskCmd.Parameters.AddWithValue("$now", DateTime.UtcNow.ToString("o"));
+        diskCmd.Parameters.AddWithValue("$id",  diskId);
+        diskCmd.ExecuteNonQuery();
+
+        using var volCmd = conn.CreateCommand();
+        volCmd.Transaction = tx;
+        volCmd.CommandText = """
+            UPDATE volumes
+            SET status = 'lost'
+            WHERE id IN (
+                SELECT volume_id FROM volume_locations
+                WHERE disk_id = $diskId AND is_current = 1
+            )
+            """;
+        volCmd.Parameters.AddWithValue("$diskId", diskId);
+        var volumeCount = volCmd.ExecuteNonQuery();
+
+        tx.Commit();
+        return volumeCount;
+    }
+
     public void UpdateDiskCapacity(string diskId, long capacityBytes)
     {
         using var conn = Open();
@@ -994,6 +1033,46 @@ public sealed class CatalogService
         cmd.Parameters.AddWithValue("$isCurrent", loc.IsCurrent ? 1 : 0);
         cmd.Parameters.AddWithValue("$created",   loc.CreatedAt.ToString("o"));
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// For each derived artifact ID in <paramref name="derivedIds"/>, returns the
+    /// distinct (Volume, DiskId, LocationType) tuples describing where those artifacts
+    /// are currently stored. LocationType is one of "disk", "workspace", or "source".
+    /// </summary>
+    public List<(VolumeRecord Volume, string? DiskId, string LocationType)> GetVolumeStorageForDerivedIds(
+        System.Collections.Generic.IReadOnlyList<string> derivedIds)
+    {
+        var result = new List<(VolumeRecord, string?, string)>();
+        if (derivedIds.Count == 0) return result;
+
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+
+        var placeholders = string.Join(",", System.Linq.Enumerable.Range(0, derivedIds.Count).Select(i => $"$id{i}"));
+        cmd.CommandText = $"""
+            SELECT DISTINCT
+                v.id, v.label, v.platform_id, v.dat_line_id, v.status,
+                v.planned_size_bytes, v.actual_size_bytes, v.created_at, v.verified_at,
+                vl.disk_id, COALESCE(vl.location_type, 'unknown')
+            FROM volume_artifacts va
+            JOIN volumes v ON v.id = va.volume_id
+            LEFT JOIN volume_locations vl ON vl.volume_id = v.id AND vl.is_current = 1
+            WHERE va.derived_artifact_id IN ({placeholders})
+            ORDER BY v.label
+            """;
+        for (int i = 0; i < derivedIds.Count; i++)
+            cmd.Parameters.AddWithValue($"$id{i}", derivedIds[i]);
+
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var vol    = ReadVolume(r);
+            var diskId = r.IsDBNull(9)  ? null : r.GetString(9);
+            var loc    = r.GetString(10);
+            result.Add((vol, diskId, loc));
+        }
+        return result;
     }
 
     private static VolumeRecord ReadVolume(SqliteDataReader r) => new()

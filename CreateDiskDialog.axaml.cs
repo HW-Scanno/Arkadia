@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Arkadia.Data;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
@@ -7,7 +8,8 @@ namespace Arkadia;
 
 public partial class CreateDiskDialog : Window
 {
-    public DiskRecord? Result { get; private set; }
+    public DiskRecord?    Result       { get; private set; }
+    public DiscoveredDisk? SelectedDrive { get; private set; }
 
     private readonly string _label;
 
@@ -20,37 +22,50 @@ public partial class CreateDiskDialog : Window
         GeneratedLabelText.Text = autoLabel;
     }
 
-    private void OnFieldChanged(object? sender, TextChangedEventArgs e) => Validate();
-
-    private void Validate()
+    private async void OnSelectDrive(object? sender, RoutedEventArgs e)
     {
-        var capText = CapacityInput.Text?.Trim() ?? "";
-        bool capOk  = double.TryParse(capText, System.Globalization.NumberStyles.Any,
-                          System.Globalization.CultureInfo.InvariantCulture, out var cap) && cap > 0;
+        var drives = DiskDiscoveryService.DiscoverAll();
+        var rows   = drives.ConvertAll(d => new DiscoveredDiskRow { Source = d });
 
-        string? err = capText.Length > 0 && !capOk ? "Capacity must be a positive number." : null;
+        var picker = new PickDriveDialog(rows);
+        var ok     = await picker.ShowDialog<bool>(this);
+        if (!ok || picker.SelectedDrive is null) return;
 
-        ErrorText.Text      = err ?? "";
-        ErrorText.IsVisible = err is not null;
-        ConfirmButton.IsEnabled = capOk;
+        SelectedDrive = picker.SelectedDrive;
+
+        // Build compact summary line
+        var total = FormatBytes(SelectedDrive.TotalCapacityBytes);
+        var free  = FormatBytes(SelectedDrive.FreeSpaceBytes);
+        var fs    = SelectedDrive.DriveFormat.Length > 0 ? SelectedDrive.DriveFormat : "?";
+        DriveInfoText.Text     = $"{SelectedDrive.Mountpoint}  |  {total}  |  {fs}  |  {free} free";
+        DriveInfoBorder.IsVisible = true;
+
+        // Best-effort hardware autofill (Windows-only, never blocks confirm)
+        DiskHardwareInfo hw = System.OperatingSystem.IsWindows()
+            ? DiskHardwareEnricher.TryGetInfo(SelectedDrive.Mountpoint)
+            : default;
+        if (hw.Manufacturer.Length > 0) BrandInput.Text  = hw.Manufacturer;
+        if (hw.Model.Length > 0)        ModelInput.Text  = hw.Model;
+        if (hw.SerialNumber.Length > 0) SerialInput.Text = hw.SerialNumber;
+
+        ConfirmButton.IsEnabled = true;
     }
 
     private void OnConfirm(object? sender, RoutedEventArgs e)
     {
-        var capGb = double.Parse(CapacityInput.Text!.Trim(),
-                       System.Globalization.CultureInfo.InvariantCulture);
-        var now   = DateTime.UtcNow;
+        if (SelectedDrive is null) return;
+        var now = DateTime.UtcNow;
 
         Result = new DiskRecord
         {
             Id                    = Guid.NewGuid().ToString("N"),
-            Label                 = _label,
+            Label                 = _label,          // preview — OnAddDisk overwrites with confirmed
             Status                = "available",
-            DeclaredCapacityBytes = (long)(capGb * 1024 * 1024 * 1024),
-            Filesystem            = FilesystemInput.Text?.Trim() ?? "",
-            Brand                 = BrandInput.Text?.Trim()      ?? "",
-            Model                 = ModelInput.Text?.Trim()       ?? "",
-            Serial                = SerialInput.Text?.Trim()      ?? "",
+            DeclaredCapacityBytes = SelectedDrive.TotalCapacityBytes,
+            Filesystem            = SelectedDrive.DriveFormat,
+            Brand                 = BrandInput.Text?.Trim()  ?? "",
+            Model                 = ModelInput.Text?.Trim()  ?? "",
+            Serial                = SerialInput.Text?.Trim() ?? "",
             CreatedAt             = now,
             UpdatedAt             = now,
         };
@@ -58,4 +73,12 @@ public partial class CreateDiskDialog : Window
     }
 
     private void OnCancel(object? sender, RoutedEventArgs e) => Close(false);
+
+    private static string FormatBytes(long b)
+    {
+        if (b >= 1L << 40) return $"{b / (double)(1L << 40):F1} TB";
+        if (b >= 1L << 30) return $"{b / (double)(1L << 30):F1} GB";
+        if (b >= 1L << 20) return $"{b / (double)(1L << 20):F1} MB";
+        return $"{b / (double)(1L << 10):F0} KB";
+    }
 }

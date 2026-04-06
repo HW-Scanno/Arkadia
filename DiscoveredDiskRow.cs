@@ -13,6 +13,7 @@ public sealed class DiscoveredDiskRow
     public string Label         => Source.FileSystemLabel.Length > 0 ? Source.FileSystemLabel : "(no label)";
     public string TotalLabel    => FormatBytes(Source.TotalCapacityBytes);
     public string FreeLabel     => FormatBytes(Source.FreeSpaceBytes);
+    public string DriveFormat   => Source.DriveFormat.Length > 0 ? Source.DriveFormat : "—";
     public string MarkerStatus  => Source.HasMarker ? $"Arkadia: {Source.DiskLabel}" : "—";
 
     private static string FormatBytes(long b)

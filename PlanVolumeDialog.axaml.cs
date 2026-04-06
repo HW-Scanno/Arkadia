@@ -43,7 +43,8 @@ public partial class PlanVolumeDialog : Window
             .ToList();
     }
 
-    private void OnClose(object? sender, RoutedEventArgs e) => Close();
+    private void OnClose(object? sender, RoutedEventArgs e)    => Close(false);
+    private void OnProceed(object? sender, RoutedEventArgs e) => Close(true);
 
     private static string FormatBytes(long b)
     {

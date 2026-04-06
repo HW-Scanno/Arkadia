@@ -44,6 +44,14 @@
             <Setter Property="CornerRadius" Value="4"/>
             <Setter Property="Cursor"       Value="Hand"/>
         </Style>
+        <Style Selector="Button.pick">
+            <Setter Property="Background"   Value="#1E1E2C"/>
+            <Setter Property="Foreground"   Value="#AAAACC"/>
+            <Setter Property="Padding"      Value="12,6"/>
+            <Setter Property="FontSize"     Value="12"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
     </Window.Styles>
 
     <Grid RowDefinitions="Auto,*,Auto">
@@ -67,15 +75,27 @@
                            Padding="8,7"/>
             </StackPanel>
 
-            <StackPanel Spacing="4">
-                <TextBlock Classes="field-label" Text="CAPACITY (GB) *"/>
-                <TextBox x:Name="CapacityInput" TextChanged="OnFieldChanged"/>
+            <!-- Drive selection -->
+            <StackPanel Spacing="6">
+                <TextBlock Classes="field-label" Text="PHYSICAL DRIVE *"/>
+                <Button Classes="pick" Content="Select Drive…" Click="OnSelectDrive"/>
+                <!-- Compact summary, hidden until a drive is selected -->
+                <Border x:Name="DriveInfoBorder"
+                        IsVisible="False"
+                        Background="#141420"
+                        CornerRadius="4" Padding="10,7">
+                    <TextBlock x:Name="DriveInfoText"
+                               FontSize="11"
+                               FontFamily="Consolas,Courier New,monospace"
+                               Foreground="#AAAACC"
+                               TextWrapping="Wrap"/>
+                </Border>
             </StackPanel>
 
-            <StackPanel Spacing="4">
-                <TextBlock Classes="field-label" Text="FILESYSTEM"/>
-                <TextBox x:Name="FilesystemInput"/>
-            </StackPanel>
+            <TextBlock Text="Add Disk will apply the Arkadia label and write a marker to the selected drive."
+                       FontSize="10"
+                       Foreground="#555566"
+                       TextWrapping="Wrap"/>
 
             <StackPanel Spacing="4">
                 <TextBlock Classes="field-label" Text="BRAND"/>
@@ -91,12 +111,6 @@
                 <TextBlock Classes="field-label" Text="SERIAL"/>
                 <TextBox x:Name="SerialInput"/>
             </StackPanel>
-
-            <TextBlock x:Name="ErrorText"
-                       IsVisible="False"
-                       FontSize="11"
-                       Foreground="#EF5350"
-                       TextWrapping="Wrap"/>
 
         </StackPanel>
 
