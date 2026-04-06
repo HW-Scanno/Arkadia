@@ -2638,11 +2638,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
+      "projectUniqueName": "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
       "projectName": "Arkadia.Tests",
-      "projectPath": "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
+      "projectPath": "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
       "packagesPath": "C:\\Users\\HWS\\.nuget\\packages\\",
-      "outputPath": "D:\\Projects\\Arkadia\\Arkadia.Tests\\obj\\",
+      "outputPath": "d:\\Projects\\Arkadia\\Arkadia.Tests\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\HWS\\AppData\\Roaming\\NuGet\\NuGet.Config"

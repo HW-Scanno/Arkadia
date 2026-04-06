@@ -812,7 +812,14 @@ public sealed class DatLineStore
     {
         // ── 1. Load all derived artifacts per release via the join chain ──────
         // releases → release_artifacts → artifact_transforms → derived_artifacts
+        // A derived artifact can appear more than once per release when multiple
+        // source artifacts share the same content_identity_key (idempotent transform
+        // reuses the same derived_artifact_id). Track seen IDs per release to avoid
+        // double-counting size and inflating DerivedCount / IsCompleteInArchive.
         var releaseToArtifacts = new Dictionary<string, List<DerivedArtifactRecord>>(
+            StringComparer.Ordinal);
+        // Per-release dedup set: releaseId → set of da.id already added
+        var releaseSeenDaIds = new Dictionary<string, HashSet<string>>(
             StringComparer.Ordinal);
         var releaseNames = new Dictionary<string, string>(StringComparer.Ordinal);
 
@@ -846,9 +853,20 @@ public sealed class DatLineStore
                 while (r.Read())
                 {
                     var releaseId = r.GetString(0);
+                    var daId      = r.GetString(1);
+
+                    if (!releaseSeenDaIds.TryGetValue(releaseId, out var seen))
+                    {
+                        seen = new HashSet<string>(StringComparer.Ordinal);
+                        releaseSeenDaIds[releaseId] = seen;
+                    }
+                    // Skip duplicate derived artifact within the same release.
+                    if (!seen.Add(daId))
+                        continue;
+
                     var da = new DerivedArtifactRecord
                     {
-                        Id                 = r.GetString(1),
+                        Id                 = daId,
                         StorageStrategyId  = r.GetString(2),
                         FileName           = r.GetString(3),
                         RelativePath       = r.GetString(4),
@@ -917,6 +935,113 @@ public sealed class DatLineStore
         return candidates
             .OrderBy(c => c.ReleaseName, StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    /// <summary>
+    /// Returns distinct derived_artifact_id values for each of the given release IDs,
+    /// using the same join chain as GetPlanningCandidates.
+    /// Key = releaseId, Value = distinct derived artifact IDs for that release.
+    /// Only releases that have at least one derived artifact appear in the result.
+    /// </summary>
+    public Dictionary<string, List<string>> GetDerivedArtifactIdsForReleases(
+        IEnumerable<string> releaseIds)
+    {
+        var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        // Per-release dedup (same idempotent-reuse concern as GetPlanningCandidates).
+        var seenPerRelease = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+
+        // Build a parameterised IN list.
+        var ids = releaseIds as IList<string> ?? releaseIds.ToList();
+        if (ids.Count == 0) return result;
+
+        var placeholders = string.Join(",",
+            System.Linq.Enumerable.Range(0, ids.Count).Select(i => $"$r{i}"));
+        cmd.CommandText = $"""
+            SELECT ra.release_id, da.id
+            FROM release_artifacts   ra
+            JOIN artifact_transforms at ON at.source_artifact_id  = ra.artifact_id
+            JOIN derived_artifacts   da ON da.id                  = at.derived_artifact_id
+            WHERE ra.release_id IN ({placeholders})
+            ORDER BY ra.release_id, da.id
+            """;
+        for (int i = 0; i < ids.Count; i++)
+            cmd.Parameters.AddWithValue($"$r{i}", ids[i]);
+
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var releaseId = r.GetString(0);
+            var daId      = r.GetString(1);
+
+            if (!seenPerRelease.TryGetValue(releaseId, out var seen))
+            {
+                seen = new HashSet<string>(StringComparer.Ordinal);
+                seenPerRelease[releaseId] = seen;
+            }
+            if (!seen.Add(daId)) continue;
+
+            if (!result.TryGetValue(releaseId, out var list))
+            {
+                list = [];
+                result[releaseId] = list;
+            }
+            list.Add(daId);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// For each given derived_artifact_id, returns the release name, file name,
+    /// archive relative path, and size. Used by the Build Volume handler to resolve
+    /// physical source paths and construct destination folder layout.
+    /// If a derived artifact is linked to multiple releases (edge case), the first
+    /// encountered release name is used.
+    /// </summary>
+    public List<ArtifactBuildInfo> GetArtifactBuildInfos(IEnumerable<string> derivedArtifactIds)
+    {
+        var ids = derivedArtifactIds as IList<string> ?? derivedArtifactIds.ToList();
+        if (ids.Count == 0) return [];
+
+        var result   = new List<ArtifactBuildInfo>(ids.Count);
+        var seenDaId = new HashSet<string>(StringComparer.Ordinal);
+
+        var placeholders = string.Join(",",
+            Enumerable.Range(0, ids.Count).Select(i => $"$d{i}"));
+
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT da.id, r.name, da.file_name, da.relative_path, da.size_bytes
+            FROM derived_artifacts   da
+            JOIN artifact_transforms at ON at.derived_artifact_id = da.id
+            JOIN release_artifacts   ra ON ra.artifact_id         = at.source_artifact_id
+            JOIN releases            r  ON r.id                   = ra.release_id
+            WHERE da.id IN ({placeholders})
+            ORDER BY r.name, da.file_name
+            """;
+        for (int i = 0; i < ids.Count; i++)
+            cmd.Parameters.AddWithValue($"$d{i}", ids[i]);
+
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var daId = r.GetString(0);
+            if (!seenDaId.Add(daId)) continue;   // keep first (lowest release name) only
+            result.Add(new ArtifactBuildInfo
+            {
+                DerivedArtifactId = daId,
+                ReleaseName       = r.GetString(1),
+                FileName          = r.GetString(2),
+                RelativePath      = r.GetString(3),
+                SizeBytes         = r.GetInt64(4),
+            });
+        }
+
+        return result;
     }
 
     private static string SafeFileName(string name)

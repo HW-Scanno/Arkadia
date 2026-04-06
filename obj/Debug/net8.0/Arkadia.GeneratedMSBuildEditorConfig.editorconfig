@@ -28,6 +28,9 @@ build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 [D:/Projects/Arkadia/AssignVolumeToDiskDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
+[D:/Projects/Arkadia/ConfirmDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
 [D:/Projects/Arkadia/CreateDiskDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
@@ -55,7 +58,13 @@ build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 [D:/Projects/Arkadia/IngestionProgressDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
+[D:/Projects/Arkadia/InitializeDiskDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
 [D:/Projects/Arkadia/MainWindow.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[D:/Projects/Arkadia/PlanVolumeDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
 [D:/Projects/Arkadia/Startup/SplashWindow.axaml]

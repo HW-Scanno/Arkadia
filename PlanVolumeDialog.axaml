@@ -1,0 +1,177 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:Arkadia"
+        x:Class="Arkadia.PlanVolumeDialog"
+        Title="Plan Volume (Preview)"
+        Width="900" Height="640"
+        MinWidth="720" MinHeight="400"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Resources>
+        <local:DecisionColorConverter x:Key="DecisionColor"/>
+    </Window.Resources>
+
+    <Window.Styles>
+        <Style Selector="TextBlock.col-header">
+            <Setter Property="FontSize"      Value="10"/>
+            <Setter Property="FontWeight"    Value="SemiBold"/>
+            <Setter Property="Foreground"    Value="#555566"/>
+            <Setter Property="LetterSpacing" Value="1"/>
+        </Style>
+        <Style Selector="TextBlock.stat-label">
+            <Setter Property="FontSize"   Value="11"/>
+            <Setter Property="Foreground" Value="#555566"/>
+        </Style>
+        <Style Selector="TextBlock.stat-val">
+            <Setter Property="FontSize"     Value="11"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="Foreground"   Value="#CCCCDD"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"   Value="#1E1E2C"/>
+            <Setter Property="Foreground"   Value="#AAAACC"/>
+            <Setter Property="Padding"      Value="20,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+    </Window.Styles>
+
+    <!--
+        Row 0 Auto  — header (volume name + read-only label)
+        Row 1 Auto  — summary stats
+        Row 2 Auto  — column headers
+        Row 3 *     — scrollable decision rows
+        Row 4 Auto  — footer / close button
+    -->
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto" Margin="0">
+
+        <!-- Row 0: Header -->
+        <Border Grid.Row="0" Padding="24,16,24,14"
+                BorderBrush="#181826" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="3">
+                <TextBlock x:Name="DialogTitle"
+                           FontSize="15" FontWeight="SemiBold" Foreground="#E8E8F0"/>
+                <TextBlock Text="READ-ONLY PREVIEW — no changes will be committed"
+                           FontSize="10" LetterSpacing="1" Foreground="#555566"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Row 1: Summary stats (2×4 grid) -->
+        <Border Grid.Row="1" Background="#1A1A24" Padding="24,12,24,12"
+                BorderBrush="#181826" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="*,*,*,*" RowDefinitions="Auto,Auto">
+
+                <StackPanel Grid.Row="0" Grid.Column="0" Spacing="2" Margin="0,0,16,8">
+                    <TextBlock Classes="stat-label" Text="CAPACITY"/>
+                    <TextBlock x:Name="StatCapacity" Classes="stat-val"/>
+                </StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="1" Spacing="2" Margin="0,0,16,8">
+                    <TextBlock Classes="stat-label" Text="USED"/>
+                    <TextBlock x:Name="StatUsed" Classes="stat-val"/>
+                </StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="2" Spacing="2" Margin="0,0,16,8">
+                    <TextBlock Classes="stat-label" Text="REMAINING BEFORE"/>
+                    <TextBlock x:Name="StatRemainingBefore" Classes="stat-val"/>
+                </StackPanel>
+                <StackPanel Grid.Row="0" Grid.Column="3" Spacing="2">
+                    <TextBlock Classes="stat-label" Text="CANDIDATES"/>
+                    <TextBlock x:Name="StatCandidates" Classes="stat-val"/>
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Grid.Column="0" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Classes="stat-label" Text="PLANNED"/>
+                    <TextBlock x:Name="StatPlanned" Classes="stat-val" Foreground="#81C784"/>
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="1" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Classes="stat-label" Text="REMAINING AFTER"/>
+                    <TextBlock x:Name="StatRemainingAfter" Classes="stat-val"/>
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="2" Spacing="2" Margin="0,0,16,0">
+                    <TextBlock Classes="stat-label" Text="INCLUDED"/>
+                    <TextBlock x:Name="StatIncluded" Classes="stat-val" Foreground="#81C784"/>
+                </StackPanel>
+                <StackPanel Grid.Row="1" Grid.Column="3" Spacing="2">
+                    <TextBlock Classes="stat-label" Text="DEFERRED"/>
+                    <TextBlock x:Name="StatDeferred" Classes="stat-val" Foreground="#FFB74D"/>
+                </StackPanel>
+
+            </Grid>
+        </Border>
+
+        <!-- Row 2: Column headers -->
+        <Border Grid.Row="2" Padding="16,6,16,6"
+                Background="#141420"
+                BorderBrush="#242433" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="80,*,60,80,*">
+                <TextBlock Grid.Column="0" Classes="col-header" Text="DECISION"/>
+                <TextBlock Grid.Column="1" Classes="col-header" Text="RELEASE" Margin="8,0,0,0"/>
+                <TextBlock Grid.Column="2" Classes="col-header" Text="FILES" HorizontalAlignment="Right"/>
+                <TextBlock Grid.Column="3" Classes="col-header" Text="SIZE" HorizontalAlignment="Right" Margin="0,0,8,0"/>
+                <TextBlock Grid.Column="4" Classes="col-header" Text="REASON" Margin="8,0,0,0"/>
+            </Grid>
+        </Border>
+
+        <!-- Row 3: Scrollable rows -->
+        <Border Grid.Row="3" Background="#1A1A24">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <ItemsControl x:Name="DecisionList" Padding="0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="local:PlanningDisplayRow">
+                            <Border Padding="16,4,16,4"
+                                    BorderBrush="#0D0D13" BorderThickness="0,0,0,1">
+                                <Grid ColumnDefinitions="80,*,60,80,*">
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Decision}"
+                                               FontSize="11" FontWeight="Bold"
+                                               Foreground="{Binding Decision, Converter={StaticResource DecisionColor}}"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding ReleaseName}"
+                                               FontSize="11"
+                                               Foreground="#CCCCDD"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center"
+                                               Margin="8,0,0,0"/>
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding DerivedCount}"
+                                               FontSize="11"
+                                               Foreground="#888899"
+                                               HorizontalAlignment="Right"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="3"
+                                               Text="{Binding SizeLabel}"
+                                               FontSize="10"
+                                               FontFamily="Consolas,Courier New,monospace"
+                                               Foreground="#888899"
+                                               HorizontalAlignment="Right"
+                                               VerticalAlignment="Center"
+                                               Margin="0,0,8,0"/>
+                                    <TextBlock Grid.Column="4"
+                                               Text="{Binding Reason}"
+                                               FontSize="10"
+                                               Foreground="#555566"
+                                               VerticalAlignment="Center"
+                                               Margin="8,0,0,0"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Row 4: Footer -->
+        <Border Grid.Row="4" Padding="24,12,24,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Classes="secondary" Content="Close" Click="OnClose"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

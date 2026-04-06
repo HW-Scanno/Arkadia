@@ -182,7 +182,8 @@ public sealed class CatalogService
         settingSeed.CommandText = """
             INSERT OR IGNORE INTO settings(key, value) VALUES
                 ('show_debug_artifact_info', 'false'),
-                ('auto_export_ingestion_logs', 'true')
+                ('auto_export_ingestion_logs', 'true'),
+                ('disk_sequence', '0')
             """;
         settingSeed.ExecuteNonQuery();
 
@@ -558,6 +559,84 @@ public sealed class CatalogService
         return list;
     }
 
+    /// <summary>
+    /// Atomically increments and returns the next disk sequence number, then
+    /// converts it to the Arkadia label format:
+    ///   1–9999  → ARKADIA-0001 … ARKADIA-9999
+    ///   10000+  → ARKADIA-A001 … ARKADIA-Z999
+    /// Uses the settings table key "disk_sequence".
+    /// </summary>
+    public string NextDiskLabel()
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        using var read = conn.CreateCommand();
+        read.Transaction = tx;
+        read.CommandText = "SELECT value FROM settings WHERE key = 'disk_sequence'";
+        var raw = read.ExecuteScalar() as string;
+        int next = raw is not null && int.TryParse(raw, out var n) ? n + 1 : 1;
+
+        using var write = conn.CreateCommand();
+        write.Transaction = tx;
+        write.CommandText = """
+            INSERT INTO settings(key, value) VALUES('disk_sequence', $v)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """;
+        write.Parameters.AddWithValue("$v", next.ToString());
+        write.ExecuteNonQuery();
+        tx.Commit();
+
+        return FormatDiskLabel(next);
+    }
+
+    /// <summary>
+    /// Returns what the next disk label would be WITHOUT incrementing the sequence.
+    /// Use this for display-only purposes (e.g. showing a preview in the create dialog).
+    /// Call <see cref="NextDiskLabel"/> only when the user confirms creation.
+    /// </summary>
+    public string PeekNextDiskLabel()
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT value FROM settings WHERE key = 'disk_sequence'";
+        var raw = cmd.ExecuteScalar() as string;
+        int next = raw is not null && int.TryParse(raw, out var n) ? n + 1 : 1;
+        return FormatDiskLabel(next);
+    }
+
+    private static string FormatDiskLabel(int n)
+    {
+        if (n <= 9999)
+            return $"ARKADIA-{n:D4}";
+        // Overflow: letter prefix, 3-digit suffix within that letter block
+        // n=10000 → A001, n=10999 → A999, n=11000 → B001, …
+        int overflow = n - 10000;
+        int letter   = overflow / 999;          // 0=A … 25=Z
+        int suffix   = (overflow % 999) + 1;    // 1–999
+        char c       = (char)('A' + (letter % 26));
+        return $"ARKADIA-{c}{suffix:D3}";
+    }
+
+    /// <summary>
+    /// Updates declared_capacity_bytes and updated_at for an existing disk record.
+    /// </summary>
+    public void UpdateDiskCapacity(string diskId, long capacityBytes)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE disks
+            SET declared_capacity_bytes = $cap,
+                updated_at              = $upd
+            WHERE id = $id
+            """;
+        cmd.Parameters.AddWithValue("$cap", capacityBytes);
+        cmd.Parameters.AddWithValue("$upd", DateTime.UtcNow.ToString("o"));
+        cmd.Parameters.AddWithValue("$id",  diskId);
+        cmd.ExecuteNonQuery();
+    }
+
     public void SaveDisk(DiskRecord d)
     {
         using var conn = Open();
@@ -717,6 +796,28 @@ public sealed class CatalogService
 
     // ── Volume Artifacts ──────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Returns all distinct derived_artifact_id values assigned (across all volumes)
+    /// for the given dat_line_id. Used by the Planning preview to mark candidates
+    /// as already assigned.
+    /// </summary>
+    public System.Collections.Generic.HashSet<string> GetAssignedDerivedIdsByDatLine(string datLineId)
+    {
+        var set = new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT derived_artifact_id
+            FROM volume_artifacts
+            WHERE dat_line_id = $dlid
+            """;
+        cmd.Parameters.AddWithValue("$dlid", datLineId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            set.Add(r.GetString(0));
+        return set;
+    }
+
     public List<VolumeArtifactRecord> GetVolumeArtifacts(string volumeId)
     {
         var list = new List<VolumeArtifactRecord>();
@@ -772,6 +873,47 @@ public sealed class CatalogService
         cmd.Parameters.AddWithValue("$status", va.Status);
         cmd.Parameters.AddWithValue("$added",  va.AddedAtUtc.ToString("o"));
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Inserts all records in <paramref name="batch"/> as a single atomic transaction.
+    /// Uses ON CONFLICT DO NOTHING so already-present rows are skipped without error.
+    /// Returns the number of rows actually inserted.
+    /// </summary>
+    public int SaveVolumeArtifactsBatch(System.Collections.Generic.IReadOnlyList<VolumeArtifactRecord> batch)
+    {
+        if (batch.Count == 0) return 0;
+
+        int inserted = 0;
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO volume_artifacts(id, volume_id, dat_line_id, derived_artifact_id, status, added_at_utc)
+            VALUES($id, $vid, $dlid, $daid, $status, $added)
+            ON CONFLICT(volume_id, derived_artifact_id) DO NOTHING
+            """;
+        var pId     = cmd.Parameters.Add("$id",     Microsoft.Data.Sqlite.SqliteType.Text);
+        var pVid    = cmd.Parameters.Add("$vid",    Microsoft.Data.Sqlite.SqliteType.Text);
+        var pDlid   = cmd.Parameters.Add("$dlid",   Microsoft.Data.Sqlite.SqliteType.Text);
+        var pDaid   = cmd.Parameters.Add("$daid",   Microsoft.Data.Sqlite.SqliteType.Text);
+        var pStatus = cmd.Parameters.Add("$status", Microsoft.Data.Sqlite.SqliteType.Text);
+        var pAdded  = cmd.Parameters.Add("$added",  Microsoft.Data.Sqlite.SqliteType.Text);
+
+        foreach (var va in batch)
+        {
+            pId.Value     = va.Id;
+            pVid.Value    = va.VolumeId;
+            pDlid.Value   = va.DatLineId;
+            pDaid.Value   = va.DerivedArtifactId;
+            pStatus.Value = va.Status;
+            pAdded.Value  = va.AddedAtUtc.ToString("o");
+            inserted += cmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return inserted;
     }
 
     /// <summary>

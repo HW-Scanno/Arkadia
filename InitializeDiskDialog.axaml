@@ -1,0 +1,115 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Arkadia"
+        x:Class="Arkadia.InitializeDiskDialog"
+        Title="Initialize Disk"
+        Width="760" Height="440"
+        MinWidth="600" MinHeight="340"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="TextBlock.col-header">
+            <Setter Property="FontSize"     Value="10"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="Foreground"   Value="#666677"/>
+            <Setter Property="Margin"       Value="0,0,12,0"/>
+        </Style>
+        <Style Selector="TextBlock.cell">
+            <Setter Property="FontSize"  Value="12"/>
+            <Setter Property="Foreground" Value="#CCCCDD"/>
+            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="Button.primary">
+            <Setter Property="Background"   Value="#C05020"/>
+            <Setter Property="Foreground"   Value="#FFFFFF"/>
+            <Setter Property="Padding"      Value="16,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"   Value="#1E1E2C"/>
+            <Setter Property="Foreground"   Value="#AAAACC"/>
+            <Setter Property="Padding"      Value="16,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding"          Value="0"/>
+            <Setter Property="Background"       Value="Transparent"/>
+        </Style>
+        <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="#1E2840"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+        <!-- Header -->
+        <Border Grid.Row="0" Padding="20,16,20,12"
+                BorderBrush="#181826" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="2">
+                <TextBlock x:Name="DialogTitle"
+                           FontSize="15" FontWeight="SemiBold"
+                           Foreground="#E8E8F0"/>
+                <TextBlock Text="Select the drive to initialize as this disk."
+                           FontSize="11" Foreground="#666677"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Column headers -->
+        <Border Grid.Row="1" Padding="20,8,20,6"
+                Background="#0D0D13"
+                BorderBrush="#181826" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="160,*,110,110,160">
+                <TextBlock Grid.Column="0" Classes="col-header" Text="MOUNTPOINT"/>
+                <TextBlock Grid.Column="1" Classes="col-header" Text="VOLUME LABEL"/>
+                <TextBlock Grid.Column="2" Classes="col-header" Text="TOTAL"/>
+                <TextBlock Grid.Column="3" Classes="col-header" Text="FREE"/>
+                <TextBlock Grid.Column="4" Classes="col-header" Text="MARKER"/>
+            </Grid>
+        </Border>
+
+        <!-- Drive list -->
+        <ListBox Grid.Row="2"
+                 x:Name="DriveList"
+                 Background="Transparent"
+                 BorderThickness="0"
+                 SelectionMode="Single"
+                 SelectionChanged="OnDriveSelectionChanged">
+            <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="local:DiscoveredDiskRow">
+                    <Border Padding="20,7,20,7"
+                            BorderBrush="#181826" BorderThickness="0,0,0,1">
+                        <Grid ColumnDefinitions="160,*,110,110,160">
+                            <TextBlock Grid.Column="0" Classes="cell" Text="{Binding Mountpoint}"/>
+                            <TextBlock Grid.Column="1" Classes="cell" Text="{Binding Label}"/>
+                            <TextBlock Grid.Column="2" Classes="cell" Text="{Binding TotalLabel}"/>
+                            <TextBlock Grid.Column="3" Classes="cell" Text="{Binding FreeLabel}"/>
+                            <TextBlock Grid.Column="4" Classes="cell" Text="{Binding MarkerStatus}"/>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <!-- Footer -->
+        <Border Grid.Row="3" Padding="20,12,20,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                <Button Classes="secondary" Content="Cancel" Click="OnCancel"/>
+                <Button x:Name="InitButton" Classes="primary"
+                        Content="Initialize"
+                        IsEnabled="False"
+                        Click="OnInitialize"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

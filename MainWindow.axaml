@@ -1468,6 +1468,16 @@
                                 Classes="view-toggle"
                                 Margin="0,0,8,0"
                                 Click="OnAddDisk"/>
+                        <Button DockPanel.Dock="Left"
+                                Content="Initialize Disk"
+                                Classes="view-toggle"
+                                Margin="0,0,8,0"
+                                Click="OnInitializeDisk"/>
+                        <Button DockPanel.Dock="Left"
+                                Content="Reinitialize Disk"
+                                Classes="view-toggle"
+                                Margin="0,0,8,0"
+                                Click="OnReinitializeDisk"/>
                         <TextBlock x:Name="DisksCountText"
                                    DockPanel.Dock="Right"
                                    VerticalAlignment="Center"
@@ -1851,16 +1861,28 @@
 
                                 <Border Classes="card-divider" Margin="0,4,0,12"/>
 
-                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                <WrapPanel Orientation="Horizontal">
                                     <Button Content="Assign Derived Artifacts"
                                             Classes="view-toggle"
-                                            HorizontalAlignment="Left"
+                                            Margin="0,0,8,8"
                                             Click="OnAssignDerivedArtifacts"/>
                                     <Button Content="Assign to Disk"
                                             Classes="view-toggle"
-                                            HorizontalAlignment="Left"
+                                            Margin="0,0,8,8"
                                             Click="OnAssignVolumeToDisk"/>
-                                </StackPanel>
+                                    <Button Content="Plan Volume"
+                                            Classes="view-toggle"
+                                            Margin="0,0,8,8"
+                                            Click="OnPlanVolume"/>
+                                    <Button Content="Apply Plan"
+                                            Classes="view-toggle"
+                                            Margin="0,0,8,8"
+                                            Click="OnApplyPlan"/>
+                                    <Button Content="Build Volume"
+                                            Classes="view-toggle"
+                                            Margin="0,0,0,8"
+                                            Click="OnBuildVolume"/>
+                                </WrapPanel>
 
                             </StackPanel>
                         </ScrollViewer>

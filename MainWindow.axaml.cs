@@ -962,12 +962,255 @@ public partial class MainWindow : Window
 
     private async void OnAddDisk(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        var dialog = new CreateDiskDialog();
-        var ok     = await dialog.ShowDialog<bool>(this);
+        // Peek (no increment) for display; only commit the sequence when user confirms.
+        var previewLabel = _catalog.PeekNextDiskLabel();
+        var dialog       = new CreateDiskDialog(previewLabel);
+        var ok           = await dialog.ShowDialog<bool>(this);
         if (!ok || dialog.Result is null) return;
 
-        _catalog.SaveDisk(dialog.Result);
+        // User confirmed — claim the sequence number now.
+        var confirmedLabel = _catalog.NextDiskLabel();
+
+        // Rebuild the record with the committed label (preview == confirmed in single-user;
+        // using confirmedLabel is the authoritative value regardless).
+        var raw    = dialog.Result;
+        var record = new Data.DiskRecord
+        {
+            Id                    = raw.Id,
+            Label                 = confirmedLabel,
+            Status                = raw.Status,
+            DeclaredCapacityBytes = raw.DeclaredCapacityBytes,
+            Filesystem            = raw.Filesystem,
+            Brand                 = raw.Brand,
+            Model                 = raw.Model,
+            Serial                = raw.Serial,
+            CreatedAt             = raw.CreatedAt,
+            UpdatedAt             = raw.UpdatedAt,
+        };
+        _catalog.SaveDisk(record);
         RefreshDisks();
+    }
+
+    private async void OnInitializeDisk(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = DisksList.SelectedItem as DiskEntry;
+        if (entry is null)
+        {
+            await new InfoDialog("No Disk Selected",
+                "Select a disk from the list before initializing.")
+                .ShowDialog(this);
+            return;
+        }
+
+        try
+        {
+            // ── Discover mounted volumes ──────────────────────────────────────
+            var drives = Data.DiskDiscoveryService.DiscoverAll();
+            if (drives.Count == 0)
+            {
+                await new InfoDialog("No Drives Found",
+                    "No fixed or removable drives were detected.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            var rows = drives.ConvertAll(d => new DiscoveredDiskRow { Source = d });
+
+            var dialog = new InitializeDiskDialog(entry.Label, rows);
+            var ok     = await dialog.ShowDialog<bool>(this);
+            if (!ok || dialog.SelectedDrive is null) return;
+
+            var drive      = dialog.SelectedDrive;
+            var mountpoint = drive.Mountpoint;
+
+            // ── Check for existing marker ─────────────────────────────────────
+            var markerPath = Data.DiskDiscoveryService.MarkerPath(mountpoint);
+            if (File.Exists(markerPath))
+            {
+                await new InfoDialog("Disk Already Initialized",
+                    $"A marker file already exists at:\n{markerPath}\n\n" +
+                    "Re-initialization is not supported in v1. " +
+                    "Remove the marker manually if you need to reinitialize.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            // ── Set filesystem label if it differs ────────────────────────────
+            if (!string.Equals(drive.FileSystemLabel, entry.Label,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                bool set = Data.VolumeLabel.TrySet(mountpoint, entry.Label);
+                if (!set)
+                {
+                    int err = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                    await new InfoDialog("Label Set Failed",
+                        $"Could not set volume label to \"{entry.Label}\".\n" +
+                        $"Win32 error: {err}\n\n" +
+                        "Try running as Administrator, or ensure the drive is not read-only.\n\n" +
+                        "No marker was written.")
+                        .ShowDialog(this);
+                    return;
+                }
+            }
+
+            // ── Detect capacity ───────────────────────────────────────────────
+            long capacityBytes = drive.TotalCapacityBytes;
+
+            // ── Write marker ──────────────────────────────────────────────────
+            var now       = DateTime.UtcNow;
+            var nowIso    = now.ToString("o");
+            var markerJson = System.Text.Json.JsonSerializer.Serialize(
+                new
+                {
+                    marker_type     = "arkadia_disk",
+                    marker_version  = 1,
+                    disk_id         = entry.Id,
+                    disk_label      = entry.Label,
+                    initialized_utc = nowIso,
+                    capacity_bytes  = capacityBytes,
+                },
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+            File.WriteAllText(markerPath, markerJson);
+
+            // ── Persist capacity into disk record ─────────────────────────────
+            _catalog.UpdateDiskCapacity(entry.Id, capacityBytes);
+
+            // ── Refresh UI ────────────────────────────────────────────────────
+            RefreshDisks();
+            var updated = _filteredDisks.FirstOrDefault(d => d.Id == entry.Id);
+            if (updated is not null)
+            {
+                DisksList.SelectedItem = updated;
+                UpdateDiskDetailPanel(updated);
+            }
+
+            await new InfoDialog("Disk Initialized",
+                $"Disk \"{entry.Label}\" has been initialized.\n\n" +
+                $"Drive:    {mountpoint}\n" +
+                $"Capacity: {FormatBytes(capacityBytes)}\n" +
+                $"Marker:   {markerPath}")
+                .ShowDialog(this);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            await new InfoDialog("Initialize Disk Error", ex.Message).ShowDialog(this);
+        }
+    }
+
+    private async void OnReinitializeDisk(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = DisksList.SelectedItem as DiskEntry;
+        if (entry is null)
+        {
+            await new InfoDialog("No Disk Selected",
+                "Select a disk from the list before reinitializing.")
+                .ShowDialog(this);
+            return;
+        }
+
+        try
+        {
+            // ── Discover mounted volumes ──────────────────────────────────────
+            var drives = Data.DiskDiscoveryService.DiscoverAll();
+            if (drives.Count == 0)
+            {
+                await new InfoDialog("No Drives Found",
+                    "No fixed or removable drives were detected.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            var rows   = drives.ConvertAll(d => new DiscoveredDiskRow { Source = d });
+            var dialog = new InitializeDiskDialog($"Reinitialize — {entry.Label}", rows);
+            var ok     = await dialog.ShowDialog<bool>(this);
+            if (!ok || dialog.SelectedDrive is null) return;
+
+            var drive      = dialog.SelectedDrive;
+            var mountpoint = drive.Mountpoint;
+            var markerPath = Data.DiskDiscoveryService.MarkerPath(mountpoint);
+
+            // ── Marker overwrite confirmation (if present) ────────────────────
+            if (drive.HasMarker)
+            {
+                var existingInfo = drive.DiskId == entry.Id
+                    ? $"This drive is already marked as this disk ({drive.DiskLabel})."
+                    : $"This drive carries a DIFFERENT Arkadia marker:\n" +
+                      $"  Disk ID:    {drive.DiskId}\n" +
+                      $"  Disk Label: {drive.DiskLabel}\n\n" +
+                      $"That marker will be permanently overwritten.";
+
+                var confirmed = await new ConfirmDialog(
+                    "Overwrite Existing Marker",
+                    $"The selected drive already has an ARKADIA.DISK.json marker.\n\n" +
+                    existingInfo + "\n\n" +
+                    $"Reinitializing will write a new marker for \"{entry.Label}\" " +
+                    $"(ID: {entry.Id}).\n\n" +
+                    "This cannot be undone. Proceed?")
+                    .ShowDialog<bool>(this);
+                if (!confirmed) return;
+            }
+
+            // ── Set filesystem label if it differs ────────────────────────────
+            if (!string.Equals(drive.FileSystemLabel, entry.Label,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                bool set = Data.VolumeLabel.TrySet(mountpoint, entry.Label);
+                if (!set)
+                {
+                    int err = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+                    await new InfoDialog("Label Set Failed",
+                        $"Could not set volume label to \"{entry.Label}\".\n" +
+                        $"Win32 error: {err}\n\n" +
+                        "Try running as Administrator, or ensure the drive is not read-only.\n\n" +
+                        "No marker was written.")
+                        .ShowDialog(this);
+                    return;
+                }
+            }
+
+            // ── Detect capacity ───────────────────────────────────────────────
+            long capacityBytes = drive.TotalCapacityBytes;
+
+            // ── Write (or overwrite) marker ───────────────────────────────────
+            var nowIso    = DateTime.UtcNow.ToString("o");
+            var markerJson = System.Text.Json.JsonSerializer.Serialize(
+                new
+                {
+                    marker_type     = "arkadia_disk",
+                    marker_version  = 1,
+                    disk_id         = entry.Id,
+                    disk_label      = entry.Label,
+                    initialized_utc = nowIso,
+                    capacity_bytes  = capacityBytes,
+                },
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+            File.WriteAllText(markerPath, markerJson);
+
+            // ── Persist capacity into disk record ─────────────────────────────
+            _catalog.UpdateDiskCapacity(entry.Id, capacityBytes);
+
+            // ── Refresh UI ────────────────────────────────────────────────────
+            RefreshDisks();
+            var updated = _filteredDisks.FirstOrDefault(d => d.Id == entry.Id);
+            if (updated is not null)
+            {
+                DisksList.SelectedItem = updated;
+                UpdateDiskDetailPanel(updated);
+            }
+
+            await new InfoDialog("Disk Reinitialized",
+                $"Disk \"{entry.Label}\" has been reinitialized.\n\n" +
+                $"Drive:    {mountpoint}\n" +
+                $"Capacity: {FormatBytes(capacityBytes)}\n" +
+                $"Marker:   {markerPath}")
+                .ShowDialog(this);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            await new InfoDialog("Reinitialize Disk Error", ex.Message).ShowDialog(this);
+        }
     }
 
     private void UpdateDiskDetailPanel(DiskEntry? entry)
@@ -1267,6 +1510,356 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             await new InfoDialog("Error", ex.Message).ShowDialog(this);
+        }
+    }
+
+    private async void OnPlanVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = VolumesList.SelectedItem as VolumeEntry;
+        if (entry is null) return;
+
+        try
+        {
+            if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath))
+            {
+                await new InfoDialog(
+                    "No DAT Line DB",
+                    $"Volume \"{entry.Label}\" has no DAT line database on disk.\n\n" +
+                    "Import the DAT line first before planning.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            if (entry.PlannedSizeBytes <= 0)
+            {
+                await new InfoDialog(
+                    "No Capacity Set",
+                    $"Volume \"{entry.Label}\" has no planned capacity.\n\n" +
+                    "Set the volume capacity before planning.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            var store          = new Data.DatLineStore(entry.DbPath);
+            var assignedIds    = _catalog.GetAssignedDerivedIdsByDatLine(entry.RawDatLineId);
+            var candidates     = store.GetPlanningCandidates(AppContext.BaseDirectory, assignedIds);
+
+            if (candidates.Count == 0)
+            {
+                await new InfoDialog(
+                    "No Planning Candidates",
+                    $"No archive-complete releases found for DAT line \"{entry.DatLineId}\".\n\n" +
+                    "Run ingestion on this DAT line first.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            var result = Data.VolumePlanner.Plan(
+                entry.PlannedSizeBytes,
+                entry.ActualSizeBytes,
+                candidates);
+
+            var dialog = new PlanVolumeDialog(result);
+            dialog.Title = $"Plan Volume — {entry.Label}";
+            (dialog.FindControl<Avalonia.Controls.TextBlock>("DialogTitle"))!.Text =
+                $"Plan Volume — {entry.Label}";
+            await dialog.ShowDialog(this);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            await new InfoDialog("Planning Error", ex.Message).ShowDialog(this);
+        }
+    }
+
+    private async void OnApplyPlan(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = VolumesList.SelectedItem as VolumeEntry;
+        if (entry is null) return;
+
+        try
+        {
+            // ── Preconditions (mirrors OnPlanVolume) ──────────────────────────
+            if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath))
+            {
+                await new InfoDialog(
+                    "No DAT Line DB",
+                    $"Volume \"{entry.Label}\" has no DAT line database on disk.\n\n" +
+                    "Import the DAT line first before applying a plan.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            if (entry.PlannedSizeBytes <= 0)
+            {
+                await new InfoDialog(
+                    "No Capacity Set",
+                    $"Volume \"{entry.Label}\" has no planned capacity.\n\n" +
+                    "Set the volume capacity before applying a plan.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            // ── Rebuild planning inputs exactly as Plan Volume does ───────────
+            var store       = new DatLineStore(entry.DbPath);
+            var assignedIds = _catalog.GetAssignedDerivedIdsByDatLine(entry.RawDatLineId);
+            var candidates  = store.GetPlanningCandidates(AppContext.BaseDirectory, assignedIds);
+
+            if (candidates.Count == 0)
+            {
+                await new InfoDialog(
+                    "No Planning Candidates",
+                    $"No archive-complete releases found for DAT line \"{entry.DatLineId}\".\n\n" +
+                    "Run ingestion on this DAT line first.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            var planResult = Data.VolumePlanner.Plan(
+                entry.PlannedSizeBytes,
+                entry.ActualSizeBytes,
+                candidates);
+
+            var included = planResult.Items
+                .Where(d => d.Decision == "include")
+                .ToList();
+
+            if (included.Count == 0)
+            {
+                await new InfoDialog(
+                    "Nothing to Apply",
+                    "The current plan has no releases marked for inclusion.\n\n" +
+                    "All candidates were either already assigned, archive-incomplete, or exceed remaining capacity.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            // ── Confirmation ──────────────────────────────────────────────────
+            long plannedBytes = planResult.PlannedBytes;
+            var confirmed = await new ConfirmDialog(
+                "Apply Plan",
+                $"{included.Count} release(s) will be linked to volume \"{entry.Label}\".\n" +
+                $"Planned size: {FormatBytes(plannedBytes)}.\n\n" +
+                "This will insert derived artifact records into volume_artifacts.\n" +
+                "No files will be moved or copied.")
+                .ShowDialog<bool>(this);
+
+            if (!confirmed) return;
+
+            // ── Resolve derived artifact IDs per included release ─────────────
+            var includedReleaseIds = included.Select(d => d.ReleaseId).ToList();
+            var derivedByRelease   = store.GetDerivedArtifactIdsForReleases(includedReleaseIds);
+
+            // ── Insert into volume_artifacts (one atomic transaction) ─────────
+            var now   = DateTime.UtcNow;
+            var batch = new List<Data.VolumeArtifactRecord>();
+
+            foreach (var releaseId in includedReleaseIds)
+            {
+                if (!derivedByRelease.TryGetValue(releaseId, out var daIds)) continue;
+                foreach (var daId in daIds)
+                {
+                    batch.Add(new Data.VolumeArtifactRecord
+                    {
+                        Id                = Guid.NewGuid().ToString("N"),
+                        VolumeId          = entry.Id,
+                        DatLineId         = entry.RawDatLineId,
+                        DerivedArtifactId = daId,
+                        Status            = "present_in_final",
+                        AddedAtUtc        = now,
+                    });
+                }
+            }
+
+            int linkedCount = _catalog.SaveVolumeArtifactsBatch(batch);
+
+            // ── Recalculate actual size ───────────────────────────────────────
+            var allDerived   = store.GetDerivedArtifacts();
+            var sizeByDrvId  = allDerived.ToDictionary(d => d.Id, d => d.SizeBytes, StringComparer.Ordinal);
+            _catalog.RecalculateVolumeActualSize(entry.Id, sizeByDrvId);
+
+            // ── Refresh UI ────────────────────────────────────────────────────
+            RefreshVolumes();
+            RefreshDisks();
+
+            var updated = _filteredVolumes.FirstOrDefault(v => v.Id == entry.Id);
+            if (updated is not null)
+            {
+                VolumesList.SelectedItem = updated;
+                UpdateVolumeDetailPanel(updated);
+            }
+
+            await new InfoDialog(
+                "Plan Applied",
+                $"{included.Count} release(s) applied.\n" +
+                $"{linkedCount} derived artifact(s) linked.\n" +
+                "Volume actual size recalculated.")
+                .ShowDialog(this);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            await new InfoDialog("Apply Plan Error", ex.Message).ShowDialog(this);
+        }
+    }
+
+    private async void OnBuildVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = VolumesList.SelectedItem as VolumeEntry;
+        if (entry is null) return;
+
+        try
+        {
+            // ── Preconditions ─────────────────────────────────────────────────
+            if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath))
+            {
+                await new InfoDialog(
+                    "No DAT Line DB",
+                    $"Volume \"{entry.Label}\" has no DAT line database on disk.\n\n" +
+                    "Import the DAT line first before building.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            var volumeArtifacts = _catalog.GetVolumeArtifacts(entry.Id);
+            if (volumeArtifacts.Count == 0)
+            {
+                await new InfoDialog(
+                    "No Artifacts Assigned",
+                    $"Volume \"{entry.Label}\" has no derived artifacts assigned.\n\n" +
+                    "Run Apply Plan first.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            // ── Resolve build infos ───────────────────────────────────────────
+            var store      = new Data.DatLineStore(entry.DbPath);
+            var daIds      = volumeArtifacts.Select(va => va.DerivedArtifactId).ToList();
+            var buildInfos = store.GetArtifactBuildInfos(daIds);
+
+            if (buildInfos.Count == 0)
+            {
+                await new InfoDialog(
+                    "No Build Info Resolved",
+                    "Could not resolve release/file info for any assigned artifact.\n\n" +
+                    "The DAT line database may be incomplete.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            // ── Pre-scan: classify every artifact before touching any file ────
+            var appRoot       = AppContext.BaseDirectory;
+            var volumeFolder  = Path.Combine(appRoot, "volumes", SafeFileName(entry.Label));
+
+            var notBuilt     = new List<(Data.ArtifactBuildInfo Info, string Src, string Dst)>();
+            var alreadyBuilt = new List<Data.ArtifactBuildInfo>();
+            var inconsistent = new List<(Data.ArtifactBuildInfo Info, string Reason)>();
+
+            foreach (var info in buildInfos)
+            {
+                var src = Path.Combine(appRoot,
+                    info.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+                var dst = Path.Combine(volumeFolder,
+                    SafeFileName(info.ReleaseName),
+                    info.FileName);
+
+                bool srcExists = File.Exists(src);
+                bool dstExists = File.Exists(dst);
+
+                if (srcExists && dstExists)
+                    inconsistent.Add((info,
+                        $"both source and destination exist (source was not moved): {info.RelativePath}"));
+                else if (dstExists)
+                    alreadyBuilt.Add(info);                  // src absent, dst present — already built
+                else if (srcExists)
+                    notBuilt.Add((info, src, dst));          // src present, dst absent — move needed
+                else
+                    inconsistent.Add((info,
+                        $"archive source missing, not yet built: {info.RelativePath}"));
+            }
+
+            // ── Abort if any inconsistent ─────────────────────────────────────
+            if (inconsistent.Count > 0)
+            {
+                const int maxExamples = 5;
+                var lines = inconsistent
+                    .Take(maxExamples)
+                    .Select(x => $"  {x.Info.FileName}: {x.Reason}");
+                var trailer = inconsistent.Count > maxExamples
+                    ? $"\n  …and {inconsistent.Count - maxExamples} more."
+                    : "";
+                await new InfoDialog(
+                    "Build Aborted — Inconsistent State",
+                    $"{inconsistent.Count} artifact(s) cannot be accounted for " +
+                    "(source missing, destination not built).\n\n" +
+                    string.Join("\n", lines) + trailer + "\n\n" +
+                    "No files were moved.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            if (notBuilt.Count == 0)
+            {
+                await new InfoDialog(
+                    "Already Built",
+                    $"All {alreadyBuilt.Count} artifact(s) are already present at:\n{volumeFolder}")
+                    .ShowDialog(this);
+                return;
+            }
+
+            // ── Confirmation ──────────────────────────────────────────────────
+            long totalBytes = notBuilt.Sum(x => x.Info.SizeBytes);
+            var confirmed = await new ConfirmDialog(
+                "Build Volume",
+                $"{notBuilt.Count} file(s) will be MOVED to:\n{volumeFolder}\n\n" +
+                $"Already built (skip): {alreadyBuilt.Count}\n" +
+                $"Data to move: {FormatBytes(totalBytes)}\n\n" +
+                "Source files will be removed from the archive after each move.")
+                .ShowDialog<bool>(this);
+
+            if (!confirmed) return;
+
+            // ── Execute moves ─────────────────────────────────────────────────
+            int movedCount = 0;
+            foreach (var (info, src, dst) in notBuilt)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+                File.Move(src, dst);
+                movedCount++;
+            }
+
+            // ── Record workspace location ─────────────────────────────────────
+            _catalog.SetCurrentLocation(new Data.VolumeLocationRecord
+            {
+                Id           = Guid.NewGuid().ToString("N"),
+                VolumeId     = entry.Id,
+                LocationType = "workspace",
+                DiskId       = null,
+                Path         = volumeFolder,
+                IsCurrent    = true,
+                CreatedAt    = DateTime.UtcNow,
+            });
+
+            // ── Refresh UI ────────────────────────────────────────────────────
+            RefreshVolumes();
+            RefreshDisks();
+
+            var updated = _filteredVolumes.FirstOrDefault(v => v.Id == entry.Id);
+            if (updated is not null)
+            {
+                VolumesList.SelectedItem = updated;
+                UpdateVolumeDetailPanel(updated);
+            }
+
+            await new InfoDialog(
+                "Build Complete",
+                $"Moved:          {movedCount} file(s)\n" +
+                $"Already built:  {alreadyBuilt.Count} file(s)\n" +
+                $"Total:          {buildInfos.Count} artifact(s)\n\n" +
+                $"Destination: {volumeFolder}")
+                .ShowDialog(this);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            await new InfoDialog("Build Volume Error", ex.Message).ShowDialog(this);
         }
     }
 

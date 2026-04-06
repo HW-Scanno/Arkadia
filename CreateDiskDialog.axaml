@@ -60,8 +60,11 @@
         <StackPanel Grid.Row="1" Margin="24,18,24,4" Spacing="12">
 
             <StackPanel Spacing="4">
-                <TextBlock Classes="field-label" Text="LABEL *"/>
-                <TextBox x:Name="LabelInput" TextChanged="OnFieldChanged"/>
+                <TextBlock Classes="field-label" Text="LABEL (AUTO-GENERATED)"/>
+                <TextBlock x:Name="GeneratedLabelText"
+                           FontSize="13" FontWeight="SemiBold"
+                           Foreground="#E8E8F0"
+                           Padding="8,7"/>
             </StackPanel>
 
             <StackPanel Spacing="4">
