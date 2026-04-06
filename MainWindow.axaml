@@ -1880,8 +1880,12 @@
                                             Click="OnApplyPlan"/>
                                     <Button Content="Build Volume"
                                             Classes="view-toggle"
-                                            Margin="0,0,0,8"
+                                            Margin="0,0,8,8"
                                             Click="OnBuildVolume"/>
+                                    <Button Content="Write Volume to Disk"
+                                            Classes="view-toggle"
+                                            Margin="0,0,0,8"
+                                            Click="OnWriteVolumeToDisk"/>
                                 </WrapPanel>
 
                             </StackPanel>

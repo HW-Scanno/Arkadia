@@ -75,3 +75,6 @@ build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
 [D:/Projects/Arkadia/UpdateDatSummaryDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[D:/Projects/Arkadia/WriteVolumeToDiskDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml

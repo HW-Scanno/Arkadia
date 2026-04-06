@@ -183,7 +183,8 @@ public sealed class CatalogService
             INSERT OR IGNORE INTO settings(key, value) VALUES
                 ('show_debug_artifact_info', 'false'),
                 ('auto_export_ingestion_logs', 'true'),
-                ('disk_sequence', '0')
+                ('disk_sequence', '0'),
+                ('log_on_copy', 'true')
             """;
         settingSeed.ExecuteNonQuery();
 

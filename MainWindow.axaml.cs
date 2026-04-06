@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Threading.Tasks;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
@@ -1860,6 +1861,278 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
             await new InfoDialog("Build Volume Error", ex.Message).ShowDialog(this);
+        }
+    }
+
+    private async void OnWriteVolumeToDisk(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = VolumesList.SelectedItem as VolumeEntry;
+        if (entry is null) return;
+
+        // ── Preconditions ─────────────────────────────────────────────────────
+        if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath))
+        {
+            await new InfoDialog("No DAT Line DB",
+                $"Volume \"{entry.Label}\" has no DAT line database on disk.")
+                .ShowDialog(this);
+            return;
+        }
+
+        if (entry.DiskId is null || entry.DiskLabel is null)
+        {
+            await new InfoDialog("No Disk Assigned",
+                $"Volume \"{entry.Label}\" has no disk assigned.\n\n" +
+                "Use Assign to Disk first.")
+                .ShowDialog(this);
+            return;
+        }
+
+        var appRoot      = AppContext.BaseDirectory;
+        var srcFolder    = Path.Combine(appRoot, "volumes", SafeFileName(entry.Label));
+        if (!Directory.Exists(srcFolder))
+        {
+            await new InfoDialog("Volume Folder Not Found",
+                $"The local volume folder does not exist:\n{srcFolder}\n\n" +
+                "Run Build Volume first.")
+                .ShowDialog(this);
+            return;
+        }
+
+        try
+        {
+            // ── Resolve disk mountpoint at runtime ────────────────────────────
+            var drives = Data.DiskDiscoveryService.DiscoverAll();
+            var matched = drives
+                .Where(d => d.HasMarker &&
+                            string.Equals(d.DiskId, entry.DiskId, StringComparison.Ordinal))
+                .ToList();
+
+            if (matched.Count == 0)
+            {
+                await new InfoDialog("Disk Not Found",
+                    $"Disk \"{entry.DiskLabel}\" (ID: {entry.DiskId}) is not currently mounted " +
+                    "or has no ARKADIA.DISK.json marker.\n\n" +
+                    "Connect the disk and ensure it has been initialized.")
+                    .ShowDialog(this);
+                return;
+            }
+            if (matched.Count > 1)
+            {
+                await new InfoDialog("Ambiguous Disk",
+                    $"Multiple drives match disk ID {entry.DiskId}. " +
+                    "Disconnect duplicates and try again.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            var drive      = matched[0];
+            var mountpoint = drive.Mountpoint;
+            var dstFolder  = Path.Combine(mountpoint, SafeFileName(entry.Label));
+
+            // ── Destination must not exist (v1: no merge) ─────────────────────
+            if (Directory.Exists(dstFolder))
+            {
+                await new InfoDialog("Destination Already Exists",
+                    $"The destination folder already exists:\n{dstFolder}\n\n" +
+                    "Remove it manually before writing.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            // ── Pre-enumerate source files ────────────────────────────────────
+            var files = Directory
+                .EnumerateFiles(srcFolder, "*", SearchOption.AllDirectories)
+                .Select(f =>
+                {
+                    var rel  = Path.GetRelativePath(srcFolder, f);
+                    var dst  = Path.Combine(dstFolder, rel);
+                    var size = new FileInfo(f).Length;
+                    return (SrcPath: f, DstPath: dst, RelPath: rel, Size: size);
+                })
+                .ToList();
+
+            if (files.Count == 0)
+            {
+                await new InfoDialog("Empty Volume Folder",
+                    $"No files found in:\n{srcFolder}")
+                    .ShowDialog(this);
+                return;
+            }
+
+            long totalBytes = files.Sum(x => x.Size);
+
+            // ── Free space check ──────────────────────────────────────────────
+            if (totalBytes > drive.FreeSpaceBytes)
+            {
+                await new InfoDialog("Insufficient Disk Space",
+                    $"Volume requires {FormatBytes(totalBytes)} but the disk only has " +
+                    $"{FormatBytes(drive.FreeSpaceBytes)} free.\n\nFree up space and try again.")
+                    .ShowDialog(this);
+                return;
+            }
+
+            // ── Log setting ───────────────────────────────────────────────────
+            bool logEnabled = _catalog.GetBoolSetting("log_on_copy", true);
+            System.Text.StringBuilder? log = logEnabled ? new System.Text.StringBuilder() : null;
+
+            var startTime = DateTime.UtcNow;
+            if (log is not null)
+            {
+                log.AppendLine("Write Volume to Disk");
+                log.AppendLine($"Started:     {startTime:o}");
+                log.AppendLine($"Volume:      {entry.Label}");
+                log.AppendLine($"Disk:        {entry.DiskLabel}");
+                log.AppendLine($"Mountpoint:  {mountpoint}");
+                log.AppendLine($"Files:       {files.Count}");
+                log.AppendLine($"Bytes:       {totalBytes}");
+                log.AppendLine();
+            }
+
+            // ── Open progress dialog ──────────────────────────────────────────
+            var header     = $"{entry.Label}  →  {entry.DiskLabel}  ({mountpoint})";
+            var progDialog = new WriteVolumeToDiskDialog(header, totalBytes, files.Count);
+            var dlgTask    = progDialog.ShowDialog<bool>(this);
+
+            // ── Run copy + verify on background thread ────────────────────────
+            string? errorMessage = null;
+            long copiedBytes = 0, verifiedBytes = 0;
+            int  filesProcessed = 0;
+
+            try
+            {
+                await Task.Run(async () =>
+                {
+                    // Copy phase
+                    foreach (var (srcPath, dstPath, relPath, size) in files)
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
+                        File.Copy(srcPath, dstPath, overwrite: false);
+                        copiedBytes += size;
+                        filesProcessed++;
+
+                        var elapsed  = DateTime.UtcNow - startTime;
+                        var sizeLabel = FormatBytes(size);
+                        log?.AppendLine($"COPY   {relPath}  ({sizeLabel})");
+
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        {
+                            progDialog.AppendRow("copy", relPath, sizeLabel);
+                            progDialog.UpdateStats(copiedBytes, verifiedBytes,
+                                                   filesProcessed, elapsed);
+                        });
+                    }
+
+                    // Verify phase
+                    foreach (var (_, dstPath, relPath, size) in files)
+                    {
+                        var info = new FileInfo(dstPath);
+                        if (!info.Exists)
+                            throw new InvalidOperationException(
+                                $"Verify failed — file missing: {relPath}");
+                        if (info.Length != size)
+                            throw new InvalidOperationException(
+                                $"Verify failed — size mismatch: {relPath} " +
+                                $"(expected {size}, got {info.Length})");
+
+                        verifiedBytes += size;
+                        var elapsed   = DateTime.UtcNow - startTime;
+                        var sizeLabel = FormatBytes(size);
+                        log?.AppendLine($"VERIFY {relPath}  ({sizeLabel})");
+
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        {
+                            progDialog.AppendRow("verify", relPath, sizeLabel);
+                            progDialog.UpdateStats(copiedBytes, verifiedBytes,
+                                                   filesProcessed, elapsed);
+                        });
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                errorMessage = ex.Message;
+            }
+
+            // ── Cleanup local volume folder after successful verify ────────────
+            string? cleanupError = null;
+            if (errorMessage is null)
+            {
+                try
+                {
+                    Directory.Delete(srcFolder, recursive: true);
+                    log?.AppendLine();
+                    log?.AppendLine($"Cleanup:     OK");
+                    log?.AppendLine($"Removed:     {srcFolder}");
+                }
+                catch (Exception ex)
+                {
+                    cleanupError = ex.Message;
+                    log?.AppendLine();
+                    log?.AppendLine($"Cleanup:     FAILED");
+                    log?.AppendLine($"Target:      {srcFolder}");
+                    log?.AppendLine($"Error:       {cleanupError}");
+                }
+            }
+
+            // ── Write log ─────────────────────────────────────────────────────
+            if (log is not null)
+            {
+                var endTime = DateTime.UtcNow;
+                log.AppendLine();
+                log.AppendLine($"Completed:   {endTime:o}");
+                log.AppendLine($"Duration:    {(endTime - startTime).TotalSeconds:F1}s");
+                log.AppendLine($"Result:      {(errorMessage is null ? "OK" : "FAILED")}");
+                if (errorMessage is not null)
+                    log.AppendLine($"Error:       {errorMessage}");
+
+                try
+                {
+                    var logDir  = Path.Combine(appRoot, "logs", "write-volume");
+                    Directory.CreateDirectory(logDir);
+                    var logFile = Path.Combine(logDir,
+                        $"{startTime:yyyyMMdd-HHmmss}-{SafeFileName(entry.Label)}.log");
+                    File.WriteAllText(logFile, log.ToString());
+                }
+                catch { /* log write failure is non-fatal */ }
+            }
+
+            // ── Finalise dialog ───────────────────────────────────────────────
+            if (errorMessage is null)
+            {
+                var completionText = cleanupError is null
+                    ? $"Completed — {files.Count} file(s) written, verified, and local copy removed."
+                    : $"Completed — {files.Count} file(s) written and verified. " +
+                      $"Local cleanup failed: {cleanupError}";
+                progDialog.SetCompleted(files.Count, copiedBytes, dstFolder, completionText);
+            }
+            else
+                progDialog.SetFailed(errorMessage);
+
+            await dlgTask;
+
+            // ── Post-close actions on success ─────────────────────────────────
+            if (errorMessage is null)
+            {
+                RefreshVolumes();
+                RefreshDisks();
+
+                var summaryLine = cleanupError is null
+                    ? "Local volume:   Removed"
+                    : $"Local cleanup:  FAILED — {cleanupError}";
+
+                await new InfoDialog(
+                    "Write Complete",
+                    $"Files copied:   {files.Count}\n" +
+                    $"Bytes copied:   {FormatBytes(copiedBytes)}\n" +
+                    $"Destination:    {dstFolder}\n" +
+                    $"Verification:   OK\n" +
+                    summaryLine)
+                    .ShowDialog(this);
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            await new InfoDialog("Write Volume Error", ex.Message).ShowDialog(this);
         }
     }
 

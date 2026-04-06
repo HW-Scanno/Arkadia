@@ -20,6 +20,7 @@ public sealed class ActionColorConverter : IValueConverter
             "delete" => "#9E9E9E",
             "skip"   => "#FFB74D",
             "hash"   => "#B39DDB",
+            "verify" => "#CE93D8",
             _        => action.EndsWith("-failed", StringComparison.Ordinal) ? "#E57373" : "#FFB74D",
         };
         return new SolidColorBrush(Color.Parse(hex));
