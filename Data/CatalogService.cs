@@ -623,16 +623,19 @@ public sealed class CatalogService
     /// Updates declared_capacity_bytes and updated_at for an existing disk record.
     /// </summary>
     /// <summary>
-    /// Atomically marks a disk and all volumes currently assigned to it as lost.
-    /// Returns the number of volumes updated.
-    /// This is a manual administrative action — it must never be called from
-    /// runtime discovery or mount-failure paths.
+    /// Atomically marks a disk, all its current volumes, and all volume_artifacts
+    /// on those volumes as lost within a single catalog transaction.
+    /// Returns the volume count and a per-dat-line map of derived artifact IDs that
+    /// were marked lost — callers must propagate this to each DatLineStore separately.
+    /// This is a manual administrative action — never call from runtime discovery paths.
     /// </summary>
-    public int MarkDiskLost(string diskId)
+    public (int VolumeCount, Dictionary<string, List<string>> ArtifactWork)
+        MarkDiskLost(string diskId)
     {
         using var conn = Open();
         using var tx   = conn.BeginTransaction();
 
+        // Mark disk lost
         using var diskCmd = conn.CreateCommand();
         diskCmd.Transaction = tx;
         diskCmd.CommandText = """
@@ -644,21 +647,64 @@ public sealed class CatalogService
         diskCmd.Parameters.AddWithValue("$id",  diskId);
         diskCmd.ExecuteNonQuery();
 
-        using var volCmd = conn.CreateCommand();
-        volCmd.Transaction = tx;
-        volCmd.CommandText = """
-            UPDATE volumes
-            SET status = 'lost'
-            WHERE id IN (
+        // Collect volume IDs before marking so we can run further queries in the same tx
+        var volumeIds = new List<string>();
+        using (var getVolCmd = conn.CreateCommand())
+        {
+            getVolCmd.Transaction = tx;
+            getVolCmd.CommandText = """
                 SELECT volume_id FROM volume_locations
                 WHERE disk_id = $diskId AND is_current = 1
-            )
-            """;
-        volCmd.Parameters.AddWithValue("$diskId", diskId);
-        var volumeCount = volCmd.ExecuteNonQuery();
+                """;
+            getVolCmd.Parameters.AddWithValue("$diskId", diskId);
+            using var rv = getVolCmd.ExecuteReader();
+            while (rv.Read()) volumeIds.Add(rv.GetString(0));
+        }
+
+        int volumeCount = 0;
+        var artifactWork = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
+        if (volumeIds.Count > 0)
+        {
+            var vp = string.Join(",", Enumerable.Range(0, volumeIds.Count).Select(i => $"$v{i}"));
+
+            // Mark volumes lost
+            using var volCmd = conn.CreateCommand();
+            volCmd.Transaction = tx;
+            volCmd.CommandText = $"UPDATE volumes SET status = 'lost' WHERE id IN ({vp})";
+            for (int i = 0; i < volumeIds.Count; i++) volCmd.Parameters.AddWithValue($"$v{i}", volumeIds[i]);
+            volumeCount = volCmd.ExecuteNonQuery();
+
+            // Collect (dat_line_id → derived_artifact_id) pairs for DatLineStore propagation
+            using var getArtCmd = conn.CreateCommand();
+            getArtCmd.Transaction = tx;
+            getArtCmd.CommandText = $"""
+                SELECT DISTINCT dat_line_id, derived_artifact_id
+                FROM volume_artifacts
+                WHERE volume_id IN ({vp})
+                """;
+            for (int i = 0; i < volumeIds.Count; i++) getArtCmd.Parameters.AddWithValue($"$v{i}", volumeIds[i]);
+            using (var ra = getArtCmd.ExecuteReader())
+            {
+                while (ra.Read())
+                {
+                    var dl = ra.GetString(0);
+                    var da = ra.GetString(1);
+                    if (!artifactWork.TryGetValue(dl, out var lst)) { lst = []; artifactWork[dl] = lst; }
+                    lst.Add(da);
+                }
+            }
+
+            // Mark all volume_artifacts on these volumes as lost
+            using var vaCmd = conn.CreateCommand();
+            vaCmd.Transaction = tx;
+            vaCmd.CommandText = $"UPDATE volume_artifacts SET status = 'lost' WHERE volume_id IN ({vp})";
+            for (int i = 0; i < volumeIds.Count; i++) vaCmd.Parameters.AddWithValue($"$v{i}", volumeIds[i]);
+            vaCmd.ExecuteNonQuery();
+        }
 
         tx.Commit();
-        return volumeCount;
+        return (volumeCount, artifactWork);
     }
 
     public void UpdateDiskCapacity(string diskId, long capacityBytes)

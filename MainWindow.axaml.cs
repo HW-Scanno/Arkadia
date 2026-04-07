@@ -495,6 +495,12 @@ public partial class MainWindow : Window
             updateLink.PointerPressed += async (_, _) => await OnUpdateDatLine(datLineInfo);
             actionsPanel.Children.Add(updateLink);
 
+            var verifyLink = new TextBlock { Text = "Verify" };
+            verifyLink.Classes.Add("text-action");
+            verifyLink.Classes.Add("accent");
+            verifyLink.PointerPressed += async (_, _) => await OnVerifyDatLine(datLineInfo);
+            actionsPanel.Children.Add(verifyLink);
+
             var deleteLink = new TextBlock { Text = "Delete" };
             deleteLink.Classes.Add("text-action");
             deleteLink.Classes.Add("danger");
@@ -1309,24 +1315,45 @@ public partial class MainWindow : Window
         var confirm = await new ConfirmDialog(
             "Mark Disk Lost",
             $"Mark disk \"{entry.Label}\" as LOST?\n\n" +
-            "All volumes currently assigned to this disk will also be marked LOST.\n\n" +
-            "Notes:\n" +
-            "  \u2022 Artifact and release lost state will NOT be recalculated now.\n" +
-            "  \u2022 LOST is a manual persistent state \u2014 it is NOT the same as\n" +
-            "    \"Disk Not Mounted\", which is a runtime-only observation.\n" +
-            "  \u2022 This action cannot be undone from the UI at this time.")
+            "This will propagate as follows:\n" +
+            "  \u2022 The disk is marked LOST\n" +
+            "  \u2022 All volumes on the disk are marked LOST\n" +
+            "  \u2022 All artifacts on those volumes are marked LOST\n" +
+            "  \u2022 Present releases whose artifacts are now lost are marked LOST\n\n" +
+            "LOST is a manual persistent state \u2014 it is NOT the same as\n" +
+            "\"Disk Not Mounted\", which is a runtime-only observation.\n" +
+            "This action cannot be undone from the UI at this time.")
             .ShowDialog<bool>(this);
         if (!confirm) return;
 
         try
         {
-            var volumeCount = _catalog.MarkDiskLost(entry.Id);
+            var (volumeCount, artifactWork) = _catalog.MarkDiskLost(entry.Id);
+
+            // Propagate artifact and release lost state into each affected DatLineStore.
+            // This is a separate step per DB boundary — not part of the catalog transaction.
+            var datLines = _catalog.LoadDatLines()
+                .ToDictionary(dl => dl.Id, StringComparer.Ordinal);
+            int totalArtifacts = 0, totalReleases = 0;
+            foreach (var (datLineId, derivedIds) in artifactWork)
+            {
+                if (!datLines.TryGetValue(datLineId, out var dl) || dl.DataStorePath.Length == 0) continue;
+                var dbPath = Path.Combine(_dataDir, dl.DataStorePath);
+                if (!File.Exists(dbPath)) continue;
+                var (artCount, relCount) = new Data.DatLineStore(dbPath).MarkArtifactsAndReleasesLost(derivedIds);
+                totalArtifacts += artCount;
+                totalReleases  += relCount;
+            }
+
             RefreshDisks();
             RefreshVolumes();
+            RebuildLibraryDatasets();
 
             await new InfoDialog("Disk Marked Lost",
                 $"Disk \"{entry.Label}\" has been marked LOST.\n" +
-                $"{volumeCount} volume(s) on this disk were also marked LOST.")
+                $"  {volumeCount} volume(s) marked LOST\n" +
+                $"  {totalArtifacts} artifact(s) marked LOST\n" +
+                $"  {totalReleases} release(s) marked LOST")
                 .ShowDialog(this);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -2921,7 +2948,285 @@ public partial class MainWindow : Window
 
     // ── DAT operations ────────────────────────────────────────────────────────
 
-    private async System.Threading.Tasks.Task OnUpdateDatLine(DatLineInfo info)
+    private async System.Threading.Tasks.Task OnVerifyDatLine(Systems.DatLineInfo info)
+    {
+        if (info.CatalogId is null || info.DataStorePath.Length == 0)
+        {
+            await new InfoDialog("Cannot Verify",
+                "This DAT line has no data store path. Import the DAT line first.")
+                .ShowDialog(this);
+            return;
+        }
+
+        var dbPath = Path.Combine(_dataDir, info.DataStorePath);
+        if (!File.Exists(dbPath))
+        {
+            await new InfoDialog("Cannot Verify",
+                $"DAT line database not found at:\n{dbPath}")
+                .ShowDialog(this);
+            return;
+        }
+
+        // Collect all volumes for this DAT line
+        var volumes = _catalog.GetVolumes()
+            .Where(v => v.DatLineId == info.CatalogId)
+            .ToList();
+
+        if (volumes.Count == 0)
+        {
+            await new InfoDialog("No Volumes",
+                $"No volumes are assigned to DAT line \"{info.Name}\".")
+                .ShowDialog(this);
+            return;
+        }
+
+        var dialog = new DatLineVerifyDialog(info.Name);
+        var dlgTask = dialog.ShowDialog(this);
+
+        await System.Threading.Tasks.Task.Run(async () =>
+        {
+            try
+            {
+                await RunDatLineVerify(dialog, info, dbPath, volumes);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                    () => dialog.SetFailed(ex.Message));
+            }
+        });
+
+        await dlgTask;
+    }
+
+    private async System.Threading.Tasks.Task RunDatLineVerify(
+        DatLineVerifyDialog dialog,
+        Systems.DatLineInfo info,
+        string dbPath,
+        List<Data.VolumeRecord> volumes)
+    {
+        var appRoot       = AppContext.BaseDirectory;
+        var store         = new Data.DatLineStore(dbPath);
+        var allDisks      = _catalog.GetDisks().ToDictionary(d => d.Id, StringComparer.Ordinal);
+        var runtimeDisks  = Data.DiskDiscoveryService.DiscoverAll()
+            .Where(d => d.DiskId.Length > 0)
+            .ToDictionary(d => d.DiskId, StringComparer.Ordinal);
+
+        int totalVols = volumes.Count, verifiedVols = 0, skippedVols = 0;
+        int totalExpected = 0, totalVerified = 0, totalMissing = 0, totalMismatch = 0, totalUnexpected = 0;
+        long verifiedBytes = 0;
+
+        var log = new System.Text.StringBuilder();
+        log.AppendLine($"DAT Line Verify — {info.Name}");
+        log.AppendLine($"Started:  {DateTime.UtcNow:o}");
+        log.AppendLine($"Volumes:  {totalVols}");
+        log.AppendLine();
+
+        for (int vi = 0; vi < volumes.Count; vi++)
+        {
+            var vol = volumes[vi];
+            var volLabel = vol.Label;
+
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                dialog.SetStatus(
+                    $"Volume {vi + 1}/{totalVols}: {volLabel}  |  " +
+                    $"Verified: {totalVerified}  Missing: {totalMissing}  " +
+                    $"Mismatch: {totalMismatch}  Unexpected: {totalUnexpected}"));
+
+            // ── Resolve source path ──────────────────────────────────────────
+            string? srcRoot  = null;
+            string  srcLabel = "";
+
+            var wsRoot = Path.Combine(appRoot, "volumes", SafeFileName(volLabel));
+            if (Directory.Exists(wsRoot))
+            {
+                srcRoot  = wsRoot;
+                srcLabel = "workspace";
+            }
+            else
+            {
+                var loc = _catalog.GetCurrentLocation(vol.Id);
+                if (loc?.DiskId is not null)
+                {
+                    if (vol.Status == "lost")
+                    {
+                        // Skip: disk+volume are marked lost; no point resolving
+                        skippedVols++;
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(volLabel, "SKIPPED", "", "DISK LOST"));
+                        log.AppendLine($"  [{volLabel}] SKIPPED — DISK LOST");
+                        continue;
+                    }
+
+                    if (!runtimeDisks.TryGetValue(loc.DiskId, out var rt))
+                    {
+                        skippedVols++;
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(volLabel, "SKIPPED", "", "DISK NOT MOUNTED"));
+                        log.AppendLine($"  [{volLabel}] SKIPPED — DISK NOT MOUNTED");
+                        continue;
+                    }
+
+                    var diskRoot = Path.Combine(rt.Mountpoint, SafeFileName(volLabel));
+                    if (!Directory.Exists(diskRoot))
+                    {
+                        skippedVols++;
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(volLabel, "SKIPPED", "", "FOLDER NOT FOUND ON DISK"));
+                        log.AppendLine($"  [{volLabel}] SKIPPED — folder not found at {diskRoot}");
+                        continue;
+                    }
+
+                    srcRoot  = diskRoot;
+                    srcLabel = allDisks.TryGetValue(loc.DiskId, out var dr) ? $"disk:{dr.Label}" : "disk";
+                }
+                else
+                {
+                    skippedVols++;
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        dialog.AppendRow(volLabel, "SKIPPED", "", "NO ACCESSIBLE SOURCE"));
+                    log.AppendLine($"  [{volLabel}] SKIPPED — no accessible source");
+                    continue;
+                }
+            }
+
+            // ── Build expected file set ──────────────────────────────────────
+            var vaIds     = _catalog.GetVolumeArtifacts(vol.Id)
+                                    .Select(va => va.DerivedArtifactId).ToList();
+            var expected  = store.GetArtifactVerifyInfos(vaIds);
+
+            // Map relative path (within volume root) → verify info
+            // Physical path: srcRoot / SafeFileName(ReleaseName) / FileName
+            var expectedByRelPath = new Dictionary<string, Data.ArtifactVerifyInfo>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var e in expected)
+            {
+                var rel = Path.Combine(SafeFileName(e.ReleaseName), e.FileName);
+                expectedByRelPath[rel] = e;
+            }
+
+            // ── Enumerate actual files ───────────────────────────────────────
+            var actualFiles = Directory.EnumerateFiles(srcRoot, "*", SearchOption.AllDirectories)
+                .Select(f => f.Substring(srcRoot.Length).TrimStart(Path.DirectorySeparatorChar,
+                                                                    Path.AltDirectorySeparatorChar))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            int volExpected = expected.Count, volVerified = 0, volMissing = 0,
+                volMismatch = 0, volUnexpected = 0;
+
+            log.AppendLine($"  [{volLabel}] source={srcLabel}  expected={volExpected}");
+
+            // ── Verify expected files ────────────────────────────────────────
+            foreach (var ei in expected)
+            {
+                var relPath  = Path.Combine(SafeFileName(ei.ReleaseName), ei.FileName);
+                var absPath  = Path.Combine(srcRoot, relPath);
+                var dispPath = $"{SafeFileName(ei.ReleaseName)}/{ei.FileName}";
+
+                if (!File.Exists(absPath))
+                {
+                    volMissing++;
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        dialog.AppendRow(volLabel, "MISSING", dispPath, ""));
+                    log.AppendLine($"    MISSING  {dispPath}");
+                    continue;
+                }
+
+                // Fast size precheck
+                var actualSize = new FileInfo(absPath).Length;
+                var sizeOk     = ei.SizeBytes <= 0 || actualSize == ei.SizeBytes;
+
+                // SHA1 — always compute for expected files that exist
+                var actualSha1 = ComputeFileSha1(absPath);
+
+                if (ei.Sha1.Length > 0 &&
+                    !string.Equals(actualSha1, ei.Sha1, StringComparison.OrdinalIgnoreCase))
+                {
+                    volMismatch++;
+                    var detail = $"exp:{ei.Sha1[..8]}… got:{actualSha1[..8]}…";
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        dialog.AppendRow(volLabel, "MISMATCH", dispPath, detail));
+                    log.AppendLine($"    MISMATCH  {dispPath}  expected={ei.Sha1}  actual={actualSha1}");
+                }
+                else
+                {
+                    volVerified++;
+                    verifiedBytes += actualSize;
+                    var detail = sizeOk ? FormatBytes(actualSize) : $"size:{actualSize}≠{ei.SizeBytes}";
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        dialog.AppendRow(volLabel, "VERIFIED", dispPath, detail));
+                    log.AppendLine($"    VERIFIED  {dispPath}  sha1={actualSha1}");
+                }
+            }
+
+            // ── Unexpected files ─────────────────────────────────────────────
+            foreach (var rel in actualFiles)
+            {
+                if (!expectedByRelPath.ContainsKey(rel))
+                {
+                    volUnexpected++;
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        dialog.AppendRow(volLabel, "UNEXPECTED", rel, ""));
+                    log.AppendLine($"    UNEXPECTED  {rel}");
+                }
+            }
+
+            verifiedVols++;
+            totalExpected   += volExpected;
+            totalVerified   += volVerified;
+            totalMissing    += volMissing;
+            totalMismatch   += volMismatch;
+            totalUnexpected += volUnexpected;
+
+            log.AppendLine($"    → verified={volVerified} missing={volMissing} " +
+                           $"mismatch={volMismatch} unexpected={volUnexpected}");
+
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                dialog.UpdateStats(totalVols, verifiedVols, skippedVols,
+                                   totalExpected, totalVerified, totalMissing));
+        }
+
+        // ── Write log ────────────────────────────────────────────────────────
+        var endTime = DateTime.UtcNow;
+        log.AppendLine();
+        log.AppendLine($"Completed: {endTime:o}");
+        log.AppendLine($"Volumes:   total={totalVols} verified={verifiedVols} skipped={skippedVols}");
+        log.AppendLine($"Files:     expected={totalExpected} verified={totalVerified} " +
+                       $"missing={totalMissing} mismatch={totalMismatch} unexpected={totalUnexpected}");
+        log.AppendLine($"SHA1 data: {FormatBytes(verifiedBytes)} verified");
+
+        try
+        {
+            var logDir  = Path.Combine(appRoot, "logs", "verify");
+            Directory.CreateDirectory(logDir);
+            var safe    = SafeFileName(info.Name);
+            var logFile = Path.Combine(logDir, $"{endTime:yyyyMMdd-HHmmss}-verify-{safe}.log");
+            File.WriteAllText(logFile, log.ToString());
+        }
+        catch { /* non-fatal */ }
+
+        // ── Final status ─────────────────────────────────────────────────────
+        bool clean = totalMissing == 0 && totalMismatch == 0;
+        var summary =
+            $"Done — {verifiedVols}/{totalVols} volume(s) verified  |  " +
+            $"Expected: {totalExpected}  Verified: {totalVerified}  " +
+            $"Missing: {totalMissing}  Mismatch: {totalMismatch}  Unexpected: {totalUnexpected}" +
+            (clean ? "  ✓ All expected files verified." : "");
+
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            dialog.UpdateStats(totalVols, verifiedVols, skippedVols,
+                               totalExpected, totalVerified, totalMissing);
+            dialog.SetStatus(
+                $"Volumes: {totalVols}  Verified: {verifiedVols}  Skipped: {skippedVols}  |  " +
+                $"Expected: {totalExpected}  OK: {totalVerified}  Missing: {totalMissing}  " +
+                $"Mismatch: {totalMismatch}  Unexpected: {totalUnexpected}  |  " +
+                $"SHA1-verified: {FormatBytes(verifiedBytes)}");
+            dialog.SetCompleted(summary);
+        });
+    }
+
+    private async System.Threading.Tasks.Task OnUpdateDatLine(Systems.DatLineInfo info)
     {
         if (info.CatalogId is null || info.DataStorePath.Length == 0) return;
 

@@ -636,6 +636,62 @@ public sealed class DatLineStore
         return set;
     }
 
+    /// <summary>
+    /// Atomically marks the given derived artifacts as lost and marks any
+    /// currently-present releases that depend on them as lost.
+    /// Only releases with status "present" are transitioned; other statuses are untouched.
+    /// Returns (artifactCount, releaseCount) — count of rows actually updated.
+    /// </summary>
+    public (int ArtifactCount, int ReleaseCount) MarkArtifactsAndReleasesLost(
+        IReadOnlyList<string> derivedIds)
+    {
+        if (derivedIds.Count == 0) return (0, 0);
+
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        var dp = string.Join(",", Enumerable.Range(0, derivedIds.Count).Select(i => $"$d{i}"));
+
+        // Mark derived artifacts lost
+        using var artCmd = conn.CreateCommand();
+        artCmd.Transaction = tx;
+        artCmd.CommandText = $"UPDATE derived_artifacts SET status = 'lost' WHERE id IN ({dp})";
+        for (int i = 0; i < derivedIds.Count; i++) artCmd.Parameters.AddWithValue($"$d{i}", derivedIds[i]);
+        int artifactCount = artCmd.ExecuteNonQuery();
+
+        // Find all releases linked to any of these derived artifacts
+        // Chain: release_artifacts → artifact_transforms → derived_artifacts
+        var releaseIds = new List<string>();
+        using (var findCmd = conn.CreateCommand())
+        {
+            findCmd.Transaction = tx;
+            findCmd.CommandText = $"""
+                SELECT DISTINCT ra.release_id
+                FROM release_artifacts ra
+                JOIN artifact_transforms at ON at.source_artifact_id = ra.artifact_id
+                WHERE at.derived_artifact_id IN ({dp})
+                """;
+            for (int i = 0; i < derivedIds.Count; i++) findCmd.Parameters.AddWithValue($"$d{i}", derivedIds[i]);
+            using var rf = findCmd.ExecuteReader();
+            while (rf.Read()) releaseIds.Add(rf.GetString(0));
+        }
+
+        int releaseCount = 0;
+        if (releaseIds.Count > 0)
+        {
+            var rp = string.Join(",", Enumerable.Range(0, releaseIds.Count).Select(i => $"$r{i}"));
+            using var relCmd = conn.CreateCommand();
+            relCmd.Transaction = tx;
+            // Only "present" releases transition to "lost"; missing/outdated are untouched.
+            relCmd.CommandText = $"UPDATE releases SET status = 'lost' WHERE id IN ({rp}) AND status = 'present'";
+            for (int i = 0; i < releaseIds.Count; i++) relCmd.Parameters.AddWithValue($"$r{i}", releaseIds[i]);
+            releaseCount = relCmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return (artifactCount, releaseCount);
+    }
+
     public List<DerivedArtifactRecord> GetDerivedArtifacts()
     {
         var list = new List<DerivedArtifactRecord>();
@@ -1024,6 +1080,53 @@ public sealed class DatLineStore
     /// If a derived artifact is linked to multiple releases (edge case), the first
     /// encountered release name is used.
     /// </summary>
+    /// <summary>
+    /// Like <see cref="GetArtifactBuildInfos"/> but also includes the expected SHA1
+    /// for each derived artifact. Used by the DAT line verify flow.
+    /// </summary>
+    public List<ArtifactVerifyInfo> GetArtifactVerifyInfos(IEnumerable<string> derivedArtifactIds)
+    {
+        var ids = derivedArtifactIds as IList<string> ?? derivedArtifactIds.ToList();
+        if (ids.Count == 0) return [];
+
+        var result   = new List<ArtifactVerifyInfo>(ids.Count);
+        var seenDaId = new HashSet<string>(StringComparer.Ordinal);
+
+        var placeholders = string.Join(",",
+            Enumerable.Range(0, ids.Count).Select(i => $"$d{i}"));
+
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT da.id, r.name, da.file_name, da.size_bytes, COALESCE(da.sha1, '')
+            FROM derived_artifacts   da
+            JOIN artifact_transforms at ON at.derived_artifact_id = da.id
+            JOIN release_artifacts   ra ON ra.artifact_id         = at.source_artifact_id
+            JOIN releases            r  ON r.id                   = ra.release_id
+            WHERE da.id IN ({placeholders})
+            ORDER BY r.name, da.file_name
+            """;
+        for (int i = 0; i < ids.Count; i++)
+            cmd.Parameters.AddWithValue($"$d{i}", ids[i]);
+
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var daId = r.GetString(0);
+            if (!seenDaId.Add(daId)) continue;
+            result.Add(new ArtifactVerifyInfo
+            {
+                DerivedArtifactId = daId,
+                ReleaseName       = r.GetString(1),
+                FileName          = r.GetString(2),
+                SizeBytes         = r.GetInt64(3),
+                Sha1              = r.GetString(4),
+            });
+        }
+
+        return result;
+    }
+
     public List<ArtifactBuildInfo> GetArtifactBuildInfos(IEnumerable<string> derivedArtifactIds)
     {
         var ids = derivedArtifactIds as IList<string> ?? derivedArtifactIds.ToList();

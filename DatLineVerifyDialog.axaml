@@ -1,0 +1,189 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Arkadia"
+        x:Class="Arkadia.DatLineVerifyDialog"
+        Title="DAT Line Verify"
+        Width="980" Height="680"
+        MinWidth="720" MinHeight="480"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Resources>
+        <local:VerifyResultColorConverter x:Key="ResultColor"/>
+    </Window.Resources>
+
+    <Window.Styles>
+        <Style Selector="TextBlock.col-header">
+            <Setter Property="FontSize"      Value="10"/>
+            <Setter Property="FontWeight"    Value="SemiBold"/>
+            <Setter Property="Foreground"    Value="#555566"/>
+            <Setter Property="LetterSpacing" Value="1"/>
+        </Style>
+        <Style Selector="TextBlock.cell">
+            <Setter Property="FontSize"       Value="11"/>
+            <Setter Property="Foreground"     Value="#CCCCDD"/>
+            <Setter Property="TextTrimming"   Value="CharacterEllipsis"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style Selector="TextBlock.stat-label">
+            <Setter Property="FontSize"   Value="10"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#555566"/>
+            <Setter Property="LetterSpacing" Value="0.8"/>
+        </Style>
+        <Style Selector="TextBlock.stat-val">
+            <Setter Property="FontSize"   Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#CCCCDD"/>
+        </Style>
+        <Style Selector="Button.close-btn">
+            <Setter Property="Background"      Value="#7B68EE"/>
+            <Setter Property="Foreground"      Value="#FFFFFF"/>
+            <Setter Property="Padding"         Value="24,8"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="CornerRadius"    Value="6"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+    </Window.Styles>
+
+    <!--
+        Row 0 Auto — header (DAT line name)
+        Row 1 Auto — summary stats bar
+        Row 2 Auto — status / progress line
+        Row 3 Auto — table column headers
+        Row 4 *    — scrollable result rows
+        Row 5 Auto — phase / completion label
+        Row 6 Auto — close button
+    -->
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto" Margin="24,20,24,18">
+
+        <!-- Row 0: Header -->
+        <StackPanel Grid.Row="0" Spacing="3" Margin="0,0,0,14">
+            <TextBlock x:Name="HeaderText"
+                       FontSize="13" FontWeight="SemiBold"
+                       Foreground="#E8E8F0"
+                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="READ-ONLY — no changes will be persisted"
+                       FontSize="10" LetterSpacing="1" Foreground="#555566"/>
+        </StackPanel>
+
+        <!-- Row 1: Summary counters (7 stats in a row) -->
+        <Border Grid.Row="1"
+                Background="#1A1A24" CornerRadius="6" Padding="16,12"
+                Margin="0,0,0,8">
+            <Grid ColumnDefinitions="*,*,*,*,*,*,*">
+                <StackPanel Grid.Column="0" Spacing="3">
+                    <TextBlock Classes="stat-label" Text="VOLUMES"/>
+                    <TextBlock x:Name="StatVolumes" Classes="stat-val"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="3">
+                    <TextBlock Classes="stat-label" Text="VERIFIED"/>
+                    <TextBlock x:Name="StatVerifiedVols" Classes="stat-val"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="3">
+                    <TextBlock Classes="stat-label" Text="SKIPPED"/>
+                    <TextBlock x:Name="StatSkipped" Classes="stat-val" Foreground="#555566"/>
+                </StackPanel>
+                <StackPanel Grid.Column="3" Spacing="3">
+                    <TextBlock Classes="stat-label" Text="EXPECTED"/>
+                    <TextBlock x:Name="StatExpected" Classes="stat-val"/>
+                </StackPanel>
+                <StackPanel Grid.Column="4" Spacing="3">
+                    <TextBlock Classes="stat-label" Text="VERIFIED"/>
+                    <TextBlock x:Name="StatVerified" Classes="stat-val" Foreground="#81C784"/>
+                </StackPanel>
+                <StackPanel Grid.Column="5" Spacing="3">
+                    <TextBlock Classes="stat-label" Text="MISSING"/>
+                    <TextBlock x:Name="StatMissing" Classes="stat-val" Foreground="#EF5350"/>
+                </StackPanel>
+                <StackPanel Grid.Column="6" Spacing="3">
+                    <TextBlock Classes="stat-label" Text="MISMATCH"/>
+                    <TextBlock x:Name="StatMismatch" Classes="stat-val" Foreground="#FF7043"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Row 2: Status / progress line -->
+        <TextBlock Grid.Row="2"
+                   x:Name="StatusLine"
+                   FontSize="11"
+                   FontFamily="Consolas,Courier New,monospace"
+                   Foreground="#666677"
+                   TextTrimming="CharacterEllipsis"
+                   Margin="0,0,0,8"/>
+
+        <!-- Row 3: Column headers -->
+        <Border Grid.Row="3"
+                Padding="12,6" Background="#141420"
+                BorderBrush="#242433" BorderThickness="0,1,0,1">
+            <Grid ColumnDefinitions="110,70,*,110">
+                <TextBlock Grid.Column="0" Classes="col-header" Text="VOLUME"/>
+                <TextBlock Grid.Column="1" Classes="col-header" Text="RESULT" Margin="8,0,0,0"/>
+                <TextBlock Grid.Column="2" Classes="col-header" Text="PATH"   Margin="8,0,0,0"/>
+                <TextBlock Grid.Column="3" Classes="col-header" Text="DETAIL" HorizontalAlignment="Right"/>
+            </Grid>
+        </Border>
+
+        <!-- Row 4: Scrollable rows -->
+        <Border Grid.Row="4" Background="#1A1A24" Margin="0,0,0,8">
+            <ScrollViewer x:Name="RowsScroll"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <ItemsControl x:Name="RowsList" Padding="0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="local:VerifyRow">
+                            <Border Padding="12,3" BorderBrush="#0D0D13" BorderThickness="0,0,0,1">
+                                <Grid ColumnDefinitions="110,70,*,110">
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Volume}"
+                                               Classes="cell"
+                                               FontSize="10"
+                                               Foreground="#666677"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Result}"
+                                               Classes="cell"
+                                               FontWeight="Bold"
+                                               FontSize="10"
+                                               Margin="8,0,0,0"
+                                               Foreground="{Binding Result, Converter={StaticResource ResultColor}}"/>
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding Path}"
+                                               Classes="cell"
+                                               FontFamily="Consolas,Courier New,monospace"
+                                               FontSize="10"
+                                               Foreground="#888899"
+                                               Margin="8,0,0,0"/>
+                                    <TextBlock Grid.Column="3"
+                                               Text="{Binding Detail}"
+                                               Classes="cell"
+                                               FontFamily="Consolas,Courier New,monospace"
+                                               FontSize="10"
+                                               Foreground="#555566"
+                                               HorizontalAlignment="Right"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Row 5: Phase / completion label -->
+        <TextBlock Grid.Row="5"
+                   x:Name="PhaseLabel"
+                   FontSize="12" Foreground="#666677"
+                   TextWrapping="Wrap" Margin="0,0,0,8"/>
+
+        <!-- Row 6: Close button -->
+        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="CloseButton"
+                    Classes="close-btn"
+                    Content="Close"
+                    IsEnabled="False"
+                    Click="OnClose"/>
+        </StackPanel>
+
+    </Grid>
+</Window>

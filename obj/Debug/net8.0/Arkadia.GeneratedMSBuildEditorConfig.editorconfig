@@ -15,72 +15,75 @@ build_property.PlatformNeutralAssembly =
 build_property.EnforceExtendedAnalyzerRules = 
 build_property._SupportedPlatformList = Linux,macOS,Windows
 build_property.RootNamespace = Arkadia
-build_property.ProjectDir = d:\Projects\Arkadia\
+build_property.ProjectDir = D:\Projects\Arkadia\
 build_property.EnableComHosting = 
 build_property.EnableGeneratedComInterfaceComImportInterop = 
 
-[d:/Projects/Arkadia/App.axaml]
+[D:/Projects/Arkadia/App.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/AssignDerivedArtifactsDialog.axaml]
+[D:/Projects/Arkadia/AssignDerivedArtifactsDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/AssignVolumeToDiskDialog.axaml]
+[D:/Projects/Arkadia/AssignVolumeToDiskDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/ConfirmDialog.axaml]
+[D:/Projects/Arkadia/ConfirmDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/CreateDiskDialog.axaml]
+[D:/Projects/Arkadia/CreateDiskDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/CreatePlatformDialog.axaml]
+[D:/Projects/Arkadia/CreatePlatformDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/CreateVolumeDialog.axaml]
+[D:/Projects/Arkadia/CreateVolumeDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/DatOperationProgressDialog.axaml]
+[D:/Projects/Arkadia/DatLineVerifyDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/DeleteDatLineDialog.axaml]
+[D:/Projects/Arkadia/DatOperationProgressDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/DeleteImageConfirmDialog.axaml]
+[D:/Projects/Arkadia/DeleteDatLineDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/ImportDatDialog.axaml]
+[D:/Projects/Arkadia/DeleteImageConfirmDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/InfoDialog.axaml]
+[D:/Projects/Arkadia/ImportDatDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/IngestionProgressDialog.axaml]
+[D:/Projects/Arkadia/InfoDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/InitializeDiskDialog.axaml]
+[D:/Projects/Arkadia/IngestionProgressDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/MainWindow.axaml]
+[D:/Projects/Arkadia/InitializeDiskDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/MoveVolumeDialog.axaml]
+[D:/Projects/Arkadia/MainWindow.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/PickDriveDialog.axaml]
+[D:/Projects/Arkadia/MoveVolumeDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/PlanVolumeDialog.axaml]
+[D:/Projects/Arkadia/PickDriveDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/Startup/SplashWindow.axaml]
+[D:/Projects/Arkadia/PlanVolumeDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/UpdateDatDialog.axaml]
+[D:/Projects/Arkadia/Startup/SplashWindow.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/UpdateDatSummaryDialog.axaml]
+[D:/Projects/Arkadia/UpdateDatDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
-[d:/Projects/Arkadia/WriteVolumeToDiskDialog.axaml]
+[D:/Projects/Arkadia/UpdateDatSummaryDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[D:/Projects/Arkadia/WriteVolumeToDiskDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
