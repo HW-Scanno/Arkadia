@@ -30,7 +30,7 @@ public partial class AssignDerivedArtifactsDialog : Window
             {
                 Id                 = a.Id,
                 FileName           = a.FileName,
-                Size               = a.SizeBytes,
+                Size               = a.DerivedSizeBytes,
                 ContentIdentityKey = a.ContentIdentityKey,
             })
             .ToList();

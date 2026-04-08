@@ -146,20 +146,30 @@
             <Setter Property="Padding"         Value="10,5"/>
             <Setter Property="CornerRadius"    Value="4"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="BorderBrush"     Value="{DynamicResource ArkSurfaceAlt}"/>
+            <Setter Property="BorderBrush"     Value="#555566"/>
             <Setter Property="Background"      Value="Transparent"/>
-            <Setter Property="Foreground"      Value="{DynamicResource ArkTextSecondary}"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
             <Setter Property="FontSize"        Value="12"/>
         </Style>
         <Style Selector="Button.view-toggle.active">
-            <Setter Property="Background" Value="{DynamicResource ArkSurfaceAlt}"/>
-            <Setter Property="Foreground" Value="{DynamicResource ArkTextPrimary}"/>
+            <Setter Property="BorderBrush" Value="#666677"/>
+            <Setter Property="Background"  Value="{DynamicResource ArkSurfaceAlt}"/>
+            <Setter Property="Foreground"  Value="{DynamicResource ArkTextPrimary}"/>
         </Style>
         <Style Selector="Button.view-toggle /template/ ContentPresenter">
             <Setter Property="Background" Value="Transparent"/>
         </Style>
+        <Style Selector="Button.view-toggle:pointerover">
+            <Setter Property="BorderBrush" Value="#7777AA"/>
+        </Style>
         <Style Selector="Button.view-toggle:pointerover /template/ ContentPresenter">
-            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Background" Value="#1E1E2C"/>
+        </Style>
+        <Style Selector="Button.view-toggle:pressed">
+            <Setter Property="BorderBrush" Value="#7B68EE"/>
+        </Style>
+        <Style Selector="Button.view-toggle:pressed /template/ ContentPresenter">
+            <Setter Property="Background" Value="#181826"/>
         </Style>
 
         <!-- ══════════════════════════════════════════════════════════
@@ -665,7 +675,8 @@
                 </Border>
 
                 <!-- Content + shared detail panel -->
-                <Grid Grid.Row="1" ColumnDefinitions="*,1,300">
+                <!-- Detail panel width: 500px. Keep in sync with all other *,1,500 splits in this file. -->
+                <Grid Grid.Row="1" ColumnDefinitions="*,1,500">
 
                     <!-- Col 0: card view OR list view (toggled) -->
 
@@ -907,7 +918,7 @@
                 </Border>
 
                 <!-- List + detail side-by-side -->
-                <Grid Grid.Row="1" ColumnDefinitions="*,1,280">
+                <Grid Grid.Row="1" ColumnDefinitions="*,1,500">
 
                     <!-- List: column headers + rows -->
                     <Grid Grid.Column="0" RowDefinitions="Auto,*">
@@ -1058,9 +1069,9 @@
                                     <TextBlock Grid.Column="1" x:Name="DetailSize"     Classes="card-val" Margin="0"/>
                                 </Grid>
 
-                                <!-- ROM FILES section -->
+                                <!-- CONTENT FILES section -->
                                 <Border Classes="card-divider" Margin="0,16,0,14"/>
-                                <TextBlock Classes="widget-title" Text="ROM FILES" Margin="0,0,0,10"/>
+                                <TextBlock Classes="widget-title" Text="CONTENT FILES" Margin="0,0,0,10"/>
                                 <StackPanel x:Name="DetailDatFiles" Spacing="10"/>
 
                                 <!-- PREVIOUSLY SEEN IN section -->
@@ -1118,7 +1129,7 @@
                 </Border>
 
                 <!-- List + detail -->
-                <Grid Grid.Row="1" ColumnDefinitions="*,1,300">
+                <Grid Grid.Row="1" ColumnDefinitions="*,1,500">
 
                     <!-- List column -->
                     <Grid Grid.Column="0" RowDefinitions="Auto,*">
@@ -1344,7 +1355,7 @@
                 </Border>
 
                 <!-- Tree + detail -->
-                <Grid Grid.Row="2" Margin="0,12,0,0" ColumnDefinitions="*,1,340">
+                <Grid Grid.Row="2" Margin="0,12,0,0" ColumnDefinitions="*,1,500">
 
                     <!-- Left: tree -->
                     <Grid Grid.Column="0" RowDefinitions="Auto,*">
@@ -1502,7 +1513,7 @@
                 </Border>
 
                 <!-- List + detail -->
-                <Grid Grid.Row="1" ColumnDefinitions="*,1,300">
+                <Grid Grid.Row="1" ColumnDefinitions="*,1,500">
 
                     <!-- Table -->
                     <Grid Grid.Column="0" RowDefinitions="Auto,*">
@@ -1663,8 +1674,8 @@
                                 <Border Classes="card-divider" Margin="0,14,0,10"/>
                                 <TextBlock Classes="widget-title" Text="VOLUME USAGE" Margin="0,0,0,8"/>
                                 <Border x:Name="DiskSegmentBar"
-                                        Height="14"
-                                        CornerRadius="2"
+                                        Height="17"
+                                        CornerRadius="3"
                                         Background="{DynamicResource ArkSurfaceAlt}"
                                         Margin="0,0,0,10"/>
 
@@ -1714,7 +1725,7 @@
                 </Border>
 
                 <!-- List + detail -->
-                <Grid Grid.Row="1" ColumnDefinitions="*,1,300">
+                <Grid Grid.Row="1" ColumnDefinitions="*,1,500">
 
                     <!-- Table -->
                     <Grid Grid.Column="0" RowDefinitions="Auto,*">
@@ -1862,14 +1873,13 @@
 
                                 <!-- Derived artifacts section -->
                                 <Border Classes="card-divider" Margin="0,14,0,10"/>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,10">
                                     <TextBlock Grid.Column="0" Classes="card-key" Text="Artifacts" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailArtifactCount" Classes="card-val" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailArtifactCount"
+                                               Classes="card-val" Margin="0"/>
                                 </Grid>
 
-                                <StackPanel x:Name="VolumeDetailArtifactList" Spacing="3" Margin="0,0,0,10"/>
-
-                                <Border Classes="card-divider" Margin="0,4,0,12"/>
+                                <Border Classes="card-divider" Margin="0,0,0,12"/>
 
                                 <WrapPanel Orientation="Horizontal">
                                     <Button Content="Make Volume"
@@ -1878,8 +1888,13 @@
                                             Click="OnMakeVolume"/>
                                     <Button Content="Move Volume"
                                             Classes="view-toggle"
-                                            Margin="0,0,0,8"
+                                            Margin="0,0,8,8"
                                             Click="OnMoveVolume"/>
+                                    <Button x:Name="VolumeDetailArtifactsBtn"
+                                            Content="Artifacts…" IsEnabled="False"
+                                            Classes="view-toggle"
+                                            Margin="0,0,0,8"
+                                            Click="OnVolumeArtifactsDetails"/>
                                 </WrapPanel>
 
                             </StackPanel>

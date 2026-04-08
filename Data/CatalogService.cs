@@ -127,6 +127,7 @@ public sealed class CatalogService
                 volume_id            TEXT NOT NULL,
                 dat_line_id          TEXT NOT NULL,
                 derived_artifact_id  TEXT NOT NULL,
+                content_identity_key TEXT NOT NULL DEFAULT '',
                 status               TEXT NOT NULL,
                 added_at_utc         TEXT NOT NULL,
                 UNIQUE(volume_id, derived_artifact_id)
@@ -158,6 +159,7 @@ public sealed class CatalogService
         RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN storage_strategy_id TEXT");
         RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN data_store_path TEXT NOT NULL DEFAULT ''");
         RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN dat_category TEXT NOT NULL DEFAULT ''"  );
+        RunMigration(conn, "ALTER TABLE volume_artifacts ADD COLUMN content_identity_key TEXT NOT NULL DEFAULT ''"  );
 
         // ── Seed storage_strategies if empty ──────────────────────────────────
         using var stratCheck = conn.CreateCommand();
@@ -910,7 +912,7 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, volume_id, dat_line_id, derived_artifact_id, status, added_at_utc
+            SELECT id, volume_id, dat_line_id, derived_artifact_id, content_identity_key, status, added_at_utc
             FROM volume_artifacts
             WHERE volume_id = $vid
             ORDER BY added_at_utc
@@ -920,12 +922,13 @@ public sealed class CatalogService
         while (r.Read())
             list.Add(new VolumeArtifactRecord
             {
-                Id                = r.GetString(0),
-                VolumeId          = r.GetString(1),
-                DatLineId         = r.GetString(2),
-                DerivedArtifactId = r.GetString(3),
-                Status            = r.GetString(4),
-                AddedAtUtc        = DateTime.Parse(r.GetString(5)),
+                Id                 = r.GetString(0),
+                VolumeId           = r.GetString(1),
+                DatLineId          = r.GetString(2),
+                DerivedArtifactId  = r.GetString(3),
+                ContentIdentityKey = r.GetString(4),
+                Status             = r.GetString(5),
+                AddedAtUtc         = DateTime.Parse(r.GetString(6)),
             });
         return list;
     }
@@ -948,14 +951,15 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO volume_artifacts(id, volume_id, dat_line_id, derived_artifact_id, status, added_at_utc)
-            VALUES($id, $vid, $dlid, $daid, $status, $added)
+            INSERT INTO volume_artifacts(id, volume_id, dat_line_id, derived_artifact_id, content_identity_key, status, added_at_utc)
+            VALUES($id, $vid, $dlid, $daid, $cik, $status, $added)
             ON CONFLICT(volume_id, derived_artifact_id) DO NOTHING
             """;
         cmd.Parameters.AddWithValue("$id",     va.Id);
         cmd.Parameters.AddWithValue("$vid",    va.VolumeId);
         cmd.Parameters.AddWithValue("$dlid",   va.DatLineId);
         cmd.Parameters.AddWithValue("$daid",   va.DerivedArtifactId);
+        cmd.Parameters.AddWithValue("$cik",    va.ContentIdentityKey);
         cmd.Parameters.AddWithValue("$status", va.Status);
         cmd.Parameters.AddWithValue("$added",  va.AddedAtUtc.ToString("o"));
         cmd.ExecuteNonQuery();
@@ -976,14 +980,15 @@ public sealed class CatalogService
 
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO volume_artifacts(id, volume_id, dat_line_id, derived_artifact_id, status, added_at_utc)
-            VALUES($id, $vid, $dlid, $daid, $status, $added)
+            INSERT INTO volume_artifacts(id, volume_id, dat_line_id, derived_artifact_id, content_identity_key, status, added_at_utc)
+            VALUES($id, $vid, $dlid, $daid, $cik, $status, $added)
             ON CONFLICT(volume_id, derived_artifact_id) DO NOTHING
             """;
         var pId     = cmd.Parameters.Add("$id",     Microsoft.Data.Sqlite.SqliteType.Text);
         var pVid    = cmd.Parameters.Add("$vid",    Microsoft.Data.Sqlite.SqliteType.Text);
         var pDlid   = cmd.Parameters.Add("$dlid",   Microsoft.Data.Sqlite.SqliteType.Text);
         var pDaid   = cmd.Parameters.Add("$daid",   Microsoft.Data.Sqlite.SqliteType.Text);
+        var pCik    = cmd.Parameters.Add("$cik",    Microsoft.Data.Sqlite.SqliteType.Text);
         var pStatus = cmd.Parameters.Add("$status", Microsoft.Data.Sqlite.SqliteType.Text);
         var pAdded  = cmd.Parameters.Add("$added",  Microsoft.Data.Sqlite.SqliteType.Text);
 
@@ -993,6 +998,7 @@ public sealed class CatalogService
             pVid.Value    = va.VolumeId;
             pDlid.Value   = va.DatLineId;
             pDaid.Value   = va.DerivedArtifactId;
+            pCik.Value    = va.ContentIdentityKey;
             pStatus.Value = va.Status;
             pAdded.Value  = va.AddedAtUtc.ToString("o");
             inserted += cmd.ExecuteNonQuery();

@@ -12,10 +12,10 @@ public partial class DatLineVerifyDialog : Window
 
     public DatLineVerifyDialog() { InitializeComponent(); }
 
-    public DatLineVerifyDialog(string datLineName)
+    public DatLineVerifyDialog(string datLineName, string platformDesc)
     {
         InitializeComponent();
-        HeaderText.Text      = $"Verify — {datLineName}";
+        HeaderText.Text      = $"DAT Verify Mode  —  Platform: {platformDesc}  —  DAT Line: {datLineName}";
         RowsList.ItemsSource = _rows;
         UpdateStats(0, 0, 0, 0, 0, 0);
         StatusLine.Text  = "Preparing…";

@@ -1,9 +1,7 @@
 C:\Users\HWS\.nuget\packages\avalonia\11.3.12\ref\net8.0\Avalonia.Base.dll
-C:\Users\HWS\.nuget\packages\avalonia.controls.colorpicker\11.3.12\lib\net8.0\Avalonia.Controls.ColorPicker.dll
 C:\Users\HWS\.nuget\packages\avalonia\11.3.12\ref\net8.0\Avalonia.Controls.dll
 C:\Users\HWS\.nuget\packages\avalonia\11.3.12\ref\net8.0\Avalonia.DesignerSupport.dll
 C:\Users\HWS\.nuget\packages\avalonia.desktop\11.3.12\lib\net8.0\Avalonia.Desktop.dll
-C:\Users\HWS\.nuget\packages\avalonia.diagnostics\11.3.12\lib\net8.0\Avalonia.Diagnostics.dll
 C:\Users\HWS\.nuget\packages\avalonia\11.3.12\ref\net8.0\Avalonia.Dialogs.dll
 C:\Users\HWS\.nuget\packages\avalonia\11.3.12\ref\net8.0\Avalonia.dll
 C:\Users\HWS\.nuget\packages\avalonia.fonts.inter\11.3.12\lib\net8.0\Avalonia.Fonts.Inter.dll
@@ -17,7 +15,6 @@ C:\Users\HWS\.nuget\packages\avalonia\11.3.12\ref\net8.0\Avalonia.OpenGL.dll
 C:\Users\HWS\.nuget\packages\avalonia.remote.protocol\11.3.12\lib\net8.0\Avalonia.Remote.Protocol.dll
 C:\Users\HWS\.nuget\packages\avalonia.skia\11.3.12\lib\net8.0\Avalonia.Skia.dll
 C:\Users\HWS\.nuget\packages\avalonia.themes.fluent\11.3.12\lib\net8.0\Avalonia.Themes.Fluent.dll
-C:\Users\HWS\.nuget\packages\avalonia.themes.simple\11.3.12\lib\net8.0\Avalonia.Themes.Simple.dll
 C:\Users\HWS\.nuget\packages\avalonia\11.3.12\ref\net8.0\Avalonia.Vulkan.dll
 C:\Users\HWS\.nuget\packages\avalonia.win32\11.3.12\lib\net8.0\Avalonia.Win32.Automation.dll
 C:\Users\HWS\.nuget\packages\avalonia.win32\11.3.12\lib\net8.0\Avalonia.Win32.dll

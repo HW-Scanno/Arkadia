@@ -29,48 +29,72 @@ public sealed class DatLineStore
             PRAGMA journal_mode = WAL;
             PRAGMA foreign_keys = ON;
 
-            CREATE TABLE IF NOT EXISTS artifacts (
+            CREATE TABLE IF NOT EXISTS releases (
                 id                   TEXT PRIMARY KEY,
-                source_file_name     TEXT NOT NULL,
-                source_relative_path TEXT NOT NULL,
-                source_size_bytes    INTEGER NOT NULL,
-                crc                  TEXT,
-                md5                  TEXT,
-                sha1                 TEXT,
+                dat_line_id          TEXT NOT NULL,
+                name                 TEXT NOT NULL,
+                status               TEXT NOT NULL DEFAULT 'missing',
+                tier                 TEXT,
+                region               TEXT,
+                languages            TEXT,
+                format               TEXT,
+                size                 TEXT,
+                release_content_key  TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_releases_name                ON releases(name);
+            CREATE INDEX IF NOT EXISTS idx_releases_release_content_key ON releases(release_content_key);
+
+            CREATE TABLE IF NOT EXISTS release_content_links (
+                id                   TEXT PRIMARY KEY,
+                release_id           TEXT NOT NULL,
                 content_identity_key TEXT NOT NULL,
+                created_at_utc       TEXT NOT NULL,
+                UNIQUE(release_id, content_identity_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_release_content_links_release_id ON release_content_links(release_id);
+            CREATE INDEX IF NOT EXISTS idx_release_content_links_cik        ON release_content_links(content_identity_key);
+
+            CREATE TABLE IF NOT EXISTS content_identities (
+                content_identity_key TEXT PRIMARY KEY,
+                dat_sha1             TEXT,
+                dat_md5              TEXT,
+                dat_crc32            TEXT,
+                created_at_utc       TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS source_artifacts (
+                id                   TEXT PRIMARY KEY,
+                content_identity_key TEXT NOT NULL,
+                source_size_bytes    INTEGER NOT NULL,
+                hashed_source_sha1   TEXT NOT NULL DEFAULT '',
+                hashed_source_md5    TEXT,
+                hashed_source_crc32  TEXT,
+                verified_at_utc      TEXT NOT NULL,
+                UNIQUE(content_identity_key, hashed_source_sha1, source_size_bytes)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_source_artifacts_cik ON source_artifacts(content_identity_key);
+
+            CREATE TABLE IF NOT EXISTS derived_artifacts (
+                id                   TEXT PRIMARY KEY,
+                storage_strategy_id  TEXT NOT NULL,
+                source_artifact_id   TEXT NOT NULL DEFAULT '',
+                content_identity_key TEXT NOT NULL,
+                file_name            TEXT NOT NULL,
+                relative_path        TEXT NOT NULL,
+                derived_size_bytes   INTEGER NOT NULL,
+                hashed_derived_sha1  TEXT NOT NULL DEFAULT '',
+                hashed_derived_md5   TEXT,
+                hashed_derived_crc32 TEXT,
                 status               TEXT NOT NULL,
                 created_at_utc       TEXT NOT NULL,
-                verified_at_utc      TEXT
+                verified_at_utc      TEXT,
+                UNIQUE(content_identity_key, storage_strategy_id)
             );
 
-            CREATE INDEX IF NOT EXISTS idx_artifacts_sha1 ON artifacts(sha1);
-            CREATE INDEX IF NOT EXISTS idx_artifacts_md5  ON artifacts(md5);
-
-            CREATE TABLE IF NOT EXISTS release_artifacts (
-                id             TEXT PRIMARY KEY,
-                release_id     TEXT NOT NULL,
-                artifact_id    TEXT NOT NULL,
-                created_at_utc TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_release_artifacts_release_id  ON release_artifacts(release_id);
-            CREATE INDEX IF NOT EXISTS idx_release_artifacts_artifact_id ON release_artifacts(artifact_id);
-
-            CREATE TABLE IF NOT EXISTS releases (
-                id           TEXT PRIMARY KEY,
-                dat_line_id  TEXT NOT NULL,
-                name         TEXT NOT NULL,
-                status       TEXT NOT NULL DEFAULT 'missing',
-                tier         TEXT,
-                region       TEXT,
-                languages    TEXT,
-                format       TEXT,
-                size         TEXT,
-                content_key  TEXT NOT NULL DEFAULT ''
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_releases_name        ON releases(name);
-            CREATE INDEX IF NOT EXISTS idx_releases_content_key ON releases(content_key);
+            CREATE INDEX IF NOT EXISTS idx_derived_artifacts_content_key ON derived_artifacts(content_identity_key);
 
             CREATE TABLE IF NOT EXISTS pending_reconciliations (
                 id                   TEXT PRIMARY KEY,
@@ -104,36 +128,17 @@ public sealed class DatLineStore
             """;
         cmd.ExecuteNonQuery();
 
-        RunMigration(conn, """
-            CREATE TABLE IF NOT EXISTS artifacts (
-                id                   TEXT PRIMARY KEY,
-                source_file_name     TEXT NOT NULL,
-                source_relative_path TEXT NOT NULL,
-                source_size_bytes    INTEGER NOT NULL,
-                crc                  TEXT,
-                md5                  TEXT,
-                sha1                 TEXT,
-                content_identity_key TEXT NOT NULL,
-                status               TEXT NOT NULL,
-                created_at_utc       TEXT NOT NULL,
-                verified_at_utc      TEXT
-            )
-            """);
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_artifacts_sha1 ON artifacts(sha1)");
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_artifacts_md5  ON artifacts(md5)");
-        RunMigration(conn, """
-            CREATE TABLE IF NOT EXISTS release_artifacts (
-                id             TEXT PRIMARY KEY,
-                release_id     TEXT NOT NULL,
-                artifact_id    TEXT NOT NULL,
-                created_at_utc TEXT NOT NULL
-            )
-            """);
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_artifacts_release_id  ON release_artifacts(release_id)");
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_artifacts_artifact_id ON release_artifacts(artifact_id)");
+        // ── Migrations for existing databases ─────────────────────────────────
+        // Rename content_key → release_content_key on existing releases tables.
+        RunMigration(conn, "ALTER TABLE releases RENAME COLUMN content_key TO release_content_key");
+        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_releases_release_content_key ON releases(release_content_key)");
 
-        RunMigration(conn, "ALTER TABLE releases ADD COLUMN content_key TEXT NOT NULL DEFAULT ''");
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_releases_content_key ON releases(content_key)");
+        // Drop legacy structural tables no longer used in the clean schema.
+        RunMigration(conn, "DROP TABLE IF EXISTS artifact_transforms");
+        RunMigration(conn, "DROP TABLE IF EXISTS release_artifacts");
+        RunMigration(conn, "DROP TABLE IF EXISTS artifacts");
+
+        // Add release_files on databases that predate it.
         RunMigration(conn, """
             CREATE TABLE IF NOT EXISTS release_files (
                 id          TEXT PRIMARY KEY,
@@ -147,17 +152,41 @@ public sealed class DatLineStore
             """);
         RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_files_release_id ON release_files(release_id)");
 
+        // Add content_identities / source_artifacts / derived_artifacts for databases that predate them.
+        RunMigration(conn, """
+            CREATE TABLE IF NOT EXISTS content_identities (
+                content_identity_key TEXT PRIMARY KEY,
+                dat_sha1             TEXT,
+                dat_md5              TEXT,
+                dat_crc32            TEXT,
+                created_at_utc       TEXT NOT NULL
+            )
+            """);
+        RunMigration(conn, """
+            CREATE TABLE IF NOT EXISTS source_artifacts (
+                id                   TEXT PRIMARY KEY,
+                content_identity_key TEXT NOT NULL,
+                source_size_bytes    INTEGER NOT NULL,
+                hashed_source_sha1   TEXT NOT NULL DEFAULT '',
+                hashed_source_md5    TEXT,
+                hashed_source_crc32  TEXT,
+                verified_at_utc      TEXT NOT NULL,
+                UNIQUE(content_identity_key, hashed_source_sha1, source_size_bytes)
+            )
+            """);
+        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_source_artifacts_cik ON source_artifacts(content_identity_key)");
         RunMigration(conn, """
             CREATE TABLE IF NOT EXISTS derived_artifacts (
                 id                   TEXT PRIMARY KEY,
                 storage_strategy_id  TEXT NOT NULL,
+                source_artifact_id   TEXT NOT NULL DEFAULT '',
+                content_identity_key TEXT NOT NULL,
                 file_name            TEXT NOT NULL,
                 relative_path        TEXT NOT NULL,
-                size_bytes           INTEGER NOT NULL,
-                crc                  TEXT,
-                md5                  TEXT,
-                sha1                 TEXT,
-                content_identity_key TEXT NOT NULL,
+                derived_size_bytes   INTEGER NOT NULL,
+                hashed_derived_sha1  TEXT NOT NULL DEFAULT '',
+                hashed_derived_md5   TEXT,
+                hashed_derived_crc32 TEXT,
                 status               TEXT NOT NULL,
                 created_at_utc       TEXT NOT NULL,
                 verified_at_utc      TEXT
@@ -165,17 +194,18 @@ public sealed class DatLineStore
             """);
         RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_derived_artifacts_content_key ON derived_artifacts(content_identity_key)");
 
+        // Add release_content_links on databases that predate it.
         RunMigration(conn, """
-            CREATE TABLE IF NOT EXISTS artifact_transforms (
-                id                  TEXT PRIMARY KEY,
-                source_artifact_id  TEXT NOT NULL,
-                derived_artifact_id TEXT NOT NULL,
-                transform_kind      TEXT NOT NULL,
-                created_at_utc      TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS release_content_links (
+                id                   TEXT PRIMARY KEY,
+                release_id           TEXT NOT NULL,
+                content_identity_key TEXT NOT NULL,
+                created_at_utc       TEXT NOT NULL,
+                UNIQUE(release_id, content_identity_key)
             )
             """);
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_artifact_transforms_source  ON artifact_transforms(source_artifact_id)");
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_artifact_transforms_derived ON artifact_transforms(derived_artifact_id)");
+        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_content_links_release_id ON release_content_links(release_id)");
+        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_content_links_cik        ON release_content_links(content_identity_key)");
     }
 
     private static void RunMigration(SqliteConnection conn, string sql)
@@ -202,7 +232,7 @@ public sealed class DatLineStore
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO releases(id, dat_line_id, name, status, tier, region, languages, format, size, content_key)
+                INSERT INTO releases(id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key)
                 VALUES($id, $datLineId, $name, $status, $tier, $region, $languages, $format, $size, $contentKey)
                 """;
             cmd.Parameters.AddWithValue("$id",         r.Id);
@@ -214,7 +244,7 @@ public sealed class DatLineStore
             cmd.Parameters.AddWithValue("$languages",  r.Languages);
             cmd.Parameters.AddWithValue("$format",     r.Format);
             cmd.Parameters.AddWithValue("$size",       r.Size);
-            cmd.Parameters.AddWithValue("$contentKey", r.ContentKey);
+            cmd.Parameters.AddWithValue("$contentKey", r.ReleaseContentKey);
             cmd.ExecuteNonQuery();
         }
 
@@ -238,7 +268,7 @@ public sealed class DatLineStore
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, dat_line_id, name, status, tier, region, languages, format, size, content_key
+            SELECT id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key
             FROM releases
             ORDER BY name
             """;
@@ -255,9 +285,50 @@ public sealed class DatLineStore
                 Languages  = reader.IsDBNull(6) ? "" : reader.GetString(6),
                 Format     = reader.IsDBNull(7) ? "" : reader.GetString(7),
                 Size       = reader.IsDBNull(8) ? "" : reader.GetString(8),
-                ContentKey = reader.IsDBNull(9) ? "" : reader.GetString(9),
+                ReleaseContentKey = reader.IsDBNull(9) ? "" : reader.GetString(9),
             });
         return list;
+    }
+
+    // ── Release Content Links ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Records a structural link between a release and a content-identity key.
+    /// Idempotent: silently ignored if the (release_id, content_identity_key) pair already exists.
+    /// </summary>
+    public void SaveReleaseContentLink(ReleaseContentLinkRecord link)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT OR IGNORE INTO release_content_links(id, release_id, content_identity_key, created_at_utc)
+            VALUES($id, $releaseId, $cik, $created)
+            """;
+        cmd.Parameters.AddWithValue("$id",        link.Id);
+        cmd.Parameters.AddWithValue("$releaseId", link.ReleaseId);
+        cmd.Parameters.AddWithValue("$cik",       link.ContentIdentityKey);
+        cmd.Parameters.AddWithValue("$created",   link.CreatedAtUtc.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Returns all content-identity keys linked to a release.
+    /// </summary>
+    public HashSet<string> GetContentIdentityKeysByRelease(string releaseId)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT content_identity_key
+            FROM release_content_links
+            WHERE release_id = $releaseId
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            set.Add(r.GetString(0));
+        return set;
     }
 
     // ── Release Files ─────────────────────────────────────────────────────────
@@ -487,53 +558,6 @@ public sealed class DatLineStore
         cmd.ExecuteNonQuery();
     }
 
-    // ── Artifacts ─────────────────────────────────────────────────────────────
-
-    public void SaveArtifact(ArtifactRecord r)
-    {
-        using var conn = Open();
-        using var cmd  = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO artifacts(
-                id, source_file_name, source_relative_path, source_size_bytes,
-                crc, md5, sha1, content_identity_key,
-                status, created_at_utc, verified_at_utc)
-            VALUES(
-                $id, $sourceFileName, $sourceRelativePath, $sourceSizeBytes,
-                $crc, $md5, $sha1, $contentIdentityKey,
-                $status, $createdAt, $verifiedAt)
-            """;
-        cmd.Parameters.AddWithValue("$id",                 r.Id);
-        cmd.Parameters.AddWithValue("$sourceFileName",     r.SourceFileName);
-        cmd.Parameters.AddWithValue("$sourceRelativePath", r.SourceRelativePath);
-        cmd.Parameters.AddWithValue("$sourceSizeBytes",    r.SourceSizeBytes);
-        cmd.Parameters.AddWithValue("$crc",                r.Crc.Length  > 0 ? (object)r.Crc  : DBNull.Value);
-        cmd.Parameters.AddWithValue("$md5",                r.Md5.Length  > 0 ? (object)r.Md5  : DBNull.Value);
-        cmd.Parameters.AddWithValue("$sha1",               r.Sha1.Length > 0 ? (object)r.Sha1 : DBNull.Value);
-        cmd.Parameters.AddWithValue("$contentIdentityKey", r.ContentIdentityKey);
-        cmd.Parameters.AddWithValue("$status",             r.Status);
-        cmd.Parameters.AddWithValue("$createdAt",          r.CreatedAtUtc.ToString("o"));
-        cmd.Parameters.AddWithValue("$verifiedAt",         r.VerifiedAtUtc.HasValue
-                                                               ? (object)r.VerifiedAtUtc.Value.ToString("o")
-                                                               : DBNull.Value);
-        cmd.ExecuteNonQuery();
-    }
-
-    public void LinkReleaseArtifact(ReleaseArtifactRecord r)
-    {
-        using var conn = Open();
-        using var cmd  = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO release_artifacts(id, release_id, artifact_id, created_at_utc)
-            VALUES($id, $releaseId, $artifactId, $createdAt)
-            """;
-        cmd.Parameters.AddWithValue("$id",          r.Id);
-        cmd.Parameters.AddWithValue("$releaseId",   r.ReleaseId);
-        cmd.Parameters.AddWithValue("$artifactId",  r.ArtifactId);
-        cmd.Parameters.AddWithValue("$createdAt",   r.CreatedAtUtc.ToString("o"));
-        cmd.ExecuteNonQuery();
-    }
-
     // ── Status aggregates ─────────────────────────────────────────────────────
 
     /// <summary>
@@ -615,7 +639,7 @@ public sealed class DatLineStore
 
     /// <summary>
     /// Returns the set of derived_artifact IDs linked to the given release
-    /// via release_artifacts → artifact_transforms → derived_artifacts.
+    /// via release_content_links → derived_artifacts (by content_identity_key).
     /// </summary>
     public HashSet<string> GetDerivedArtifactIdsByRelease(string releaseId)
     {
@@ -624,10 +648,9 @@ public sealed class DatLineStore
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
             SELECT DISTINCT da.id
-            FROM release_artifacts ra
-            JOIN artifact_transforms at ON at.source_artifact_id = ra.artifact_id
-            JOIN derived_artifacts   da ON da.id = at.derived_artifact_id
-            WHERE ra.release_id = $releaseId
+            FROM release_content_links rcl
+            JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+            WHERE rcl.release_id = $releaseId
             """;
         cmd.Parameters.AddWithValue("$releaseId", releaseId);
         using var r = cmd.ExecuteReader();
@@ -639,7 +662,8 @@ public sealed class DatLineStore
     /// <summary>
     /// Atomically marks the given derived artifacts as lost and marks any
     /// currently-present releases that depend on them as lost.
-    /// Only releases with status "present" are transitioned; other statuses are untouched.
+    /// Uses release_content_links to find affected releases.
+    /// Only releases with status "present" are transitioned.
     /// Returns (artifactCount, releaseCount) — count of rows actually updated.
     /// </summary>
     public (int ArtifactCount, int ReleaseCount) MarkArtifactsAndReleasesLost(
@@ -659,17 +683,17 @@ public sealed class DatLineStore
         for (int i = 0; i < derivedIds.Count; i++) artCmd.Parameters.AddWithValue($"$d{i}", derivedIds[i]);
         int artifactCount = artCmd.ExecuteNonQuery();
 
-        // Find all releases linked to any of these derived artifacts
-        // Chain: release_artifacts → artifact_transforms → derived_artifacts
+        // Find releases linked to any of these derived artifacts
+        // New chain: derived_artifacts → release_content_links → releases
         var releaseIds = new List<string>();
         using (var findCmd = conn.CreateCommand())
         {
             findCmd.Transaction = tx;
             findCmd.CommandText = $"""
-                SELECT DISTINCT ra.release_id
-                FROM release_artifacts ra
-                JOIN artifact_transforms at ON at.source_artifact_id = ra.artifact_id
-                WHERE at.derived_artifact_id IN ({dp})
+                SELECT DISTINCT rcl.release_id
+                FROM release_content_links rcl
+                JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                WHERE da.id IN ({dp})
                 """;
             for (int i = 0; i < derivedIds.Count; i++) findCmd.Parameters.AddWithValue($"$d{i}", derivedIds[i]);
             using var rf = findCmd.ExecuteReader();
@@ -698,8 +722,10 @@ public sealed class DatLineStore
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, storage_strategy_id, file_name, relative_path, size_bytes,
-                   crc, md5, sha1, content_identity_key, status, created_at_utc, verified_at_utc
+            SELECT id, storage_strategy_id, source_artifact_id, content_identity_key,
+                   file_name, relative_path, derived_size_bytes,
+                   hashed_derived_sha1, hashed_derived_md5, hashed_derived_crc32,
+                   status, created_at_utc, verified_at_utc
             FROM derived_artifacts
             ORDER BY file_name
             """;
@@ -714,8 +740,10 @@ public sealed class DatLineStore
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, storage_strategy_id, file_name, relative_path, size_bytes,
-                   crc, md5, sha1, content_identity_key, status, created_at_utc, verified_at_utc
+            SELECT id, storage_strategy_id, source_artifact_id, content_identity_key,
+                   file_name, relative_path, derived_size_bytes,
+                   hashed_derived_sha1, hashed_derived_md5, hashed_derived_crc32,
+                   status, created_at_utc, verified_at_utc
             FROM derived_artifacts
             WHERE content_identity_key = $ck
             LIMIT 1
@@ -726,185 +754,173 @@ public sealed class DatLineStore
         return ReadDerived(r);
     }
 
-    public void SaveDerivedArtifact(DerivedArtifactRecord d)
+    // ── Content Identities ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Ensures a content_identities row exists for the given key.
+    /// Idempotent: INSERT OR IGNORE on the primary key.
+    /// </summary>
+    public void EnsureContentIdentity(ContentIdentityRecord ci)
     {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT OR IGNORE INTO content_identities(content_identity_key, dat_sha1, dat_md5, dat_crc32, created_at_utc)
+            VALUES($ck, $sha1, $md5, $crc32, $created)
+            """;
+        cmd.Parameters.AddWithValue("$ck",      ci.ContentIdentityKey);
+        cmd.Parameters.AddWithValue("$sha1",    (object?)ci.DatSha1  ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$md5",     (object?)ci.DatMd5   ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$crc32",   (object?)ci.DatCrc32 ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$created", ci.CreatedAtUtc.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    // ── Source Artifacts ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Persists a source provenance record.
+    /// Idempotent: INSERT OR IGNORE on (content_identity_key, hashed_source_sha1, source_size_bytes).
+    /// </summary>
+    public void SaveSourceArtifact(SourceArtifactRecord sa)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT OR IGNORE INTO source_artifacts(
+                id, content_identity_key, source_size_bytes,
+                hashed_source_sha1, hashed_source_md5, hashed_source_crc32, verified_at_utc)
+            VALUES($id, $ck, $size, $sha1, $md5, $crc32, $verified)
+            """;
+        cmd.Parameters.AddWithValue("$id",       sa.Id);
+        cmd.Parameters.AddWithValue("$ck",       sa.ContentIdentityKey);
+        cmd.Parameters.AddWithValue("$size",     sa.SourceSizeBytes);
+        cmd.Parameters.AddWithValue("$sha1",     sa.HashedSourceSha1);
+        cmd.Parameters.AddWithValue("$md5",      (object?)sa.HashedSourceMd5   ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$crc32",    (object?)sa.HashedSourceCrc32 ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$verified", sa.VerifiedAtUtc.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Returns the id of any source_artifact already recorded for a content identity.
+    /// Returns null if none exists (should not happen after SaveSourceArtifact succeeds).
+    /// </summary>
+    public string? GetSourceArtifactIdByContentKey(string contentIdentityKey)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id FROM source_artifacts WHERE content_identity_key = $ck LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("$ck", contentIdentityKey);
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? r.GetString(0) : null;
+    }
+
+    /// <summary>
+    /// Returns the first source_artifact for a content identity, or null if none exists.
+    /// </summary>
+    public SourceArtifactRecord? GetSourceByContentKey(string contentIdentityKey)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, content_identity_key, source_size_bytes,
+                   hashed_source_sha1, hashed_source_md5, hashed_source_crc32, verified_at_utc
+            FROM source_artifacts
+            WHERE content_identity_key = $ck
+            LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("$ck", contentIdentityKey);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new SourceArtifactRecord
+        {
+            Id                 = r.GetString(0),
+            ContentIdentityKey = r.GetString(1),
+            SourceSizeBytes    = r.GetInt64(2),
+            HashedSourceSha1   = r.GetString(3),
+            HashedSourceMd5    = r.IsDBNull(4) ? null : r.GetString(4),
+            HashedSourceCrc32  = r.IsDBNull(5) ? null : r.GetString(5),
+            VerifiedAtUtc      = DateTime.Parse(r.GetString(6)),
+        };
+    }
+
+    // ── Derived Artifacts ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Upserts a derived artifact by (content_identity_key, storage_strategy_id).
+    /// If a row already exists for this pair, updates hashes and status to 'present'.
+    /// Returns the derived artifact id (existing or newly inserted).
+    /// </summary>
+    public string IngestDerivedArtifact(
+        string contentIdentityKey,
+        string sourceArtifactId,
+        string storageStrategyId,
+        string fileName,
+        string relativePath,
+        long   derivedSizeBytes,
+        string hashedDerivedSha1)
+    {
+        var now       = DateTime.UtcNow;
+        var candidateId = Guid.NewGuid().ToString("N");
+
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
             INSERT INTO derived_artifacts(
-                id, storage_strategy_id, file_name, relative_path, size_bytes,
-                crc, md5, sha1, content_identity_key, status, created_at_utc, verified_at_utc)
-            VALUES(
-                $id, $stratId, $fileName, $relPath, $size,
-                $crc, $md5, $sha1, $ck, $status, $created, $verified)
-            ON CONFLICT(id) DO NOTHING
+                id, storage_strategy_id, source_artifact_id, content_identity_key,
+                file_name, relative_path, derived_size_bytes,
+                hashed_derived_sha1, status, created_at_utc, verified_at_utc)
+            VALUES($id, $stratId, $srcArtId, $ck,
+                   $fileName, $relPath, $size,
+                   $drvSha1, 'present', $created, $created)
+            ON CONFLICT(content_identity_key, storage_strategy_id) DO UPDATE SET
+                source_artifact_id  = excluded.source_artifact_id,
+                hashed_derived_sha1 = excluded.hashed_derived_sha1,
+                status              = 'present',
+                verified_at_utc     = excluded.verified_at_utc
             """;
-        cmd.Parameters.AddWithValue("$id",       d.Id);
-        cmd.Parameters.AddWithValue("$stratId",  d.StorageStrategyId);
-        cmd.Parameters.AddWithValue("$fileName", d.FileName);
-        cmd.Parameters.AddWithValue("$relPath",  d.RelativePath);
-        cmd.Parameters.AddWithValue("$size",     d.SizeBytes);
-        cmd.Parameters.AddWithValue("$crc",      NullIfEmpty(d.Crc));
-        cmd.Parameters.AddWithValue("$md5",      NullIfEmpty(d.Md5));
-        cmd.Parameters.AddWithValue("$sha1",     NullIfEmpty(d.Sha1));
-        cmd.Parameters.AddWithValue("$ck",       d.ContentIdentityKey);
-        cmd.Parameters.AddWithValue("$status",   d.Status);
-        cmd.Parameters.AddWithValue("$created",  d.CreatedAtUtc.ToString("o"));
-        cmd.Parameters.AddWithValue("$verified", d.VerifiedAtUtc.HasValue
-            ? d.VerifiedAtUtc.Value.ToString("o") : DBNull.Value);
+        cmd.Parameters.AddWithValue("$id",       candidateId);
+        cmd.Parameters.AddWithValue("$stratId",  storageStrategyId);
+        cmd.Parameters.AddWithValue("$srcArtId", sourceArtifactId);
+        cmd.Parameters.AddWithValue("$ck",       contentIdentityKey);
+        cmd.Parameters.AddWithValue("$fileName", fileName);
+        cmd.Parameters.AddWithValue("$relPath",  relativePath);
+        cmd.Parameters.AddWithValue("$size",     derivedSizeBytes);
+        cmd.Parameters.AddWithValue("$drvSha1",  hashedDerivedSha1);
+        cmd.Parameters.AddWithValue("$created",  now.ToString("o"));
         cmd.ExecuteNonQuery();
-    }
 
-    public void SaveArtifactTransform(string id, string sourceArtifactId,
-        string derivedArtifactId, string transformKind, DateTime createdAtUtc)
-    {
-        using var conn = Open();
-        using var cmd  = conn.CreateCommand();
-        cmd.CommandText = """
-            INSERT INTO artifact_transforms(id, source_artifact_id, derived_artifact_id, transform_kind, created_at_utc)
-            VALUES($id, $srcId, $drvId, $kind, $created)
-            ON CONFLICT(id) DO NOTHING
+        // Retrieve the actual id (may be different from candidateId on conflict).
+        using var selCmd = conn.CreateCommand();
+        selCmd.CommandText = """
+            SELECT id FROM derived_artifacts
+            WHERE content_identity_key = $ck AND storage_strategy_id = $stratId
             """;
-        cmd.Parameters.AddWithValue("$id",      id);
-        cmd.Parameters.AddWithValue("$srcId",   sourceArtifactId);
-        cmd.Parameters.AddWithValue("$drvId",   derivedArtifactId);
-        cmd.Parameters.AddWithValue("$kind",    transformKind);
-        cmd.Parameters.AddWithValue("$created", createdAtUtc.ToString("o"));
-        cmd.ExecuteNonQuery();
-    }
-
-    public bool ArtifactTransformExists(string sourceArtifactId, string derivedArtifactId)
-    {
-        using var conn = Open();
-        using var cmd  = conn.CreateCommand();
-        cmd.CommandText = """
-            SELECT 1 FROM artifact_transforms
-            WHERE source_artifact_id = $srcId AND derived_artifact_id = $drvId
-            LIMIT 1
-            """;
-        cmd.Parameters.AddWithValue("$srcId", sourceArtifactId);
-        cmd.Parameters.AddWithValue("$drvId", derivedArtifactId);
-        using var r = cmd.ExecuteReader();
-        return r.Read();
-    }
-
-    /// <summary>
-    /// No-compression transform: copies the source artifact file to archive/ as-is,
-    /// records a DerivedArtifactRecord, and links it via artifact_transforms.
-    /// Idempotent: reuses existing derived artifact if content_identity_key already present.
-    /// Returns the derived artifact id, or null on failure.
-    /// </summary>
-    public string? RunNoCompressionTransform(
-        string         sourceArtifactId,
-        string         sourceFilePath,
-        string         fileName,
-        long           sizeBytes,
-        string         crc,
-        string         md5,
-        string         sha1,
-        string         contentIdentityKey,
-        string         platformId,
-        string         datLineId,
-        string         releaseFolderName,
-        string         storageStrategyId,
-        string         appRoot)
-    {
-        var now = DateTime.UtcNow;
-
-        // ── Idempotency: check if derived artifact already exists ─────────────
-        var existing = GetDerivedByContentKey(contentIdentityKey);
-        string derivedId;
-
-        if (existing is null)
-        {
-            var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId, releaseFolderName);
-            Directory.CreateDirectory(archiveDir);
-            var destPath   = Path.Combine(archiveDir, fileName);
-            var relPath    = $"archive/{platformId}/{datLineId}/{releaseFolderName}/{fileName}";
-
-            // Copy (or verify if already on disk)
-            if (File.Exists(destPath))
-            {
-                long existingSize = 0;
-                try { existingSize = new FileInfo(destPath).Length; } catch { }
-                if (existingSize != sizeBytes)
-                    File.Copy(sourceFilePath, destPath, overwrite: true);
-                // else: correct file already there — reuse
-            }
-            else
-            {
-                File.Copy(sourceFilePath, destPath, overwrite: true);
-            }
-
-            derivedId = Guid.NewGuid().ToString("N");
-            SaveDerivedArtifact(new DerivedArtifactRecord
-            {
-                Id                 = derivedId,
-                StorageStrategyId  = storageStrategyId,
-                FileName           = fileName,
-                RelativePath       = relPath,
-                SizeBytes          = sizeBytes,
-                Crc                = crc,
-                Md5                = md5,
-                Sha1               = sha1,
-                ContentIdentityKey = contentIdentityKey,
-                Status             = "present",
-                CreatedAtUtc       = now,
-                VerifiedAtUtc      = now,
-            });
-        }
-        else
-        {
-            derivedId = existing.Id;
-        }
-
-        // ── Provenance: insert transform link if not already recorded ─────────
-        if (!ArtifactTransformExists(sourceArtifactId, derivedId))
-        {
-            SaveArtifactTransform(
-                Guid.NewGuid().ToString("N"),
-                sourceArtifactId,
-                derivedId,
-                "no_compression",
-                now);
-        }
-
-        return derivedId;
+        selCmd.Parameters.AddWithValue("$ck",      contentIdentityKey);
+        selCmd.Parameters.AddWithValue("$stratId", storageStrategyId);
+        using var selR = selCmd.ExecuteReader();
+        return selR.Read() ? selR.GetString(0) : candidateId;
     }
 
     // ── Planning ──────────────────────────────────────────────────────────────
 
     /// <summary>
     /// Returns release-grouped planning candidates for this DAT line.
-    /// Each candidate represents one complete release group with its derived artifacts.
+    /// Uses release_content_links → derived_artifacts (new chain).
     /// </summary>
-    /// <param name="appRoot">
-    ///   Application base directory — used to resolve archive paths for completeness check.
-    /// </param>
-    /// <param name="assignedDerivedIds">
-    ///   Set of derived_artifact_id values already present in volume_artifacts (any volume).
-    ///   Build this from <c>CatalogService</c> before calling.
-    /// </param>
     public List<PlanningCandidate> GetPlanningCandidates(
-        string              appRoot,
-        HashSet<string>     assignedDerivedIds)
+        string          appRoot,
+        HashSet<string> assignedDerivedIds)
     {
-        // ── 1. Load all derived artifacts per release via the join chain ──────
-        // releases → release_artifacts → artifact_transforms → derived_artifacts
-        // A derived artifact can appear more than once per release when multiple
-        // source artifacts share the same content_identity_key (idempotent transform
-        // reuses the same derived_artifact_id). Track seen IDs per release to avoid
-        // double-counting size and inflating DerivedCount / IsCompleteInArchive.
-        var releaseToArtifacts = new Dictionary<string, List<DerivedArtifactRecord>>(
-            StringComparer.Ordinal);
-        // Per-release dedup set: releaseId → set of da.id already added
-        var releaseSeenDaIds = new Dictionary<string, HashSet<string>>(
-            StringComparer.Ordinal);
-        var releaseNames = new Dictionary<string, string>(StringComparer.Ordinal);
+        var releaseToArtifacts = new Dictionary<string, List<DerivedArtifactRecord>>(StringComparer.Ordinal);
+        var releaseSeenDaIds   = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var releaseNames       = new Dictionary<string, string>(StringComparer.Ordinal);
 
         using (var conn = Open())
         {
-            // Collect release names first
             using (var cmd = conn.CreateCommand())
             {
                 cmd.CommandText = "SELECT id, name FROM releases";
@@ -913,19 +929,17 @@ public sealed class DatLineStore
                     releaseNames[r.GetString(0)] = r.GetString(1);
             }
 
-            // Single query: walk the full chain
             using (var cmd = conn.CreateCommand())
             {
                 cmd.CommandText = """
                     SELECT
-                        ra.release_id,
-                        da.id, da.storage_strategy_id, da.file_name, da.relative_path,
-                        da.size_bytes, da.crc, da.md5, da.sha1,
-                        da.content_identity_key, da.status, da.created_at_utc, da.verified_at_utc
-                    FROM release_artifacts   ra
-                    JOIN artifact_transforms at ON at.source_artifact_id  = ra.artifact_id
-                    JOIN derived_artifacts   da ON da.id                  = at.derived_artifact_id
-                    ORDER BY ra.release_id, da.file_name
+                        rcl.release_id,
+                        da.id, da.storage_strategy_id, da.source_artifact_id, da.content_identity_key,
+                        da.file_name, da.relative_path, da.derived_size_bytes,
+                        da.hashed_derived_sha1, da.status, da.created_at_utc, da.verified_at_utc
+                    FROM release_content_links rcl
+                    JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                    ORDER BY rcl.release_id, da.file_name
                     """;
 
                 using var r = cmd.ExecuteReader();
@@ -939,24 +953,21 @@ public sealed class DatLineStore
                         seen = new HashSet<string>(StringComparer.Ordinal);
                         releaseSeenDaIds[releaseId] = seen;
                     }
-                    // Skip duplicate derived artifact within the same release.
-                    if (!seen.Add(daId))
-                        continue;
+                    if (!seen.Add(daId)) continue;
 
                     var da = new DerivedArtifactRecord
                     {
                         Id                 = daId,
                         StorageStrategyId  = r.GetString(2),
-                        FileName           = r.GetString(3),
-                        RelativePath       = r.GetString(4),
-                        SizeBytes          = r.GetInt64(5),
-                        Crc                = r.IsDBNull(6)  ? "" : r.GetString(6),
-                        Md5                = r.IsDBNull(7)  ? "" : r.GetString(7),
-                        Sha1               = r.IsDBNull(8)  ? "" : r.GetString(8),
-                        ContentIdentityKey = r.GetString(9),
-                        Status             = r.GetString(10),
-                        CreatedAtUtc       = DateTime.Parse(r.GetString(11)),
-                        VerifiedAtUtc      = r.IsDBNull(12) ? null : DateTime.Parse(r.GetString(12)),
+                        SourceArtifactId   = r.GetString(3),
+                        ContentIdentityKey = r.GetString(4),
+                        FileName           = r.GetString(5),
+                        RelativePath       = r.GetString(6),
+                        DerivedSizeBytes   = r.GetInt64(7),
+                        HashedDerivedSha1  = r.GetString(8),
+                        Status             = r.GetString(9),
+                        CreatedAtUtc       = DateTime.Parse(r.GetString(10)),
+                        VerifiedAtUtc      = r.IsDBNull(11) ? null : DateTime.Parse(r.GetString(11)),
                     };
 
                     if (!releaseToArtifacts.TryGetValue(releaseId, out var list))
@@ -972,7 +983,6 @@ public sealed class DatLineStore
         if (releaseToArtifacts.Count == 0)
             return [];
 
-        // ── 2. Build candidates ───────────────────────────────────────────────
         var candidates = new List<PlanningCandidate>(releaseToArtifacts.Count);
 
         foreach (var (releaseId, artifacts) in releaseToArtifacts)
@@ -986,12 +996,11 @@ public sealed class DatLineStore
 
             foreach (var da in artifacts)
             {
-                totalSize += da.SizeBytes;
+                totalSize += da.DerivedSizeBytes;
 
                 if (assignedDerivedIds.Contains(da.Id))
                     anyAssigned = true;
 
-                // Resolve physical path from relative_path (uses forward slashes).
                 var physicalPath = Path.Combine(
                     appRoot,
                     da.RelativePath.Replace('/', Path.DirectorySeparatorChar));
@@ -1017,34 +1026,30 @@ public sealed class DatLineStore
     }
 
     /// <summary>
-    /// Returns distinct derived_artifact_id values for each of the given release IDs,
-    /// using the same join chain as GetPlanningCandidates.
-    /// Key = releaseId, Value = distinct derived artifact IDs for that release.
-    /// Only releases that have at least one derived artifact appear in the result.
+    /// Returns derived artifact IDs and their content identity keys for the given releases.
+    /// Uses release_content_links → derived_artifacts (new chain).
+    /// Key = releaseId, Value = list of (DaId, ContentIdentityKey) tuples.
     /// </summary>
-    public Dictionary<string, List<string>> GetDerivedArtifactIdsForReleases(
-        IEnumerable<string> releaseIds)
+    public Dictionary<string, List<(string DaId, string ContentIdentityKey)>>
+        GetDerivedArtifactIdsForReleases(IEnumerable<string> releaseIds)
     {
-        var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        // Per-release dedup (same idempotent-reuse concern as GetPlanningCandidates).
+        var result         = new Dictionary<string, List<(string, string)>>(StringComparer.Ordinal);
         var seenPerRelease = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
 
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
 
-        // Build a parameterised IN list.
         var ids = releaseIds as IList<string> ?? releaseIds.ToList();
         if (ids.Count == 0) return result;
 
         var placeholders = string.Join(",",
-            System.Linq.Enumerable.Range(0, ids.Count).Select(i => $"$r{i}"));
+            Enumerable.Range(0, ids.Count).Select(i => $"$r{i}"));
         cmd.CommandText = $"""
-            SELECT ra.release_id, da.id
-            FROM release_artifacts   ra
-            JOIN artifact_transforms at ON at.source_artifact_id  = ra.artifact_id
-            JOIN derived_artifacts   da ON da.id                  = at.derived_artifact_id
-            WHERE ra.release_id IN ({placeholders})
-            ORDER BY ra.release_id, da.id
+            SELECT rcl.release_id, da.id, da.content_identity_key
+            FROM release_content_links rcl
+            JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+            WHERE rcl.release_id IN ({placeholders})
+            ORDER BY rcl.release_id, da.id
             """;
         for (int i = 0; i < ids.Count; i++)
             cmd.Parameters.AddWithValue($"$r{i}", ids[i]);
@@ -1054,6 +1059,7 @@ public sealed class DatLineStore
         {
             var releaseId = r.GetString(0);
             var daId      = r.GetString(1);
+            var ck        = r.GetString(2);
 
             if (!seenPerRelease.TryGetValue(releaseId, out var seen))
             {
@@ -1067,22 +1073,15 @@ public sealed class DatLineStore
                 list = [];
                 result[releaseId] = list;
             }
-            list.Add(daId);
+            list.Add((daId, ck));
         }
 
         return result;
     }
 
     /// <summary>
-    /// For each given derived_artifact_id, returns the release name, file name,
-    /// archive relative path, and size. Used by the Build Volume handler to resolve
-    /// physical source paths and construct destination folder layout.
-    /// If a derived artifact is linked to multiple releases (edge case), the first
-    /// encountered release name is used.
-    /// </summary>
-    /// <summary>
-    /// Like <see cref="GetArtifactBuildInfos"/> but also includes the expected SHA1
-    /// for each derived artifact. Used by the DAT line verify flow.
+    /// For each derived artifact ID, returns release name, file name, size, and expected SHA1
+    /// for volume verification. Uses release_content_links → releases (new chain).
     /// </summary>
     public List<ArtifactVerifyInfo> GetArtifactVerifyInfos(IEnumerable<string> derivedArtifactIds)
     {
@@ -1098,11 +1097,10 @@ public sealed class DatLineStore
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = $"""
-            SELECT da.id, r.name, da.file_name, da.size_bytes, COALESCE(da.sha1, '')
-            FROM derived_artifacts   da
-            JOIN artifact_transforms at ON at.derived_artifact_id = da.id
-            JOIN release_artifacts   ra ON ra.artifact_id         = at.source_artifact_id
-            JOIN releases            r  ON r.id                   = ra.release_id
+            SELECT da.id, r.name, da.file_name, da.derived_size_bytes, da.hashed_derived_sha1
+            FROM derived_artifacts da
+            JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
+            JOIN releases              r   ON r.id = rcl.release_id
             WHERE da.id IN ({placeholders})
             ORDER BY r.name, da.file_name
             """;
@@ -1127,6 +1125,10 @@ public sealed class DatLineStore
         return result;
     }
 
+    /// <summary>
+    /// For each derived artifact ID, returns release name, file name, path, and size
+    /// for Build Volume. Uses release_content_links → releases (new chain).
+    /// </summary>
     public List<ArtifactBuildInfo> GetArtifactBuildInfos(IEnumerable<string> derivedArtifactIds)
     {
         var ids = derivedArtifactIds as IList<string> ?? derivedArtifactIds.ToList();
@@ -1141,11 +1143,10 @@ public sealed class DatLineStore
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = $"""
-            SELECT da.id, r.name, da.file_name, da.relative_path, da.size_bytes
-            FROM derived_artifacts   da
-            JOIN artifact_transforms at ON at.derived_artifact_id = da.id
-            JOIN release_artifacts   ra ON ra.artifact_id         = at.source_artifact_id
-            JOIN releases            r  ON r.id                   = ra.release_id
+            SELECT da.id, r.name, da.file_name, da.relative_path, da.derived_size_bytes
+            FROM derived_artifacts da
+            JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
+            JOIN releases              r   ON r.id = rcl.release_id
             WHERE da.id IN ({placeholders})
             ORDER BY r.name, da.file_name
             """;
@@ -1156,7 +1157,7 @@ public sealed class DatLineStore
         while (r.Read())
         {
             var daId = r.GetString(0);
-            if (!seenDaId.Add(daId)) continue;   // keep first (lowest release name) only
+            if (!seenDaId.Add(daId)) continue;
             result.Add(new ArtifactBuildInfo
             {
                 DerivedArtifactId = daId,
@@ -1179,22 +1180,26 @@ public sealed class DatLineStore
         return sb.ToString();
     }
 
-    private static object NullIfEmpty(string s) => s.Length > 0 ? s : DBNull.Value;
-
+    // Column order must match SELECT in GetDerivedArtifacts / GetDerivedByContentKey:
+    // 0=id, 1=storage_strategy_id, 2=source_artifact_id, 3=content_identity_key,
+    // 4=file_name, 5=relative_path, 6=derived_size_bytes,
+    // 7=hashed_derived_sha1, 8=hashed_derived_md5, 9=hashed_derived_crc32,
+    // 10=status, 11=created_at_utc, 12=verified_at_utc
     private static DerivedArtifactRecord ReadDerived(SqliteDataReader r) => new()
     {
         Id                 = r.GetString(0),
         StorageStrategyId  = r.GetString(1),
-        FileName           = r.GetString(2),
-        RelativePath       = r.GetString(3),
-        SizeBytes          = r.GetInt64(4),
-        Crc                = r.IsDBNull(5)  ? "" : r.GetString(5),
-        Md5                = r.IsDBNull(6)  ? "" : r.GetString(6),
-        Sha1               = r.IsDBNull(7)  ? "" : r.GetString(7),
-        ContentIdentityKey = r.GetString(8),
-        Status             = r.GetString(9),
-        CreatedAtUtc       = DateTime.Parse(r.GetString(10)),
-        VerifiedAtUtc      = r.IsDBNull(11) ? null : DateTime.Parse(r.GetString(11)),
+        SourceArtifactId   = r.GetString(2),
+        ContentIdentityKey = r.GetString(3),
+        FileName           = r.GetString(4),
+        RelativePath       = r.GetString(5),
+        DerivedSizeBytes   = r.GetInt64(6),
+        HashedDerivedSha1  = r.GetString(7),
+        HashedDerivedMd5   = r.IsDBNull(8)  ? null : r.GetString(8),
+        HashedDerivedCrc32 = r.IsDBNull(9)  ? null : r.GetString(9),
+        Status             = r.GetString(10),
+        CreatedAtUtc       = DateTime.Parse(r.GetString(11)),
+        VerifiedAtUtc      = r.IsDBNull(12) ? null : DateTime.Parse(r.GetString(12)),
     };
 
     private SqliteConnection Open()

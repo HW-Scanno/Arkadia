@@ -1,0 +1,119 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.MoveCompleteDialog"
+        Title="Arkadia - Operation Complete"
+        Width="500"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <StackPanel Margin="28,24,28,24" Spacing="0">
+
+        <!-- Heading -->
+        <TextBlock Text="Volume Move Completed"
+                   FontSize="15" FontWeight="SemiBold"
+                   Foreground="#F0F0F0"
+                   HorizontalAlignment="Center"
+                   TextAlignment="Center"
+                   Margin="0,0,0,20"/>
+
+        <!-- Summary block -->
+        <Border Background="#1A1A24" CornerRadius="6" Padding="16,14" Margin="0,0,0,16">
+            <StackPanel Spacing="8">
+
+                <!-- Volume -->
+                <Grid ColumnDefinitions="160,*">
+                    <TextBlock Grid.Column="0" Text="Volume"
+                               FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumVolume"
+                               FontSize="12" Foreground="#F0F0F0" TextWrapping="Wrap"/>
+                </Grid>
+
+                <!-- Source Path -->
+                <Grid ColumnDefinitions="160,*">
+                    <TextBlock Grid.Column="0" Text="Source Path"
+                               FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumSourcePath"
+                               FontSize="11" Foreground="#AAAACC"
+                               FontFamily="Consolas,Courier New,monospace"
+                               TextWrapping="Wrap"/>
+                </Grid>
+
+                <!-- Destination Path -->
+                <Grid ColumnDefinitions="160,*">
+                    <TextBlock Grid.Column="0" Text="Destination Path"
+                               FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumDestPath"
+                               FontSize="11" Foreground="#AAAACC"
+                               FontFamily="Consolas,Courier New,monospace"
+                               TextWrapping="Wrap"/>
+                </Grid>
+
+                <Border Height="1" Background="#242433" Margin="0,4,0,4"/>
+
+                <!-- Total Files -->
+                <Grid ColumnDefinitions="160,*">
+                    <TextBlock Grid.Column="0" Text="Total Files"
+                               FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumFileCount"
+                               FontSize="12" Foreground="#F0F0F0"/>
+                </Grid>
+
+                <!-- Total Size -->
+                <Grid ColumnDefinitions="160,*">
+                    <TextBlock Grid.Column="0" Text="Total Size"
+                               FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumTotalSize"
+                               FontSize="12" Foreground="#F0F0F0"/>
+                </Grid>
+
+                <!-- Transfer Speed -->
+                <Grid ColumnDefinitions="160,*">
+                    <TextBlock Grid.Column="0" Text="Transfer Speed (avg)"
+                               FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumSpeed"
+                               FontSize="12" Foreground="#F0F0F0"/>
+                </Grid>
+
+                <!-- Total Elapsed -->
+                <Grid ColumnDefinitions="160,*">
+                    <TextBlock Grid.Column="0" Text="Total Elapsed"
+                               FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumElapsed"
+                               FontSize="12" Foreground="#F0F0F0"/>
+                </Grid>
+
+                <Border Height="1" Background="#242433" Margin="0,4,0,4"/>
+
+                <!-- Verification -->
+                <Grid ColumnDefinitions="160,*">
+                    <TextBlock Grid.Column="0" Text="Verification"
+                               FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumVerification"
+                               FontSize="12" FontWeight="Medium"/>
+                </Grid>
+
+                <!-- Source Removal -->
+                <Grid ColumnDefinitions="160,*">
+                    <TextBlock Grid.Column="0" Text="Source Removal"
+                               FontSize="12" Foreground="#888899"/>
+                    <TextBlock Grid.Column="1" x:Name="SumSourceRemoval"
+                               FontSize="12" FontWeight="Medium"
+                               TextWrapping="Wrap"/>
+                </Grid>
+
+            </StackPanel>
+        </Border>
+
+        <!-- OK button -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="OK"
+                    Background="#7B68EE" Foreground="#FFFFFF"
+                    Padding="24,8" CornerRadius="6" BorderThickness="0"
+                    Click="OnOk"/>
+        </StackPanel>
+
+    </StackPanel>
+</Window>

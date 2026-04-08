@@ -48,11 +48,11 @@ public sealed class ReconciliationEngineTests : IDisposable
             : new List<DatParser.ParsedRom>();
         return new ReleaseRecord
         {
-            Id         = Guid.NewGuid().ToString("N"),
-            DatLineId  = datLineId,
-            Name       = name,
-            Status     = status,
-            ContentKey = DatParser.ComputeContentKey(roms),
+            Id               = Guid.NewGuid().ToString("N"),
+            DatLineId        = datLineId,
+            Name             = name,
+            Status           = status,
+            ReleaseContentKey = DatParser.ComputeContentKey(roms),
         };
     }
 
@@ -301,7 +301,7 @@ public sealed class ReconciliationEngineTests : IDisposable
 
         var r = Assert.Single(store.LoadReleases());
         Assert.Equal("present", r.Status);
-        Assert.Equal($"sha1:{sha1}", r.ContentKey);
+        Assert.Equal($"sha1:{sha1}", r.ReleaseContentKey);
     }
 
     [Fact]

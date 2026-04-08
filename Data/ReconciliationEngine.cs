@@ -72,23 +72,23 @@ public static class ReconciliationEngine
         foreach (var r in removed)
             r.Status = "outdated";
 
-        // Update ContentKey on kept releases when previously empty.
+        // Update ReleaseContentKey on kept releases when previously empty.
         var newGameByName = newGames.ToDictionary(g => g.Name, StringComparer.Ordinal);
         foreach (var r in kept)
         {
-            if (r.ContentKey.Length == 0 && newGameByName.TryGetValue(r.Name, out var g))
-                r.ContentKey = g.ContentKey;
+            if (r.ReleaseContentKey.Length == 0 && newGameByName.TryGetValue(r.Name, out var g))
+                r.ReleaseContentKey = g.ContentKey;
         }
 
         // ── Build indexes for matching ────────────────────────────────────────
-        // Ambiguity is checked across ALL removed releases for a given ContentKey,
+        // Ambiguity is checked across ALL removed releases for a given ReleaseContentKey,
         // regardless of reusability.  Two prior releases that share the same content
         // identity — even if only one is present — constitute an ambiguous mapping.
-        // Only when exactly one removed release holds a ContentKey AND that release
+        // Only when exactly one removed release holds a ReleaseContentKey AND that release
         // was physically owned (pre-update status reusable) do we create PENDING.
         var allRemovedByKey = removed
-            .Where(r => r.ContentKey.Length > 0)
-            .GroupBy(r => r.ContentKey, StringComparer.Ordinal)
+            .Where(r => r.ReleaseContentKey.Length > 0)
+            .GroupBy(r => r.ReleaseContentKey, StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
 
         // ── Process introduced releases ───────────────────────────────────────
@@ -128,13 +128,13 @@ public static class ReconciliationEngine
 
                 introduced.Add(new ReleaseRecord
                 {
-                    Id         = newId,
-                    DatLineId  = datLineId,
-                    Name       = game.Name,
-                    Status     = status,
-                    Region     = game.Region,
-                    Languages  = game.Languages,
-                    ContentKey = game.ContentKey,
+                    Id               = newId,
+                    DatLineId        = datLineId,
+                    Name             = game.Name,
+                    Status           = status,
+                    Region           = game.Region,
+                    Languages        = game.Languages,
+                    ReleaseContentKey = game.ContentKey,
                 });
                 pendingRows.Add(pendingRow);
             }
@@ -144,13 +144,13 @@ public static class ReconciliationEngine
                 // physically owned (missing/lost) — new release stays MISSING.
                 introduced.Add(new ReleaseRecord
                 {
-                    Id         = Guid.NewGuid().ToString("N"),
-                    DatLineId  = datLineId,
-                    Name       = game.Name,
-                    Status     = "missing",
-                    Region     = game.Region,
-                    Languages  = game.Languages,
-                    ContentKey = game.ContentKey,
+                    Id               = Guid.NewGuid().ToString("N"),
+                    DatLineId        = datLineId,
+                    Name             = game.Name,
+                    Status           = "missing",
+                    Region           = game.Region,
+                    Languages        = game.Languages,
+                    ReleaseContentKey = game.ContentKey,
                 });
             }
         }

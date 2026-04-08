@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Arkadia"
         x:Class="Arkadia.DatLineVerifyDialog"
-        Title="DAT Line Verify"
+        Title="Arkadia - DAT Operation"
         Width="980" Height="680"
         MinWidth="720" MinHeight="480"
         CanResize="True"

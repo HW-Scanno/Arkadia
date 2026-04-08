@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:local="clr-namespace:Arkadia"
         x:Class="Arkadia.WriteVolumeToDiskDialog"
-        Title="Write Volume to Disk"
+        Title="Arkadia - Volume Operations"
         Width="960" Height="660"
         MinWidth="720" MinHeight="480"
         CanResize="True"
@@ -85,10 +85,11 @@
         <!-- Row 0: Operation header -->
         <TextBlock Grid.Row="0"
                    x:Name="HeaderText"
-                   FontSize="13" FontWeight="SemiBold"
+                   FontSize="15" FontWeight="SemiBold"
                    Foreground="#E8E8F0"
-                   TextWrapping="NoWrap"
-                   TextTrimming="CharacterEllipsis"
+                   HorizontalAlignment="Center"
+                   TextAlignment="Center"
+                   TextWrapping="Wrap"
                    Margin="0,0,0,12"/>
 
         <!-- Row 1: Bars section with shimmer overlay -->

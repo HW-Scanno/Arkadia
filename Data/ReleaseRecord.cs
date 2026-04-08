@@ -22,5 +22,5 @@ public sealed class ReleaseRecord
     /// Format: "sha1:&lt;hex&gt;[,sha1:&lt;hex&gt;...]" — see DatParser.ComputeContentKey.
     /// Empty string for releases imported before this field was introduced.
     /// </summary>
-    public string ContentKey { get; set; } = "";
+    public string ReleaseContentKey { get; set; } = "";
 }

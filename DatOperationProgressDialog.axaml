@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="Arkadia.DatOperationProgressDialog"
-        Title="Operation"
+        Title="Arkadia - DAT Operation"
         Width="440"
         SizeToContent="Height"
         CanResize="False"
@@ -27,14 +27,22 @@
 
                 <ProgressBar x:Name="OpProgress"
                              IsIndeterminate="True"
-                             Height="4"
+                             Height="10"
                              Foreground="#7B68EE"
                              Background="#242433"
-                             CornerRadius="2"
-                             Minimum="0" Maximum="100" Value="0"/>
+                             CornerRadius="4"
+                             Minimum="0" Maximum="100" Value="0"
+                             Margin="0,2,0,0"/>
+
+                <!-- Live current-item line -->
+                <TextBlock x:Name="CurrentItemText"
+                           FontSize="11"
+                           FontFamily="Consolas,Courier New,monospace"
+                           Foreground="#555566"
+                           TextTrimming="CharacterEllipsis"/>
 
                 <!-- Counters -->
-                <Grid ColumnDefinitions="*,*,*" Margin="0,4,0,0">
+                <Grid ColumnDefinitions="*,*,*,*" Margin="0,4,0,0">
                     <StackPanel Grid.Column="0" Spacing="2" HorizontalAlignment="Center">
                         <TextBlock Text="PROCESSED" FontSize="9" LetterSpacing="1.2"
                                    Foreground="#555566" HorizontalAlignment="Center"/>
@@ -55,6 +63,13 @@
                         <TextBlock x:Name="CountRejected" Text="0"
                                    FontSize="16" FontWeight="SemiBold"
                                    Foreground="#EF5350" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="3" Spacing="2" HorizontalAlignment="Center">
+                        <TextBlock Text="ELAPSED" FontSize="9" LetterSpacing="1.2"
+                                   Foreground="#555566" HorizontalAlignment="Center"/>
+                        <TextBlock x:Name="CountElapsed" Text="0:00"
+                                   FontSize="16" FontWeight="SemiBold"
+                                   Foreground="#888899" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Grid>
             </StackPanel>
@@ -82,11 +97,28 @@
             </Border>
 
             <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,16">
-                <Grid ColumnDefinitions="*,Auto">
-                    <TextBlock Grid.Column="0" Text="Imported" FontSize="12" Foreground="#888899"/>
-                    <TextBlock Grid.Column="1" x:Name="ImportSumCount"
-                               FontSize="12" FontWeight="Medium" Foreground="#4CAF50"/>
-                </Grid>
+                <StackPanel Spacing="6">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Total"    FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="1" x:Name="ImportSumTotal"
+                                   FontSize="12" FontWeight="Medium" Foreground="#F0F0F0"/>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Imported" FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="1" x:Name="ImportSumCount"
+                                   FontSize="12" FontWeight="Medium" Foreground="#4CAF50"/>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Rejected" FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="1" x:Name="ImportSumRejected"
+                                   FontSize="12" FontWeight="Medium" Foreground="#EF5350"/>
+                    </Grid>
+                    <Grid ColumnDefinitions="*,Auto">
+                        <TextBlock Grid.Column="0" Text="Elapsed"  FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="1" x:Name="ImportSumElapsed"
+                                   FontSize="12" FontWeight="Medium" Foreground="#888899"/>
+                    </Grid>
+                </StackPanel>
             </Border>
         </StackPanel>
 

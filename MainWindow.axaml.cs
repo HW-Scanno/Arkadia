@@ -1389,25 +1389,38 @@ public partial class MainWindow : Window
 
         foreach (var v in volumes)
         {
+            var volColor = GetVolumeColor(v.Id);
             DiskVolumeList.Children.Add(new Grid
             {
-                ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("*,Auto"),
+                ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("Auto,*,Auto"),
                 Margin = new Avalonia.Thickness(0, 0, 0, 4),
                 Children =
                 {
-                    new TextBlock
+                    new Border
                     {
                         [Grid.ColumnProperty] = 0,
-                        Text = v.Label,
-                        FontSize = 12,
-                        Foreground = new SolidColorBrush(Color.Parse("#CCCCDD")),
-                        TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+                        Width             = 12,
+                        Height            = 12,
+                        CornerRadius      = new Avalonia.CornerRadius(2),
+                        Background        = new SolidColorBrush(volColor),
+                        BorderBrush       = new SolidColorBrush(Color.FromArgb(70, 0, 0, 0)),
+                        BorderThickness   = new Avalonia.Thickness(1),
+                        Margin            = new Avalonia.Thickness(0, 0, 9, 0),
+                        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
                     },
                     new TextBlock
                     {
                         [Grid.ColumnProperty] = 1,
-                        Text = FormatBytes(v.ActualSizeBytes),
-                        FontSize = 12,
+                        Text         = v.Label,
+                        FontSize     = 12,
+                        Foreground   = new SolidColorBrush(Color.Parse("#CCCCDD")),
+                        TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+                    },
+                    new TextBlock
+                    {
+                        [Grid.ColumnProperty] = 2,
+                        Text       = FormatBytes(v.ActualSizeBytes),
+                        FontSize   = 12,
                         Foreground = new SolidColorBrush(Color.Parse("#888899")),
                     },
                 },
@@ -1434,13 +1447,7 @@ public partial class MainWindow : Window
             return;
 
         var panel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal };
-        var colors = new[]
-        {
-            "#5C6BC0", "#26A69A", "#EF5350", "#FFA726", "#66BB6A",
-            "#AB47BC", "#42A5F5", "#EC407A", "#8D6E63", "#78909C",
-        };
-        int colorIdx = 0;
-        const double BarWidth = 260.0; // detail panel is 300 - 40 margin
+        const double BarWidth = 460.0; // detail panel is 500 - 40 margin
 
         foreach (var v in volumes)
         {
@@ -1450,10 +1457,9 @@ public partial class MainWindow : Window
             panel.Children.Add(new Border
             {
                 Width      = segW,
-                Height     = 14,
-                Background = new SolidColorBrush(Color.Parse(colors[colorIdx % colors.Length])),
+                Height     = 17,
+                Background = new SolidColorBrush(GetVolumeColor(v.Id)),
             });
-            colorIdx++;
         }
 
         // Free space segment
@@ -1463,11 +1469,32 @@ public partial class MainWindow : Window
             panel.Children.Add(new Border
             {
                 Width      = freeW,
-                Height     = 14,
+                Height     = 17,
                 Background = new SolidColorBrush(Color.Parse("#1E1E2E")),
             });
 
         DiskSegmentBar.Child = panel;
+    }
+
+    private static readonly string[] VolumeColorPalette =
+    [
+        "#5C6BC0", "#26A69A", "#EF5350", "#FFA726", "#66BB6A",
+        "#AB47BC", "#42A5F5", "#EC407A", "#8D6E63", "#78909C",
+    ];
+
+    /// <summary>
+    /// Returns a stable color for a volume based on its ID using FNV-1a hashing.
+    /// Same ID always maps to the same palette entry across refreshes.
+    /// </summary>
+    private static Color GetVolumeColor(string volumeId)
+    {
+        unchecked
+        {
+            uint h = 2166136261u;
+            foreach (var c in volumeId)
+                h = (h ^ c) * 16777619u;
+            return Color.Parse(VolumeColorPalette[h % (uint)VolumeColorPalette.Length]);
+        }
     }
 
     // ── Volumes ───────────────────────────────────────────────────────────────
@@ -1488,7 +1515,7 @@ public partial class MainWindow : Window
             string locLabel = loc is null ? "—"
                 : loc.LocationType == "disk" && loc.DiskId is not null && disks.TryGetValue(loc.DiskId, out var dl)
                     ? $"disk: {dl}"
-                : loc.LocationType;
+                : LocTypeDisplay(loc.LocationType);
 
             datLines.TryGetValue(v.DatLineId, out var dlRecord);
             var dbPath = dlRecord?.DataStorePath.Length > 0
@@ -1572,47 +1599,28 @@ public partial class MainWindow : Window
         VolumeDetailDisk.Text         = entry.DiskLabel ?? "—";
 
         // Archive artifacts assigned to this volume
-        VolumeDetailArtifactList.Children.Clear();
         var assignments = _catalog.GetVolumeArtifacts(entry.Id);
-        VolumeDetailArtifactCount.Text = assignments.Count.ToString();
-
-        if (assignments.Count > 0 && entry.DbPath.Length > 0 && File.Exists(entry.DbPath))
-        {
-            var store       = new DatLineStore(entry.DbPath);
-            var derivedById = store.GetDerivedArtifacts()
-                .ToDictionary(d => d.Id, d => d, StringComparer.Ordinal);
-
-            foreach (var va in assignments)
-            {
-                if (!derivedById.TryGetValue(va.DerivedArtifactId, out var da)) continue;
-                VolumeDetailArtifactList.Children.Add(new Grid
-                {
-                    ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("*,Auto"),
-                    Margin = new Avalonia.Thickness(0, 0, 0, 2),
-                    Children =
-                    {
-                        new TextBlock
-                        {
-                            [Grid.ColumnProperty] = 0,
-                            Text         = da.FileName,
-                            FontSize     = 11,
-                            Foreground   = new SolidColorBrush(Color.Parse("#AAAACC")),
-                            TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
-                        },
-                        new TextBlock
-                        {
-                            [Grid.ColumnProperty] = 1,
-                            Text       = FormatBytes(da.SizeBytes),
-                            FontSize   = 11,
-                            Foreground = new SolidColorBrush(Color.Parse("#555566")),
-                        },
-                    },
-                });
-            }
-        }
+        VolumeDetailArtifactCount.Text         = assignments.Count.ToString();
+        VolumeDetailArtifactsBtn.IsEnabled     = assignments.Count > 0
+            && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
 
         VolumeDetailEmpty.IsVisible   = false;
         VolumeDetailContent.IsVisible = true;
+    }
+
+    private async void OnVolumeArtifactsDetails(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = VolumesList.SelectedItem as Volumes.VolumeEntry;
+        if (entry is null || entry.DbPath.Length == 0 || !File.Exists(entry.DbPath)) return;
+
+        var assignments = _catalog.GetVolumeArtifacts(entry.Id);
+        if (assignments.Count == 0) return;
+
+        var store      = new DatLineStore(entry.DbPath);
+        var daIds      = assignments.Select(va => va.DerivedArtifactId).ToList();
+        var buildInfos = store.GetArtifactBuildInfos(daIds);
+
+        await new VolumeArtifactsDialog(entry.Label, buildInfos).ShowDialog(this);
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────────
@@ -1630,7 +1638,7 @@ public partial class MainWindow : Window
     /// Free space check, destination-exists guard, and log writing are all handled internally.
     /// Returns (Success=false, ...) when any pre-flight check fails (InfoDialog already shown).
     /// </summary>
-    private async Task<(bool Success, int FileCount, long CopiedBytes, string? CleanupError)>
+    private async Task<(bool Success, int FileCount, long CopiedBytes, string? CleanupError, TimeSpan Elapsed)>
         RunCopyMoveAsync(
             string operationTitle,
             string srcFolder,
@@ -1656,7 +1664,7 @@ public partial class MainWindow : Window
             await new InfoDialog("Empty Volume Folder",
                 $"No files found in:\n{srcFolder}")
                 .ShowDialog(this);
-            return (false, 0, 0, null);
+            return (false, 0, 0, null, TimeSpan.Zero);
         }
 
         // ── Destination must not already exist ────────────────────────────
@@ -1666,7 +1674,7 @@ public partial class MainWindow : Window
                 $"The destination folder already exists:\n{dstFolder}\n\n" +
                 "Remove it manually before proceeding.")
                 .ShowDialog(this);
-            return (false, 0, 0, null);
+            return (false, 0, 0, null, TimeSpan.Zero);
         }
 
         // ── Free space check ──────────────────────────────────────────────
@@ -1681,7 +1689,7 @@ public partial class MainWindow : Window
                     $"Available: {FormatBytes(dstDrive.AvailableFreeSpace)}\n\n" +
                     "Free up space on the destination and try again.")
                     .ShowDialog(this);
-                return (false, 0, 0, null);
+                return (false, 0, 0, null, TimeSpan.Zero);
             }
         }
         catch { /* DriveInfo unavailable — copy will fail naturally if space is truly exhausted */ }
@@ -1836,7 +1844,7 @@ public partial class MainWindow : Window
 
         await dlgTask;
 
-        return (errorMessage is null, files.Count, copiedBytes, cleanupError);
+        return (errorMessage is null, files.Count, copiedBytes, cleanupError, DateTime.UtcNow - startTime);
     }
 
     /// <summary>
@@ -1854,24 +1862,25 @@ public partial class MainWindow : Window
         var batch = new List<Data.VolumeArtifactRecord>();
         foreach (var releaseId in includedReleaseIds)
         {
-            if (!derivedByRelease.TryGetValue(releaseId, out var daIds)) continue;
-            foreach (var daId in daIds)
+            if (!derivedByRelease.TryGetValue(releaseId, out var daItems)) continue;
+            foreach (var (daId, ck) in daItems)
             {
                 batch.Add(new Data.VolumeArtifactRecord
                 {
-                    Id                = Guid.NewGuid().ToString("N"),
-                    VolumeId          = entry.Id,
-                    DatLineId         = entry.RawDatLineId,
-                    DerivedArtifactId = daId,
-                    Status            = "present_in_final",
-                    AddedAtUtc        = now,
+                    Id                 = Guid.NewGuid().ToString("N"),
+                    VolumeId           = entry.Id,
+                    DatLineId          = entry.RawDatLineId,
+                    DerivedArtifactId  = daId,
+                    ContentIdentityKey = ck,
+                    Status             = "present_in_final",
+                    AddedAtUtc         = now,
                 });
             }
         }
 
         int linkedCount  = _catalog.SaveVolumeArtifactsBatch(batch);
         var allDerived   = store.GetDerivedArtifacts();
-        var sizeByDrvId  = allDerived.ToDictionary(d => d.Id, d => d.SizeBytes, StringComparer.Ordinal);
+        var sizeByDrvId  = allDerived.ToDictionary(d => d.Id, d => d.DerivedSizeBytes, StringComparer.Ordinal);
         _catalog.RecalculateVolumeActualSize(entry.Id, sizeByDrvId);
 
         RefreshVolumes();
@@ -2092,7 +2101,8 @@ public partial class MainWindow : Window
             // ── Resolve source (workspace first, then disk) ───────────────────
             string  srcFolder;
             bool    srcIsWorkspace;
-            string? srcDiskId = null;
+            string? srcDiskId       = null;
+            string? srcMountpoint   = null;
 
             if (Directory.Exists(workspaceFolder))
             {
@@ -2109,7 +2119,7 @@ public partial class MainWindow : Window
                 if (srcDisk is null)
                 {
                     await new InfoDialog("Source Not Found",
-                        $"Volume \"{entry.Label}\" is not in the local workspace and its associated disk " +
+                        $"Volume \"{entry.Label}\" is not in the Local Archive and its associated disk " +
                         $"(\"{entry.DiskLabel}\", ID: {entry.DiskId}) is not currently mounted.\n\n" +
                         "Connect the source disk and try again.")
                         .ShowDialog(this);
@@ -2128,11 +2138,12 @@ public partial class MainWindow : Window
 
                 srcIsWorkspace = false;
                 srcDiskId      = srcDisk.DiskId;
+                srcMountpoint  = srcDisk.Mountpoint;
             }
             else
             {
                 await new InfoDialog("Volume Not Found",
-                    $"Volume \"{entry.Label}\" is not present in the local workspace " +
+                    $"Volume \"{entry.Label}\" is not present in the Local Archive " +
                     "and has no associated disk.")
                     .ShowDialog(this);
                 return;
@@ -2163,7 +2174,7 @@ public partial class MainWindow : Window
                         : Volumes.DestinationState.NotEnoughFreeSpace;
                     destinations.Add(new Volumes.VolumeDestination
                     {
-                        DisplayName        = $"Workspace  ({appRoot})",
+                        DisplayName        = $"Local Archive  ({appRoot})",
                         DestinationType    = Volumes.DestinationType.Workspace,
                         DiskId             = null,
                         DiskLabel          = null,
@@ -2235,8 +2246,9 @@ public partial class MainWindow : Window
 
             // ── Resolve destination path at operation time (fresh discovery) ───
             string  dstFolder;
-            string? dstDiskId    = null;
-            string? dstDiskLabel = null;
+            string? dstDiskId       = null;
+            string? dstDiskLabel    = null;
+            string? dstMountpoint   = null;
 
             if (dest.DestinationType == Volumes.DestinationType.Workspace)
             {
@@ -2261,6 +2273,7 @@ public partial class MainWindow : Window
                 dstFolder    = Path.Combine(dstDisk.Mountpoint, SafeFileName(entry.Label));
                 dstDiskId    = dstDisk.DiskId;
                 dstDiskLabel = dest.DiskLabel;
+                dstMountpoint = dstDisk.Mountpoint;
             }
 
             // ── No-op guard ───────────────────────────────────────────────────
@@ -2278,21 +2291,40 @@ public partial class MainWindow : Window
             }
 
             // ── Build header label ────────────────────────────────────────────
-            var srcLabel = srcIsWorkspace
-                ? "workspace"
-                : (entry.DiskLabel ?? srcDiskId ?? "disk");
-            var dstLabel = dest.DestinationType == Volumes.DestinationType.Workspace
-                ? "workspace"
-                : (dstDiskLabel ?? dstDiskId ?? "disk");
-            var header = $"{entry.Label}  {srcLabel}  →  {dstLabel}";
+            static string DiskDesc(string? label, string? diskId, string? mountpoint)
+            {
+                var name = label ?? diskId ?? "disk";
+                return mountpoint is not null ? $"{name} mounted in {mountpoint}" : name;
+            }
+            var srcDesc = srcIsWorkspace
+                ? "Local Archive"
+                : DiskDesc(entry.DiskLabel, srcDiskId, srcMountpoint);
+            var dstDesc = dest.DestinationType == Volumes.DestinationType.Workspace
+                ? "Local Archive"
+                : DiskDesc(dstDiskLabel, dstDiskId, dstMountpoint);
+            var header = $"Volume: {entry.Label}  —  Source: {srcDesc}  —  Destination: {dstDesc}";
 
             // ── Execute copy → verify → cleanup source ────────────────────────
-            var (success, fileCount, copiedBytes, cleanupError) =
+            var (success, fileCount, copiedBytes, cleanupError, elapsed) =
                 await RunCopyMoveAsync(
                     "Move Volume", srcFolder, dstFolder, header,
                     "move-volume", SafeFileName(entry.Label));
 
             if (!success) return;
+
+            // ── Prune empty archive directories (best-effort) ─────────────────
+            // Build Volume moved files out of archive/<platform>/<datline>/<release>/.
+            // After source cleanup those dirs may be empty; remove them bottom-up.
+            // Preserves archive/ and archive/<platform>/; removes deeper empty dirs.
+            if (cleanupError is null)
+            {
+                var archiveRoot = Path.Combine(appRoot, "archive");
+                if (Directory.Exists(archiveRoot))
+                {
+                    foreach (var platformDir in Directory.EnumerateDirectories(archiveRoot))
+                        PruneEmptyDirectories(platformDir);
+                }
+            }
 
             // ── Update catalog location ───────────────────────────────────────
             _catalog.SetCurrentLocation(new Data.VolumeLocationRecord
@@ -2318,16 +2350,47 @@ public partial class MainWindow : Window
                 UpdateVolumeDetailPanel(updatedEntry);
             }
 
-            await new InfoDialog(
-                "Move Complete",
-                $"Volume:          {entry.Label}\n" +
-                $"Files copied:    {fileCount}\n" +
-                $"Bytes:           {FormatBytes(copiedBytes)}\n" +
-                $"Verification:    OK\n" +
-                (cleanupError is null
-                    ? "Source removed:  OK"
-                    : $"Source cleanup:  FAILED — {cleanupError}") + "\n" +
-                $"Destination:     {dstFolder}")
+            // ── Write operation summary log ───────────────────────────────────
+            try
+            {
+                var logDir  = Path.Combine(AppContext.BaseDirectory, "logs", "volume-move");
+                Directory.CreateDirectory(logDir);
+                var logTs   = DateTime.Now;
+                var volSlug = SafeFileName(entry.Label);
+                var logFile = Path.Combine(logDir,
+                    $"{logTs:yyyyMMdd-HHmmss}-volume-move-{volSlug}.log");
+
+                var secs        = elapsed.TotalSeconds;
+                var speedStr    = secs > 0 ? FormatSpeed(copiedBytes / secs) : "—";
+                var elapsedStr  = $"{(int)elapsed.TotalHours:D2}:{elapsed.Minutes:D2}:{elapsed.Seconds:D2}";
+                var srcRemoval  = cleanupError is null ? "OK" : $"FAILED — {cleanupError}";
+
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("Volume Move Completed");
+                sb.AppendLine();
+                sb.AppendLine($"Volume: {entry.Label}");
+                sb.AppendLine();
+                sb.AppendLine("Source Path:");
+                sb.AppendLine(srcFolder);
+                sb.AppendLine();
+                sb.AppendLine("Destination Path:");
+                sb.AppendLine(dstFolder);
+                sb.AppendLine();
+                sb.AppendLine($"Total Files:          {fileCount:N0}");
+                sb.AppendLine($"Total Size:           {FormatBytes(copiedBytes)}");
+                sb.AppendLine($"Transfer Speed (avg): {speedStr}");
+                sb.AppendLine($"Total Elapsed:        {elapsedStr}");
+                sb.AppendLine();
+                sb.AppendLine($"Verification:   OK");
+                sb.AppendLine($"Source Removal: {srcRemoval}");
+
+                File.WriteAllText(logFile, sb.ToString());
+            }
+            catch { /* non-fatal — log failure must not interrupt UI flow */ }
+
+            await new MoveCompleteDialog(
+                entry.Label, srcFolder, dstFolder,
+                fileCount, copiedBytes, elapsed, cleanupError)
                 .ShowDialog(this);
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
@@ -2343,6 +2406,14 @@ public partial class MainWindow : Window
         if (b < 1024L * 1024)          return $"{b / 1024.0:F1} KB";
         if (b < 1024L * 1024 * 1024)   return $"{b / (1024.0 * 1024):F1} MB";
         return $"{b / (1024.0 * 1024 * 1024):F2} GB";
+    }
+
+    private static string FormatSpeed(double bps)
+    {
+        if (bps >= 1024.0 * 1024 * 1024) return $"{bps / (1024.0 * 1024 * 1024):F2} GB/s";
+        if (bps >= 1024.0 * 1024)        return $"{bps / (1024.0 * 1024):F1} MB/s";
+        if (bps >= 1024.0)               return $"{bps / 1024.0:F0} KB/s";
+        return $"{bps:F0} B/s";
     }
 
     // ── Library ───────────────────────────────────────────────────────────────
@@ -2435,6 +2506,16 @@ public partial class MainWindow : Window
     private static string Capitalize(string s)
         => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..].ToLowerInvariant();
 
+    /// <summary>
+    /// Maps an internal location-type token to its user-facing display label.
+    /// Never call with values that must round-trip to the database.
+    /// </summary>
+    private static string LocTypeDisplay(string locType) => locType switch
+    {
+        "workspace" => "Local Archive",
+        _           => locType,
+    };
+
     // Fired when the Platform context ComboBox changes
     private void OnLibraryContextPlatformChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
     {
@@ -2521,15 +2602,29 @@ public partial class MainWindow : Window
         DetailFormat.Text           = entry.Format;
         DetailSize.Text             = entry.Size;
 
-        // ROM FILES
+        // CONTENT FILES
         DetailDatFiles.Children.Clear();
         if (entry.RomFiles.Count > 0)
+        {
+            // Open the store once for source/derived lookups (null-safe: store absent = all dashes)
+            DatLineStore? fileStore = entry.DbPath.Length > 0 && File.Exists(entry.DbPath)
+                ? new DatLineStore(entry.DbPath) : null;
+
             foreach (var f in entry.RomFiles)
-                DetailDatFiles.Children.Add(MakeRomFileRow(f));
+            {
+                // Derive content_identity_key using same logic as ingest (DAT-declared identity)
+                var ck = f.Sha1.Length > 0 ? $"sha1:{f.Sha1}"
+                       : f.Md5.Length  > 0 ? $"md5:{f.Md5}"
+                       : "";
+                var src = ck.Length > 0 ? fileStore?.GetSourceByContentKey(ck)  : null;
+                var dst = ck.Length > 0 ? fileStore?.GetDerivedByContentKey(ck) : null;
+                DetailDatFiles.Children.Add(MakeRomFileRow(f, src, dst));
+            }
+        }
         else
             DetailDatFiles.Children.Add(new TextBlock
             {
-                Text       = "No ROM files on record",
+                Text       = "No content files on record",
                 FontSize   = 12,
                 Foreground = new SolidColorBrush(Color.Parse("#555566")),
             });
@@ -2599,7 +2694,7 @@ public partial class MainWindow : Window
                         else if (locType == "workspace")
                         {
                             diskLabel   = "—";
-                            statusText  = "WORKSPACE";
+                            statusText  = "LOCAL ARCHIVE";
                             statusBrush = new SolidColorBrush(Color.Parse("#64B5F6"));
                         }
                         else if (diskId is not null && allDisks.TryGetValue(diskId, out var d))
@@ -2699,10 +2794,18 @@ public partial class MainWindow : Window
         return result;
     }
 
-    private static Control MakeRomFileRow(Data.ReleaseFileRecord f)
+    private static Control MakeRomFileRow(
+        Data.ReleaseFileRecord      f,
+        Data.SourceArtifactRecord?  source,
+        Data.DerivedArtifactRecord? derived)
     {
         var primary   = new SolidColorBrush(Color.Parse("#D0D0E0"));
         var secondary = new SolidColorBrush(Color.Parse("#888899"));
+        var accent    = new SolidColorBrush(Color.Parse("#5588AA"));
+        var dim       = new SolidColorBrush(Color.Parse("#444455"));
+        var green     = new SolidColorBrush(Color.Parse("#66BB6A"));
+        var red       = new SolidColorBrush(Color.Parse("#EF5350"));
+        var gray      = new SolidColorBrush(Color.Parse("#555566"));
         var mono      = new FontFamily("Consolas,Courier New,monospace");
 
         static TextBlock Label(string text, SolidColorBrush fg, FontFamily? ff = null)
@@ -2714,8 +2817,49 @@ public partial class MainWindow : Window
                 FontFamily = ff ?? FontFamily.Default,
             };
 
+        // ── Status computation ────────────────────────────────────────────────
+        // Prefer SHA1 for comparison; fall back to MD5.
+        bool   useSha1  = f.Sha1.Length > 0;
+        string datHash  = useSha1 ? f.Sha1 : f.Md5;   // empty = no DAT hash
+
+        // SOURCE: ✔ match  |  ✖ mismatch  |  — absent
+        string srcSymbol; SolidColorBrush srcColor;
+        if (source is null || datHash.Length == 0)
+        {
+            srcSymbol = "—"; srcColor = gray;
+        }
+        else
+        {
+            var srcCmp = useSha1
+                ? source.HashedSourceSha1
+                : (source.HashedSourceMd5 ?? "");
+            bool srcMatch = string.Equals(srcCmp, datHash, StringComparison.OrdinalIgnoreCase);
+            srcSymbol = srcMatch ? "✔" : "✖";
+            srcColor  = srcMatch ? green : red;
+        }
+
+        // DERIVED: ✔ match  |  ✖ mismatch-or-absent (critical)
+        string dstSymbol; SolidColorBrush dstColor;
+        if (derived is null || datHash.Length == 0)
+        {
+            // absent = critical ✖; no DAT hash = can't verify, show ✖ if absent, — if can't compare
+            dstSymbol = derived is null ? "✖" : "—";
+            dstColor  = derived is null ? red  : gray;
+        }
+        else
+        {
+            var dstCmp = useSha1
+                ? derived.HashedDerivedSha1
+                : (derived.HashedDerivedMd5 ?? "");
+            bool dstMatch = string.Equals(dstCmp, datHash, StringComparison.OrdinalIgnoreCase);
+            dstSymbol = dstMatch ? "✔" : "✖";
+            dstColor  = dstMatch ? green : red;
+        }
+
+        // ── Build panel ───────────────────────────────────────────────────────
         var panel = new StackPanel { Spacing = 2 };
 
+        // Filename
         panel.Children.Add(new TextBlock
         {
             Text       = f.RomName.Length > 0 ? f.RomName : "(unnamed)",
@@ -2724,6 +2868,41 @@ public partial class MainWindow : Window
             Foreground = primary,
         });
 
+        // Status block: DAT ✔   SOURCE ✔/✖/—   DERIVED ✔/✖
+        var statusRow = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing     = 14,
+            Margin      = new Avalonia.Thickness(0, 3, 0, 4),
+        };
+        void AddStatusItem(string labelText, string symbol, SolidColorBrush symbolColor)
+        {
+            var grp = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 5 };
+            grp.Children.Add(new TextBlock
+            {
+                Text                = labelText,
+                FontSize            = 10,
+                FontWeight          = FontWeight.SemiBold,
+                Foreground          = gray,
+                LetterSpacing       = 0.6,
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+            });
+            grp.Children.Add(new TextBlock
+            {
+                Text              = symbol,
+                FontSize          = 13,
+                FontWeight        = FontWeight.Bold,
+                Foreground        = symbolColor,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            });
+            statusRow.Children.Add(grp);
+        }
+        AddStatusItem("DAT",     "✔",       green);
+        AddStatusItem("SOURCE",  srcSymbol, srcColor);
+        AddStatusItem("DERIVED", dstSymbol, dstColor);
+        panel.Children.Add(statusRow);
+
+        // DAT detail lines
         if (f.Size.Length > 0)
             panel.Children.Add(Label($"Size  {f.Size}", secondary));
         if (f.Crc.Length > 0)
@@ -2732,6 +2911,20 @@ public partial class MainWindow : Window
             panel.Children.Add(Label($"MD5   {f.Md5}", secondary, mono));
         if (f.Sha1.Length > 0)
             panel.Children.Add(Label($"SHA1  {f.Sha1}", secondary, mono));
+
+        // Source artifact hash (ingest proof)
+        var srcHash = source?.HashedSourceSha1 is { Length: > 0 } s ? s : "";
+        panel.Children.Add(Label(
+            $"SRC   {(srcHash.Length > 0 ? srcHash : "—")}",
+            srcHash.Length > 0 ? accent : dim,
+            srcHash.Length > 0 ? mono   : null));
+
+        // Derived artifact hash (archive copy)
+        var dstHash = derived?.HashedDerivedSha1 is { Length: > 0 } d ? d : "";
+        panel.Children.Add(Label(
+            $"DST   {(dstHash.Length > 0 ? dstHash : "—")}",
+            dstHash.Length > 0 ? accent : dim,
+            dstHash.Length > 0 ? mono   : null));
 
         return panel;
     }
@@ -2980,7 +3173,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        var dialog = new DatLineVerifyDialog(info.Name);
+        var platform    = info.CatalogPlatformId is not null
+                              ? _catalog.GetPlatform(info.CatalogPlatformId)
+                              : null;
+        var platformDesc = platform is not null
+                              ? $"{platform.Manufacturer} {platform.Name}".Trim()
+                              : (info.CatalogPlatformId ?? "Unknown Platform");
+        var dialog = new DatLineVerifyDialog(info.Name, platformDesc);
         var dlgTask = dialog.ShowDialog(this);
 
         await System.Threading.Tasks.Task.Run(async () =>
@@ -3791,67 +3990,111 @@ public partial class MainWindow : Window
 
             if (!sourceOk) continue;
 
-            // Save artifact records + link to release
+            // ── Per-file: verify source + persist provenance + transform ─────
             foreach (var f in expectedFiles)
             {
                 var sourceFilePath = Path.Combine(sourceDir, f.RomName);
                 long fileSize      = 0;
                 try { fileSize = new FileInfo(sourceFilePath).Length; } catch { }
 
+                // content_identity_key = DAT-declared logical identity (never from hashing)
                 var ck = f.Sha1.Length > 0 ? $"sha1:{f.Sha1}"
                        : f.Md5.Length  > 0 ? $"md5:{f.Md5}"
                        : "";
 
-                var artifactId = Guid.NewGuid().ToString("N");
-                store.SaveArtifact(new ArtifactRecord
+                if (ck.Length == 0)
                 {
-                    Id                 = artifactId,
-                    SourceFileName     = f.RomName,
-                    SourceRelativePath = $"source/{platformId}/{datLineId}/{safeFolder}/{f.RomName}",
-                    SourceSizeBytes    = fileSize,
-                    Sha1               = f.Sha1,
-                    Md5                = f.Md5,
-                    Crc                = f.Crc,
-                    ContentIdentityKey = ck,
-                    Status             = "sourced",
-                    CreatedAtUtc       = now,
-                    VerifiedAtUtc      = now,
-                });
-                store.LinkReleaseArtifact(new ReleaseArtifactRecord
-                {
-                    Id           = Guid.NewGuid().ToString("N"),
-                    ReleaseId    = releaseId,
-                    ArtifactId   = artifactId,
-                    CreatedAtUtc = now,
-                });
+                    // No DAT checksum — cannot establish logical identity; skip this file.
+                    var skipOp = new IngestionOperation(f.RomName, "skipped-no-checksum", "DAT provides no SHA1 or MD5");
+                    result.Operations.Add(skipOp);
+                    progress.Report(new IngestionProgress { NewOperation = skipOp });
+                    continue;
+                }
 
-                // ── Transform v1: no_compression ─────────────────────────────
-                if (ck.Length > 0)
+                try
                 {
-                    try
+                    // ── 1. Ensure content identity row (DAT-declared layer) ────
+                    store.EnsureContentIdentity(new Data.ContentIdentityRecord
                     {
-                        store.RunNoCompressionTransform(
-                            sourceArtifactId:    artifactId,
-                            sourceFilePath:      sourceFilePath,
-                            fileName:            f.RomName,
-                            sizeBytes:           fileSize,
-                            crc:                 f.Crc,
-                            md5:                 f.Md5,
-                            sha1:                f.Sha1,
-                            contentIdentityKey:  ck,
-                            platformId:          platformId,
-                            datLineId:           datLineId,
-                            releaseFolderName:   safeFolder,
-                            storageStrategyId:   storageStrategyId.Length > 0 ? storageStrategyId : "none",
-                            appRoot:             appRoot);
-                    }
-                    catch (Exception ex) when (ex is not OutOfMemoryException)
+                        ContentIdentityKey = ck,
+                        DatSha1            = f.Sha1.Length > 0 ? f.Sha1 : null,
+                        DatMd5             = f.Md5.Length  > 0 ? f.Md5  : null,
+                        DatCrc32           = f.Crc.Length  > 0 ? f.Crc  : null,
+                        CreatedAtUtc       = now,
+                    });
+
+                    // ── 2. Hash source file physically and verify against DAT ──
+                    var hashedSha1 = ComputeFileSha1(sourceFilePath);
+
+                    // Verify: if DAT has SHA1, hashed must match.
+                    // If DAT has only MD5, hashed SHA1 is recorded as physical proof but
+                    // does not replace the logical MD5-based identity.
+                    if (f.Sha1.Length > 0 &&
+                        !string.Equals(hashedSha1, f.Sha1, StringComparison.OrdinalIgnoreCase))
                     {
-                        // Transform failures must never block ingestion.
-                        var failOp = new IngestionOperation(f.RomName, "transform-failed", ex.Message);
+                        var failOp = new IngestionOperation(f.RomName, "verify-failed",
+                            $"SHA1 mismatch: expected {f.Sha1[..8]}… got {hashedSha1[..8]}…");
                         result.Operations.Add(failOp);
                         progress.Report(new IngestionProgress { NewOperation = failOp });
+                        continue;
                     }
+
+                    // ── 3. Persist source artifact as provenance proof ─────────
+                    var srcArtifactId = Guid.NewGuid().ToString("N");
+                    store.SaveSourceArtifact(new Data.SourceArtifactRecord
+                    {
+                        Id                 = srcArtifactId,
+                        ContentIdentityKey = ck,
+                        SourceSizeBytes    = fileSize,
+                        HashedSourceSha1   = hashedSha1,
+                        HashedSourceMd5    = null,   // compute on demand in future milestones
+                        HashedSourceCrc32  = null,
+                        VerifiedAtUtc      = now,
+                    });
+
+                    // Resolve actual source artifact id (INSERT OR IGNORE means existing id wins)
+                    srcArtifactId = store.GetSourceArtifactIdByContentKey(ck) ?? srcArtifactId;
+
+                    // ── 4. No-compression transform: copy to archive ───────────
+                    var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId, safeFolder);
+                    Directory.CreateDirectory(archiveDir);
+                    var destPath = Path.Combine(archiveDir, f.RomName);
+                    var relPath  = $"archive/{platformId}/{datLineId}/{safeFolder}/{f.RomName}";
+
+                    // Copy if not already there with the right size
+                    if (!File.Exists(destPath) || new FileInfo(destPath).Length != fileSize)
+                        File.Copy(sourceFilePath, destPath, overwrite: true);
+
+                    // ── 5. Hash derived file independently ────────────────────
+                    // Even for no_compression these are treated as independently observed
+                    // physical hashes of the stored derived file.
+                    var hashedDerivedSha1 = ComputeFileSha1(destPath);
+
+                    // ── 6. Persist/upsert derived artifact ────────────────────
+                    store.IngestDerivedArtifact(
+                        contentIdentityKey: ck,
+                        sourceArtifactId:   srcArtifactId,
+                        storageStrategyId:  storageStrategyId.Length > 0 ? storageStrategyId : "none",
+                        fileName:           f.RomName,
+                        relativePath:       relPath,
+                        derivedSizeBytes:   fileSize,
+                        hashedDerivedSha1:  hashedDerivedSha1);
+
+                    // ── 7. Link release → content identity ────────────────────
+                    store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord
+                    {
+                        Id                 = Guid.NewGuid().ToString("N"),
+                        ReleaseId          = releaseId,
+                        ContentIdentityKey = ck,
+                        CreatedAtUtc       = now,
+                    });
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException)
+                {
+                    // Transform failures must never block the rest of ingestion.
+                    var failOp = new IngestionOperation(f.RomName, "transform-failed", ex.Message);
+                    result.Operations.Add(failOp);
+                    progress.Report(new IngestionProgress { NewOperation = failOp });
                 }
             }
 
@@ -3891,20 +4134,18 @@ public partial class MainWindow : Window
             }
             else if (allTargetsSatisfied.Contains(srcPath))
             {
-                // Equivalent content already covered all targets — duplicate source.
+                // Equivalent content already covered all targets — delete duplicate directly.
                 result.FilesSkipped++;
-                var destPath = IncomingSkipUniquePath(skipDir, fileName);
                 try
                 {
-                    File.Move(srcPath, destPath, overwrite: false);
-                    var op = new IngestionOperation(fileName, "skip",
-                        $"incoming-skip/{Path.GetFileName(destPath)} (duplicate_content_same_target)");
+                    File.Delete(srcPath);
+                    var op = new IngestionOperation(fileName, "duplicate-deleted", "incoming-roms");
                     result.Operations.Add(op);
                     progress.Report(new IngestionProgress { NewOperation = op });
                 }
                 catch
                 {
-                    var op = new IngestionOperation(fileName, "skip-failed", "could not move to incoming-skip");
+                    var op = new IngestionOperation(fileName, "duplicate-delete-failed", "duplicate source file could not be removed");
                     result.Operations.Add(op);
                     progress.Report(new IngestionProgress { NewOperation = op });
                 }
@@ -4043,30 +4284,36 @@ public partial class MainWindow : Window
             {
                 Directory.CreateDirectory(destFolder);
                 var fullDestRoot = Path.GetFullPath(destFolder) + Path.DirectorySeparatorChar;
-                using var fileStream = File.OpenRead(archivePath);
-                using var reader = SharpCompress.Readers.ReaderFactory.Open(fileStream);
-                while (reader.MoveToNextEntry())
+
+                // Explicit using-block so fileStream and reader are fully disposed
+                // before File.Delete runs. 'using var' would defer disposal to end
+                // of the try-block, keeping the handle open during the delete call.
+                using (var fileStream = File.OpenRead(archivePath))
+                using (var reader = SharpCompress.Readers.ReaderFactory.Open(fileStream))
                 {
-                    if (reader.Entry.IsDirectory) continue;
-                    var key      = reader.Entry.Key ?? "";
-                    var relPath  = key.Replace('\\', Path.DirectorySeparatorChar)
-                                      .Replace('/',  Path.DirectorySeparatorChar)
-                                      .TrimStart(Path.DirectorySeparatorChar);
-                    var fullPath = Path.GetFullPath(Path.Combine(destFolder, relPath));
-                    // path traversal guard
-                    if (!fullPath.StartsWith(fullDestRoot, StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                    using var outStream   = new FileStream(fullPath, FileMode.Create, FileAccess.Write);
-                    using var entryStream = reader.OpenEntryStream();
-                    entryStream.CopyTo(outStream);
-                }
+                    while (reader.MoveToNextEntry())
+                    {
+                        if (reader.Entry.IsDirectory) continue;
+                        var key      = reader.Entry.Key ?? "";
+                        var relPath  = key.Replace('\\', Path.DirectorySeparatorChar)
+                                          .Replace('/',  Path.DirectorySeparatorChar)
+                                          .TrimStart(Path.DirectorySeparatorChar);
+                        var fullPath = Path.GetFullPath(Path.Combine(destFolder, relPath));
+                        // path traversal guard
+                        if (!fullPath.StartsWith(fullDestRoot, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                        using var outStream   = new FileStream(fullPath, FileMode.Create, FileAccess.Write);
+                        using var entryStream = reader.OpenEntryStream();
+                        entryStream.CopyTo(outStream);
+                    }
+                } // fileStream and reader disposed here — archive handle fully closed
 
                 var okOp = new IngestionOperation(archiveName, "extract-ok", folderName);
                 result.Operations.Add(okOp);
                 progress.Report(new IngestionProgress { NewOperation = okOp });
 
-                // Delete archive only on full success
+                // Delete archive only on full success — safe because handle is closed above
                 File.Delete(archivePath);
                 var delOp = new IngestionOperation(archiveName, "archive-deleted", "incoming-roms");
                 result.Operations.Add(delOp);
@@ -4114,6 +4361,28 @@ public partial class MainWindow : Window
             }
         }
         // incomingDir itself is never deleted
+    }
+
+    /// <summary>
+    /// Removes empty directories bottom-up under <paramref name="root"/>.
+    /// <paramref name="root"/> itself is never deleted.
+    /// </summary>
+    private static void PruneEmptyDirectories(string root)
+    {
+        if (!Directory.Exists(root)) return;
+        var dirs = Directory
+            .EnumerateDirectories(root, "*", SearchOption.AllDirectories)
+            .OrderByDescending(d => d.Length)
+            .ToList();
+        foreach (var dir in dirs)
+        {
+            if (!Directory.Exists(dir)) continue;
+            if (!Directory.EnumerateFileSystemEntries(dir).Any())
+            {
+                try { Directory.Delete(dir); }
+                catch { /* best-effort */ }
+            }
+        }
     }
 
     private static void WriteIngestionLog(
@@ -4285,7 +4554,9 @@ public partial class MainWindow : Window
                     progressDialog.SetImportCompleted(
                         _catalog.GetPlatform(platformId)?.Name ?? platformId,
                         datLineId,
-                        imported);
+                        parsedGames.Count,
+                        imported,
+                        parsedGames.Count - imported);
             }),
             System.Threading.Tasks.TaskContinuationOptions.None);
 
@@ -4328,7 +4599,7 @@ public partial class MainWindow : Window
                 Status     = "missing",
                 Region     = game.Region,
                 Languages  = game.Languages,
-                ContentKey = game.ContentKey,
+                ReleaseContentKey = game.ContentKey,
             });
             filesByReleaseId.Add((releaseId, ToReleaseFiles(releaseId, game.Roms)));
         }
@@ -4349,7 +4620,7 @@ public partial class MainWindow : Window
 
         progress.Report(new DatOperationProgress
         {
-            PhaseText       = "Saving ROM files…",
+            PhaseText       = "Importing DAT entries…",
             IsIndeterminate = false,
             Total           = count,
             Processed       = 0,
@@ -4365,12 +4636,13 @@ public partial class MainWindow : Window
             if (i % 25 == 0 || i == count - 1)
                 progress.Report(new DatOperationProgress
                 {
-                    PhaseText       = "Saving ROM files…",
+                    PhaseText       = "Importing DAT entries…",
                     IsIndeterminate = false,
                     Total           = count,
                     Processed       = i + 1,
                     Accepted        = i + 1,
                     Rejected        = 0,
+                    CurrentItem     = releases[i].Name,
                 });
         }
 
