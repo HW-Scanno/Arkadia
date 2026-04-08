@@ -40,10 +40,11 @@ public sealed class LibraryEntry
     public IBrush StatusBrush => Status switch
     {
         "Present"  => new SolidColorBrush(Color.Parse("#4CAF50")),
+        "New"      => new SolidColorBrush(Color.Parse("#29B6F6")),
         "Pending"  => new SolidColorBrush(Color.Parse("#FFD54F")),
         "Missing"  => new SolidColorBrush(Color.Parse("#FFA726")),
+        "Outdated" => new SolidColorBrush(Color.Parse("#FF8A65")),
         "Lost"     => new SolidColorBrush(Color.Parse("#EF5350")),
-        "Outdated" => new SolidColorBrush(Color.Parse("#888899")),
         _          => new SolidColorBrush(Color.Parse("#888899")),
     };
 

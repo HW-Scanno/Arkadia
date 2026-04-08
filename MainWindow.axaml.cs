@@ -2421,7 +2421,7 @@ public partial class MainWindow : Window
     private void InitLibrary()
     {
         RebuildLibraryDatasets();
-        LibraryStatusFilter.ItemsSource   = new[] { "All Statuses", "Present", "Missing", "Lost" };
+        LibraryStatusFilter.ItemsSource   = new[] { "All Statuses", "Present", "New", "Outdated", "Pending", "Missing", "Lost" };
         LibraryStatusFilter.SelectedIndex = 0;
     }
 
