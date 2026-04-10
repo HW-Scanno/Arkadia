@@ -5,12 +5,17 @@
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <ApplicationIcon>Assets\arkadia.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Remove="Arkadia.Tests\**" />
     <EmbeddedResource Remove="Arkadia.Tests\**" />
     <None Remove="Arkadia.Tests\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**"/>
   </ItemGroup>
 
   <ItemGroup>

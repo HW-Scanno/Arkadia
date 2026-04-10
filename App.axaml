@@ -5,6 +5,13 @@
 
     <Application.Styles>
         <StyleInclude Source="avares://Semi.Avalonia/SemiTheme.axaml"/>
+        <Style Selector="Window">
+            <Setter Property="Icon">
+                <Setter.Value>
+                    <WindowIcon>avares://Arkadia/Assets/arkadia.ico</WindowIcon>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Application.Styles>
 
     <!-- Fallback palette resources — overridden at runtime by active visual theme palette -->

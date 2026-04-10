@@ -135,6 +135,7 @@ public static class ReconciliationEngine
                     Region           = game.Region,
                     Languages        = game.Languages,
                     ReleaseContentKey = game.ContentKey,
+                    IntroducedAtUtc  = DateTime.UtcNow,
                 });
                 pendingRows.Add(pendingRow);
             }
@@ -151,6 +152,7 @@ public static class ReconciliationEngine
                     Region           = game.Region,
                     Languages        = game.Languages,
                     ReleaseContentKey = game.ContentKey,
+                    IntroducedAtUtc  = DateTime.UtcNow,
                 });
             }
         }

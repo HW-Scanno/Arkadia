@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
-using Arkadia.Dashboard;
 using Arkadia.Data;
 using Arkadia.Ingestion;
 using Arkadia.Library;
@@ -30,16 +29,13 @@ public partial class MainWindow : Window
     private readonly List<Button> _navButtons = [];
     private Button? _activeButton;
 
-    private readonly DashboardLayoutEngine _layoutEngine = new();
-    private DashboardLayoutMode _currentMode = DashboardLayoutMode.Compact;
-
     // ── View registry — maps nav button → content panel ──────────────────────
     private Dictionary<Button, Control> _views = [];
 
     private static readonly string _dataDir = Path.Combine(AppContext.BaseDirectory, "data");
 
     private readonly CatalogService _catalog = new(_dataDir);
-    private readonly bool _showDebugArtifactInfo;
+    private bool _showDebugArtifactInfo;
 
     public MainWindow()
     {
@@ -48,18 +44,22 @@ public partial class MainWindow : Window
 
         _navButtons.AddRange([
             NavDashboard, NavSystems, NavPending, NavStaging, NavLibrary, NavVolumes, NavDisks, NavOperations,
-            NavLogs, NavSettings,
+            NavAnalytics, NavLogs, NavSettings,
         ]);
 
         _views = new()
         {
-            [NavDashboard] = ViewDashboard,
-            [NavSystems]   = ViewSystems,
-            [NavPending]   = ViewPending,
-            [NavStaging]   = ViewStaging,
-            [NavLibrary]   = ViewLibrary,
-            [NavDisks]     = ViewDisks,
-            [NavVolumes]   = ViewVolumes,
+            [NavDashboard]  = ViewDashboard,
+            [NavSystems]    = ViewSystems,
+            [NavPending]    = ViewPending,
+            [NavStaging]    = ViewStaging,
+            [NavLibrary]    = ViewLibrary,
+            [NavDisks]      = ViewDisks,
+            [NavVolumes]    = ViewVolumes,
+            [NavOperations] = ViewOperations,
+            [NavAnalytics]  = ViewAnalytics,
+            [NavLogs]       = ViewLogs,
+            [NavSettings]   = ViewSettings,
         };
 
         InitSystems();
@@ -68,9 +68,13 @@ public partial class MainWindow : Window
         InitLibrary();
         InitDisks();
         InitVolumes();
+        InitSettings();
+        InitOperations();
+        InitAnalytics();
+        InitLogs();
         ResolveFlagImages();
         SetActive(NavDashboard);
-        InitArchiveFormatsChart();
+        InitDashboard();
         InitLogo();
     }
 
@@ -390,16 +394,18 @@ public partial class MainWindow : Window
                         outdated = new DatLineStore(absPath).GetStatusCounts().Outdated;
                 }
                 return new DatLineInfo(
-                    Name:              dl.Name,
-                    Releases:          dl.ReleaseCount,
-                    Outdated:          outdated,
-                    LastImport:        dl.ImportedAtUtc.ToString("yyyy-MM-dd"),
-                    StorageStrategy:   _strategyNameMap.TryGetValue(dl.StorageStrategyId, out var sn) ? sn : "",
-                    Authority:         dl.Authority,
-                    DatCategory:       dl.DatCategory,
-                    DataStorePath:     dl.DataStorePath,
-                    CatalogId:         dl.Id,
-                    CatalogPlatformId: dl.PlatformId);
+                    Name:                  dl.Name,
+                    Releases:              dl.ReleaseCount,
+                    Outdated:              outdated,
+                    LastImport:            dl.ImportedAtUtc.ToString("yyyy-MM-dd"),
+                    StorageStrategy:       _strategyNameMap.TryGetValue(dl.StorageStrategyId, out var sn) ? sn : "",
+                    Authority:             dl.Authority,
+                    DatCategory:           dl.DatCategory,
+                    DataStorePath:         dl.DataStorePath,
+                    CatalogId:             dl.Id,
+                    CatalogPlatformId:     dl.PlatformId,
+                    TransformStrategyType: dl.TransformStrategyType,
+                    FolderTransformId:     dl.FolderTransformId);
             })
             .ToList();
 
@@ -511,7 +517,357 @@ public partial class MainWindow : Window
         if (actionsPanel.Children.Count > 0)
             row.Children.Add(actionsPanel);
 
+        // Transform strategy section — only for catalog-backed lines with a data store
+        if (d.CatalogId is not null && d.DataStorePath.Length > 0)
+        {
+            var strategyContentPanel = new StackPanel
+            {
+                IsVisible = false,
+                Spacing   = 0,
+                Margin    = new Avalonia.Thickness(0, 10, 0, 0),
+            };
+            var strategyLoaded = false;
+
+            var strategyLink = new TextBlock { Text = "Transform Strategy" };
+            strategyLink.Classes.Add("text-action");
+            strategyLink.Margin = new Avalonia.Thickness(0, 6, 0, 0);
+            strategyLink.PointerPressed += (_, _) =>
+            {
+                if (!strategyLoaded)
+                {
+                    PopulateTransformStrategyPanel(d, strategyContentPanel);
+                    strategyLoaded = true;
+                }
+                strategyContentPanel.IsVisible = !strategyContentPanel.IsVisible;
+            };
+
+            row.Children.Add(strategyLink);
+            row.Children.Add(strategyContentPanel);
+        }
+
         return row;
+    }
+
+    private void PopulateTransformStrategyPanel(DatLineInfo d, StackPanel container)
+    {
+        var allTransforms = _catalog.LoadTransforms();
+        var fileXforms    = allTransforms.Where(t => t.IsFileStrategy).ToList();
+        var folderXforms  = allTransforms.Where(t => t.IsFolderStrategy).ToList();
+
+        var existingMappings = d.CatalogId is not null
+            ? _catalog.LoadExtensionMappings(d.CatalogId)
+            : new List<ExtensionTransformMapping>();
+        var mappingLookup = existingMappings.ToDictionary(m => m.FileExtension, StringComparer.OrdinalIgnoreCase);
+
+        // Compute extension counts from the DAT line's release files
+        var extCounts = new List<(string Ext, int Count)>();
+        if (d.DataStorePath.Length > 0)
+        {
+            var absPath = Path.Combine(_dataDir, d.DataStorePath);
+            if (File.Exists(absPath))
+            {
+                var extDict  = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                var allFiles = new DatLineStore(absPath).LoadAllReleaseFiles();
+                foreach (var files in allFiles.Values)
+                    foreach (var f in files)
+                    {
+                        var ext = Path.GetExtension(f.RomName).ToLowerInvariant();
+                        if (ext.Length == 0) ext = "(no ext)";
+                        extDict[ext] = extDict.GetValueOrDefault(ext) + 1;
+                    }
+                extCounts = extDict.OrderByDescending(kv => kv.Value)
+                                   .ThenBy(kv => kv.Key)
+                                   .Select(kv => (kv.Key, kv.Value))
+                                   .ToList();
+            }
+        }
+
+        var dim     = new SolidColorBrush(Avalonia.Media.Color.Parse("#555566"));
+        var text    = new SolidColorBrush(Avalonia.Media.Color.Parse("#CCCCDD"));
+        var accent  = new SolidColorBrush(Avalonia.Media.Color.Parse("#7B68EE"));
+        var warn    = new SolidColorBrush(Avalonia.Media.Color.Parse("#E8A000"));
+        var success = new SolidColorBrush(Avalonia.Media.Color.Parse("#4CAF50"));
+
+        // ── Section header ─────────────────────────────────────────────────────
+        container.Children.Add(new TextBlock
+        {
+            Text       = "TRANSFORM STRATEGY",
+            FontSize   = 9,
+            FontWeight = Avalonia.Media.FontWeight.SemiBold,
+            Foreground = dim,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 8),
+        });
+
+        // ── Strategy selector ──────────────────────────────────────────────────
+        container.Children.Add(new TextBlock
+        {
+            Text       = "Strategy",
+            FontSize   = 10,
+            FontWeight = Avalonia.Media.FontWeight.SemiBold,
+            Foreground = dim,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 4),
+        });
+
+        var stratLabels = new[] { "None", "Per file extension", "Per release folder" };
+        var stratValues = new[] { "none", "file_extension", "release_folder" };
+        var stratBox = new ComboBox
+        {
+            ItemsSource   = stratLabels,
+            SelectedIndex = Math.Max(0, Array.IndexOf(stratValues, d.TransformStrategyType)),
+            Background    = new SolidColorBrush(Avalonia.Media.Color.Parse("#0D0D1A")),
+            Foreground    = text,
+            BorderBrush   = new SolidColorBrush(Avalonia.Media.Color.Parse("#2A2A3C")),
+            BorderThickness = new Avalonia.Thickness(1),
+            FontSize      = 12,
+            Margin        = new Avalonia.Thickness(0, 0, 0, 12),
+        };
+        container.Children.Add(stratBox);
+
+        // ── File extension sub-panel ───────────────────────────────────────────
+        var fileExtPanel = new StackPanel
+        {
+            Spacing   = 0,
+            IsVisible = d.TransformStrategyType == "file_extension",
+        };
+        container.Children.Add(fileExtPanel);
+
+        // Action options: index 0 = Discard, then file_strategy transforms
+        var actionLabels  = new List<string> { "Discard" };
+        actionLabels.AddRange(fileXforms.Select(t => t.Name));
+        var extActionBoxes = new Dictionary<string, ComboBox>(StringComparer.OrdinalIgnoreCase);
+
+        void BuildExtensionTable()
+        {
+            fileExtPanel.Children.Clear();
+            extActionBoxes.Clear();
+
+            if (extCounts.Count == 0)
+            {
+                fileExtPanel.Children.Add(new TextBlock
+                {
+                    Text       = "No file extensions detected. Import the DAT first.",
+                    FontSize   = 11,
+                    Foreground = dim,
+                    Margin     = new Avalonia.Thickness(0, 0, 0, 8),
+                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                });
+                return;
+            }
+
+            // Header row
+            var header = new Grid
+            {
+                ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("*,52,200"),
+                Margin = new Avalonia.Thickness(0, 0, 0, 4),
+            };
+            var hExt   = new TextBlock { Text = "Extension", FontSize = 9, FontWeight = Avalonia.Media.FontWeight.SemiBold, Foreground = dim };
+            var hCount = new TextBlock { Text = "Count",     FontSize = 9, FontWeight = Avalonia.Media.FontWeight.SemiBold, Foreground = dim, TextAlignment = Avalonia.Media.TextAlignment.Right };
+            var hAct   = new TextBlock { Text = "Action",    FontSize = 9, FontWeight = Avalonia.Media.FontWeight.SemiBold, Foreground = dim, Margin = new Avalonia.Thickness(8, 0, 0, 0) };
+            Avalonia.Controls.Grid.SetColumn(hExt,   0);
+            Avalonia.Controls.Grid.SetColumn(hCount, 1);
+            Avalonia.Controls.Grid.SetColumn(hAct,   2);
+            header.Children.Add(hExt);
+            header.Children.Add(hCount);
+            header.Children.Add(hAct);
+            fileExtPanel.Children.Add(header);
+
+            foreach (var (ext, count) in extCounts)
+            {
+                var actionBox = new ComboBox
+                {
+                    ItemsSource     = actionLabels,
+                    SelectedIndex   = 0,
+                    Background      = new SolidColorBrush(Avalonia.Media.Color.Parse("#0D0D1A")),
+                    Foreground      = text,
+                    BorderBrush     = new SolidColorBrush(Avalonia.Media.Color.Parse("#2A2A3C")),
+                    BorderThickness = new Avalonia.Thickness(1),
+                    FontSize        = 11,
+                    Margin          = new Avalonia.Thickness(8, 0, 0, 0),
+                };
+
+                // Pre-select from saved mapping
+                if (mappingLookup.TryGetValue(ext, out var mapping))
+                {
+                    if (!mapping.IsDiscard && mapping.TransformId.Length > 0)
+                    {
+                        var xIdx = fileXforms.FindIndex(t => t.Id == mapping.TransformId);
+                        if (xIdx >= 0) actionBox.SelectedIndex = xIdx + 1;
+                    }
+                    // else IsDiscard = true → index 0 (already set)
+                }
+
+                extActionBoxes[ext] = actionBox;
+
+                var row = new Grid
+                {
+                    ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("*,52,200"),
+                    Margin = new Avalonia.Thickness(0, 2, 0, 0),
+                };
+                var extLabel   = new TextBlock { Text = ext,            FontSize = 11, Foreground = text,  VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+                var countLabel = new TextBlock { Text = count.ToString("N0"), FontSize = 11, Foreground = dim, TextAlignment = Avalonia.Media.TextAlignment.Right, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+                Avalonia.Controls.Grid.SetColumn(extLabel,   0);
+                Avalonia.Controls.Grid.SetColumn(countLabel, 1);
+                Avalonia.Controls.Grid.SetColumn(actionBox,  2);
+                row.Children.Add(extLabel);
+                row.Children.Add(countLabel);
+                row.Children.Add(actionBox);
+                fileExtPanel.Children.Add(row);
+            }
+        }
+
+        // >10 extension guidance or direct table
+        if (extCounts.Count > 10)
+        {
+            var guidancePanel = new StackPanel { Spacing = 6 };
+            guidancePanel.Children.Add(new TextBlock
+            {
+                Text         = $"Many different file extensions were detected for this DAT line.",
+                FontSize     = 11,
+                Foreground   = warn,
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            });
+            guidancePanel.Children.Add(new TextBlock
+            {
+                Text         = "This usually indicates that 'Per release folder' is more appropriate.",
+                FontSize     = 11,
+                Foreground   = text,
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            });
+            guidancePanel.Children.Add(new TextBlock
+            {
+                Text       = $"Total unique extensions: {extCounts.Count}",
+                FontSize   = 11,
+                Foreground = dim,
+                Margin     = new Avalonia.Thickness(0, 4, 0, 0),
+            });
+            guidancePanel.Children.Add(new TextBlock
+            {
+                Text       = "Top 5 by count:",
+                FontSize   = 10,
+                FontWeight = Avalonia.Media.FontWeight.SemiBold,
+                Foreground = dim,
+            });
+            foreach (var (ext, cnt) in extCounts.Take(5))
+                guidancePanel.Children.Add(new TextBlock
+                {
+                    Text       = $"  {ext}  ·  {cnt:N0}",
+                    FontSize   = 11,
+                    Foreground = text,
+                    FontFamily = new Avalonia.Media.FontFamily("Consolas, monospace"),
+                });
+
+            var guidanceBtnRow = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 10, Margin = new Avalonia.Thickness(0, 8, 0, 0) };
+
+            var useFolderBtn = new Button { Content = "Use Per release folder", FontSize = 11 };
+            useFolderBtn.Click += (_, _) =>
+            {
+                stratBox.SelectedIndex = 2;  // "Per release folder"
+            };
+
+            var showAnywayBtn = new Button { Content = "Show extension mapping anyway", FontSize = 11 };
+            var tableWrapper  = new StackPanel { IsVisible = false, Margin = new Avalonia.Thickness(0, 8, 0, 0) };
+            showAnywayBtn.Click += (_, _) =>
+            {
+                guidancePanel.IsVisible = false;
+                BuildExtensionTable();
+                tableWrapper.Children.Add(fileExtPanel);
+                tableWrapper.IsVisible = true;
+                showAnywayBtn.IsVisible = false;
+            };
+
+            guidanceBtnRow.Children.Add(useFolderBtn);
+            guidanceBtnRow.Children.Add(showAnywayBtn);
+            guidancePanel.Children.Add(guidanceBtnRow);
+
+            fileExtPanel.Children.Add(guidancePanel);
+            fileExtPanel.Children.Add(tableWrapper);
+        }
+        else
+        {
+            BuildExtensionTable();
+        }
+
+        // ── Release folder sub-panel ───────────────────────────────────────────
+        var folderPanel = new StackPanel
+        {
+            Spacing   = 0,
+            IsVisible = d.TransformStrategyType == "release_folder",
+        };
+        container.Children.Add(folderPanel);
+
+        folderPanel.Children.Add(new TextBlock
+        {
+            Text       = "Release folder transform",
+            FontSize   = 10,
+            FontWeight = Avalonia.Media.FontWeight.SemiBold,
+            Foreground = dim,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 4),
+        });
+
+        var folderLabels = folderXforms.Select(t => t.Name).ToList();
+        var folderBox = new ComboBox
+        {
+            ItemsSource     = folderLabels.Count > 0 ? folderLabels : (System.Collections.IEnumerable)new[] { "(no folder transforms defined)" },
+            Background      = new SolidColorBrush(Avalonia.Media.Color.Parse("#0D0D1A")),
+            Foreground      = text,
+            BorderBrush     = new SolidColorBrush(Avalonia.Media.Color.Parse("#2A2A3C")),
+            BorderThickness = new Avalonia.Thickness(1),
+            FontSize        = 12,
+            Margin          = new Avalonia.Thickness(0, 0, 0, 0),
+        };
+        if (folderLabels.Count > 0)
+        {
+            var selIdx = folderXforms.FindIndex(t => t.Id == d.FolderTransformId);
+            folderBox.SelectedIndex = selIdx >= 0 ? selIdx : 0;
+        }
+        folderPanel.Children.Add(folderBox);
+
+        // ── Strategy change handler ────────────────────────────────────────────
+        stratBox.SelectionChanged += (_, _) =>
+        {
+            var idx = stratBox.SelectedIndex;
+            var val = idx >= 0 && idx < stratValues.Length ? stratValues[idx] : "none";
+            fileExtPanel.IsVisible = val == "file_extension";
+            folderPanel.IsVisible  = val == "release_folder";
+        };
+
+        // ── Save button ────────────────────────────────────────────────────────
+        var saveBlock = new TextBlock { Text = "Save Strategy" };
+        saveBlock.Classes.Add("text-action");
+        saveBlock.Classes.Add("accent");
+        saveBlock.Margin = new Avalonia.Thickness(0, 10, 0, 0);
+        saveBlock.PointerPressed += (_, _) =>
+        {
+            if (d.CatalogId is null) return;
+
+            var idx      = stratBox.SelectedIndex;
+            var stratVal = idx >= 0 && idx < stratValues.Length ? stratValues[idx] : "none";
+
+            string? folderTransformId = null;
+            if (stratVal == "release_folder" && folderLabels.Count > 0 && folderBox.SelectedIndex >= 0)
+                folderTransformId = folderXforms[folderBox.SelectedIndex].Id;
+
+            _catalog.SaveDatLineTransformStrategy(d.CatalogId, stratVal, folderTransformId);
+
+            if (stratVal == "file_extension" && extActionBoxes.Count > 0)
+            {
+                var mappings = extActionBoxes.Select(kv =>
+                {
+                    var selIdx     = kv.Value.SelectedIndex;
+                    var isDiscard  = selIdx <= 0;
+                    var xformId    = isDiscard ? "" : fileXforms[selIdx - 1].Id;
+                    return new ExtensionTransformMapping
+                    {
+                        DatLineId     = d.CatalogId,
+                        FileExtension = kv.Key,
+                        IsDiscard     = isDiscard,
+                        TransformId   = xformId,
+                    };
+                }).ToList();
+                _catalog.SaveExtensionMappings(d.CatalogId, mappings);
+            }
+        };
+        container.Children.Add(saveBlock);
     }
 
     private void NavigateToLibrary(string platform, string datLine)
@@ -1531,6 +1887,7 @@ public partial class MainWindow : Window
                 RawDatLineId     = v.DatLineId,
                 DbPath           = dbPath,
                 Status           = v.Status,
+                Health           = v.Health,
                 PlannedSizeBytes = v.PlannedSizeBytes,
                 ActualSizeBytes  = v.ActualSizeBytes,
                 CurrentLocation  = locLabel,
@@ -1603,6 +1960,9 @@ public partial class MainWindow : Window
         VolumeDetailArtifactCount.Text         = assignments.Count.ToString();
         VolumeDetailArtifactsBtn.IsEnabled     = assignments.Count > 0
             && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
+        VolumeDetailRepairBtn.IsEnabled        = entry.Health == "crit"
+            && entry.Status != "lost"
+            && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
 
         VolumeDetailEmpty.IsVisible   = false;
         VolumeDetailContent.IsVisible = true;
@@ -1621,6 +1981,520 @@ public partial class MainWindow : Window
         var buildInfos = store.GetArtifactBuildInfos(daIds);
 
         await new VolumeArtifactsDialog(entry.Label, buildInfos).ShowDialog(this);
+    }
+
+    // ── Volume Repair ─────────────────────────────────────────────────────────
+
+    private async void OnRepairVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = VolumesList.SelectedItem as Volumes.VolumeEntry;
+        if (entry is null || entry.Health != "crit" || entry.Status == "lost") return;
+        if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath)) return;
+
+        var appRoot      = AppContext.BaseDirectory;
+        var platformId   = entry.PlatformId;
+        var rawDatLineId = entry.RawDatLineId;
+
+        // ── Resolve volume source path ─────────────────────────────────────
+        string? volumeRoot = null;
+        var wsRoot = Path.Combine(appRoot, "volumes", SafeFileName(entry.Label));
+        if (Directory.Exists(wsRoot))
+        {
+            volumeRoot = wsRoot;
+        }
+        else if (entry.DiskId is not null)
+        {
+            var runtimeDisks = Data.DiskDiscoveryService.DiscoverAll()
+                .Where(d => d.DiskId.Length > 0)
+                .ToDictionary(d => d.DiskId, StringComparer.Ordinal);
+            if (runtimeDisks.TryGetValue(entry.DiskId, out var rt))
+            {
+                var diskRoot = Path.Combine(rt.Mountpoint, SafeFileName(entry.Label));
+                if (Directory.Exists(diskRoot))
+                    volumeRoot = diskRoot;
+            }
+        }
+
+        if (volumeRoot is null)
+        {
+            await new InfoDialog("Volume Not Accessible",
+                $"Volume \"{entry.Label}\" could not be found in the workspace or on a mounted disk.\n\n" +
+                "Mount the disk containing this volume, then try Repair again.")
+                .ShowDialog(this);
+            return;
+        }
+
+        // ── Storage strategy for ingest ────────────────────────────────────
+        var datLine = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == rawDatLineId);
+        var storageStrategyId = datLine?.StorageStrategyId?.Length > 0
+            ? datLine.StorageStrategyId : "none";
+
+        // ── Identify repair targets (read-only volume scan) ────────────────
+        var store       = new DatLineStore(entry.DbPath);
+        var vaIds       = _catalog.GetVolumeArtifacts(entry.Id)
+                                  .Select(va => va.DerivedArtifactId).ToList();
+        var verifyInfos = store.GetArtifactVerifyInfos(vaIds);
+
+        // Categorise every assigned artifact as OK, MISSING, or MISMATCH.
+        var repairTargets = new List<Data.ArtifactVerifyInfo>();
+        foreach (var vi in verifyInfos)
+        {
+            var absPath = Path.Combine(volumeRoot, SafeFileName(vi.ReleaseName), vi.FileName);
+            if (!File.Exists(absPath))
+            {
+                repairTargets.Add(vi);
+            }
+            else if (vi.Sha1.Length > 0)
+            {
+                var actual = ComputeFileSha1(absPath);
+                if (!string.Equals(actual, vi.Sha1, StringComparison.OrdinalIgnoreCase))
+                    repairTargets.Add(vi);
+            }
+        }
+
+        if (repairTargets.Count == 0)
+        {
+            await new InfoDialog("No Repair Targets",
+                $"Volume \"{entry.Label}\" has no missing or mismatched files.\n\n" +
+                "The volume may already be healthy. Run Verify to update its health status.")
+                .ShowDialog(this);
+            return;
+        }
+
+        // ── Check pre-existing archive / source availability ───────────────
+        // daId → canonical local path (archive preferred, source fallback).
+        var preAvailable = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var vi in repairTargets)
+        {
+            var safe        = SafeFileName(vi.ReleaseName);
+            var archivePath = Path.Combine(appRoot, "archive", platformId, rawDatLineId, safe, vi.FileName);
+            var sourcePath  = Path.Combine(appRoot, "source",  platformId, rawDatLineId, safe, vi.FileName);
+            if      (File.Exists(archivePath)) preAvailable[vi.DerivedArtifactId] = archivePath;
+            else if (File.Exists(sourcePath))  preAvailable[vi.DerivedArtifactId] = sourcePath;
+        }
+
+        // ── Scan incoming-roms/<platform>/ for matches ─────────────────────
+        // Only scan for targets that are not already available locally.
+        var sha1ToTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var vi in repairTargets)
+        {
+            if (preAvailable.ContainsKey(vi.DerivedArtifactId)) continue;
+            if (vi.Sha1.Length > 0)
+                sha1ToTarget[vi.Sha1] = vi.DerivedArtifactId;
+        }
+
+        var incomingMatches = new Dictionary<string, string>(StringComparer.Ordinal); // daId → file path
+        if (sha1ToTarget.Count > 0)
+        {
+            var incomingDir = Path.Combine(appRoot, "incoming-roms", platformId);
+            if (Directory.Exists(incomingDir))
+            {
+                foreach (var f in Directory.EnumerateFiles(incomingDir, "*", SearchOption.AllDirectories))
+                {
+                    if (incomingMatches.Count == sha1ToTarget.Count) break;
+                    try
+                    {
+                        var fSha1 = ComputeFileSha1(f);
+                        if (sha1ToTarget.TryGetValue(fSha1, out var daId) && !incomingMatches.ContainsKey(daId))
+                            incomingMatches[daId] = f;
+                    }
+                    catch { /* unreadable — skip */ }
+                }
+            }
+        }
+
+        // ── Preview counts ─────────────────────────────────────────────────
+        int totalTargets       = repairTargets.Count;
+        int preAvailableCount  = preAvailable.Count;
+        int incomingCount      = incomingMatches.Count;
+        int recoverableNow     = preAvailableCount + incomingCount;
+        int stillMissing       = totalTargets - recoverableNow;
+
+        if (recoverableNow == 0)
+        {
+            await new InfoDialog("Nothing Recoverable",
+                $"Volume \"{entry.Label}\" has {totalTargets} repair target(s), " +
+                "but no matching files were found in the archive, source, or incoming-roms.\n\n" +
+                $"Place the missing ROM files in:\n  incoming-roms/{platformId}/\n\nThen try Repair again.")
+                .ShowDialog(this);
+            return;
+        }
+
+        // ── Preview confirmation ───────────────────────────────────────────
+        var locationType = volumeRoot.StartsWith(wsRoot, StringComparison.OrdinalIgnoreCase)
+            ? "Local Archive"
+            : entry.DiskId is not null ? $"Disk ({entry.DiskId})" : "External";
+
+        var previewLines = new System.Text.StringBuilder();
+        previewLines.AppendLine("── Volume Context ───────────────────────────────────");
+        previewLines.AppendLine($"  Volume:               {entry.Label}");
+        previewLines.AppendLine($"  Current health:       CRIT");
+        previewLines.AppendLine($"  Location:             {locationType}");
+        previewLines.AppendLine();
+        previewLines.AppendLine("── Repair Targets ───────────────────────────────────");
+        previewLines.AppendLine($"  Missing/Invalid:      {totalTargets}");
+        previewLines.AppendLine($"  Already in archive:   {preAvailableCount}");
+        previewLines.AppendLine($"  Found in incoming:    {incomingCount}");
+        previewLines.AppendLine($"  ─────────────────────────────────────────────────");
+        previewLines.AppendLine($"  Recoverable now:      {recoverableNow}");
+        previewLines.AppendLine($"  Still unrecoverable:  {stillMissing}");
+        if (stillMissing > 0)
+        {
+            previewLines.AppendLine();
+            previewLines.AppendLine($"  {stillMissing} file(s) cannot be recovered in this pass.");
+            previewLines.AppendLine($"  Add them to incoming-roms/{platformId}/ and run Repair again.");
+        }
+        previewLines.AppendLine();
+        previewLines.Append("Cancel to abort — no changes will be made.");
+
+        var confirmed = await new ConfirmDialog("Volume Repair", previewLines.ToString())
+            .ShowDialog<bool>(this);
+        if (!confirmed) return;
+
+        // ── Build neededSha1s for targeted ingest ──────────────────────────
+        var neededSha1s = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var vi in repairTargets)
+            if (vi.Sha1.Length > 0)
+                neededSha1s.Add(vi.Sha1);
+
+        // ── Open repair dialog, run work on background thread ──────────────
+        var repairDialog = new DatLineVerifyDialog(entry.Label, platformId);
+        var hdr = repairDialog.FindControl<Avalonia.Controls.TextBlock>("HeaderText");
+        if (hdr is not null)
+            hdr.Text = $"Volume Repair  —  Platform: {platformId}  —  Volume: {entry.Label}";
+
+        var dlgTask = repairDialog.ShowDialog(this);
+
+        await System.Threading.Tasks.Task.Run(async () =>
+        {
+            try
+            {
+                await RunVolumeRepairAsync(repairDialog, entry, store, volumeRoot,
+                    platformId, rawDatLineId, storageStrategyId,
+                    repairTargets, preAvailable, incomingMatches, neededSha1s);
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                    () => repairDialog.SetFailed(ex.Message));
+            }
+        });
+
+        await dlgTask;
+    }
+
+    private async System.Threading.Tasks.Task RunVolumeRepairAsync(
+        DatLineVerifyDialog                dialog,
+        Volumes.VolumeEntry                entry,
+        DatLineStore                       store,
+        string                             volumeRoot,
+        string                             platformId,
+        string                             rawDatLineId,
+        string                             storageStrategyId,
+        List<Data.ArtifactVerifyInfo>      repairTargets,
+        Dictionary<string, string>         preAvailable,    // daId → archive or source path
+        Dictionary<string, string>         incomingMatches, // daId → incoming file path
+        HashSet<string>                    neededSha1s)     // SHA1s of all repair targets
+    {
+        var appRoot        = AppContext.BaseDirectory;
+        bool exportRepairLog = _catalog.GetBoolSetting("auto_export_repair_logs", defaultValue: true);
+        var log            = new System.Text.StringBuilder();
+
+        log.AppendLine($"Volume Repair — {entry.Label}");
+        log.AppendLine($"Started:   {DateTime.UtcNow:o}");
+        log.AppendLine($"Platform:  {platformId}");
+        log.AppendLine();
+        log.AppendLine("── Repair Targets ───────────────────────────────────────────");
+        log.AppendLine($"  Volume:              {entry.Label}");
+        log.AppendLine($"  Location:            {volumeRoot}");
+        log.AppendLine($"  Missing/Invalid:     {repairTargets.Count}");
+        log.AppendLine($"  Already in archive:  {preAvailable.Count}");
+        log.AppendLine($"  Found in incoming:   {incomingMatches.Count}");
+        log.AppendLine($"  Recoverable now:     {preAvailable.Count + incomingMatches.Count}");
+        log.AppendLine();
+
+        int totalTargets = repairTargets.Count;
+
+        // ── INGEST PHASE ───────────────────────────────────────────────────
+        if (incomingMatches.Count > 0)
+        {
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                dialog.SetStatus($"Ingesting matched content from incoming-roms/{platformId}…");
+                dialog.UpdateStats(totalTargets, 0, 0, totalTargets, 0, totalTargets);
+            });
+
+            var ingestProgress = new Progress<IngestionProgress>(p =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    if (p.PhaseText.Length > 0)
+                        dialog.SetStatus($"Ingesting matched content: {p.PhaseText}");
+                    if (p.NewOperation is not null)
+                        dialog.AppendRow("INGEST", p.NewOperation.Action,
+                            p.NewOperation.Object, p.NewOperation.Destination);
+                }));
+
+            var ingestResult = RunIngestionWork(
+                platformId, rawDatLineId, entry.DbPath, storageStrategyId, ingestProgress,
+                shouldIngest: sha1 => neededSha1s.Contains(sha1));
+
+            log.AppendLine("── Ingest Summary ───────────────────────────────────────────");
+            log.AppendLine($"  Scanned:  {ingestResult.FilesScanned}");
+            log.AppendLine($"  Matched:  {ingestResult.FilesMatched}");
+            log.AppendLine($"  Releases: {ingestResult.ReleasesPresent}");
+            if (ingestResult.Error is not null)
+                log.AppendLine($"  Error:    {ingestResult.Error}");
+            log.AppendLine();
+        }
+
+        // ── POST-INGEST: Build full availability map ───────────────────────
+        // Start from preAvailable and re-check archive + source for the rest.
+        var available = new Dictionary<string, string>(preAvailable, StringComparer.Ordinal);
+        foreach (var vi in repairTargets)
+        {
+            if (available.ContainsKey(vi.DerivedArtifactId)) continue;
+            var safe        = SafeFileName(vi.ReleaseName);
+            var archivePath = Path.Combine(appRoot, "archive", platformId, rawDatLineId, safe, vi.FileName);
+            var sourcePath  = Path.Combine(appRoot, "source",  platformId, rawDatLineId, safe, vi.FileName);
+            if      (File.Exists(archivePath)) available[vi.DerivedArtifactId] = archivePath;
+            else if (File.Exists(sourcePath))  available[vi.DerivedArtifactId] = sourcePath;
+        }
+
+        int availableCount   = available.Count;
+        int unavailableCount = totalTargets - availableCount;
+
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            dialog.SetStatus("Checking derived availability…"));
+
+        log.AppendLine("── Derived Availability ─────────────────────────────────────");
+        log.AppendLine($"  Available in archive/source: {availableCount}");
+        log.AppendLine($"  Still unavailable:           {unavailableCount}");
+        log.AppendLine();
+
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            dialog.SetStatus($"Reintegrating content into volume {entry.Label}…");
+            dialog.UpdateStats(totalTargets, 0, unavailableCount, totalTargets, 0, unavailableCount);
+        });
+
+        // ── FREE SPACE CHECK ───────────────────────────────────────────────
+        long bytesNeeded = repairTargets
+            .Where(vi => available.ContainsKey(vi.DerivedArtifactId) && vi.SizeBytes > 0)
+            .Sum(vi => vi.SizeBytes) + 64L * 1024 * 1024; // 64 MB buffer
+
+        try
+        {
+            var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(volumeRoot))!);
+            if (drive.AvailableFreeSpace < bytesNeeded)
+            {
+                var msg = $"Insufficient space on the volume drive.\n" +
+                          $"Required: {FormatBytes(bytesNeeded)}  " +
+                          $"Available: {FormatBytes(drive.AvailableFreeSpace)}";
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                    () => dialog.SetFailed(msg));
+                log.AppendLine($"ABORTED (space): {msg}");
+                WriteRepairLog(appRoot, entry.Label, log, exportRepairLog);
+                return;
+            }
+        }
+        catch { /* DriveInfo unavailable — copy will fail naturally */ }
+
+        // ── REINTEGRATION PHASE ────────────────────────────────────────────
+        log.AppendLine("── Reintegration Summary ────────────────────────────────────");
+        var reintegratedDaIds = new HashSet<string>(StringComparer.Ordinal);
+        var skippedDaIds      = new List<string>();
+
+        foreach (var vi in repairTargets)
+        {
+            var safe     = SafeFileName(vi.ReleaseName);
+            var dispPath = $"{safe}/{vi.FileName}";
+            var dstPath  = Path.Combine(volumeRoot, safe, vi.FileName);
+
+            if (!available.TryGetValue(vi.DerivedArtifactId, out var srcPath))
+            {
+                skippedDaIds.Add(vi.DerivedArtifactId);
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    dialog.AppendRow(entry.Label, "SKIPPED", dispPath, "no source available"));
+                log.AppendLine($"  SKIPPED  {dispPath}");
+                continue;
+            }
+
+            bool copied = false;
+            string? copyError = null;
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
+                File.Copy(srcPath, dstPath, overwrite: true);
+                copied = true;
+            }
+            catch (Exception ex) { copyError = ex.Message; }
+
+            if (copied)
+            {
+                reintegratedDaIds.Add(vi.DerivedArtifactId);
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    dialog.AppendRow(entry.Label, "COPIED", dispPath, ""));
+                log.AppendLine($"  COPIED  {dispPath}");
+            }
+            else
+            {
+                skippedDaIds.Add(vi.DerivedArtifactId);
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    dialog.AppendRow(entry.Label, "COPY FAILED", dispPath, $"error: {copyError}"));
+                log.AppendLine($"  COPY FAILED  {dispPath}  error={copyError}");
+            }
+        }
+
+        // ── VERIFY REINTEGRATED FILES ──────────────────────────────────────
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            dialog.SetStatus($"Verifying repaired files ({reintegratedDaIds.Count} reintegrated)…"));
+
+        log.AppendLine();
+        log.AppendLine("── Verify Summary ───────────────────────────────────────────");
+        var verifiedDaIds = new List<string>();
+        var failedDaIds   = new List<string>();
+
+        foreach (var vi in repairTargets)
+        {
+            if (!reintegratedDaIds.Contains(vi.DerivedArtifactId)) continue;
+
+            var safe     = SafeFileName(vi.ReleaseName);
+            var dispPath = $"{safe}/{vi.FileName}";
+            var dstPath  = Path.Combine(volumeRoot, safe, vi.FileName);
+
+            if (!File.Exists(dstPath))
+            {
+                failedDaIds.Add(vi.DerivedArtifactId);
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    dialog.AppendRow(entry.Label, "MISSING", dispPath, "absent after copy"));
+                log.AppendLine($"  MISSING  {dispPath}");
+                continue;
+            }
+
+            if (vi.Sha1.Length > 0)
+            {
+                var actual = ComputeFileSha1(dstPath);
+                if (!string.Equals(actual, vi.Sha1, StringComparison.OrdinalIgnoreCase))
+                {
+                    failedDaIds.Add(vi.DerivedArtifactId);
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        dialog.AppendRow(entry.Label, "MISMATCH", dispPath,
+                            $"exp:{vi.Sha1[..8]}… got:{actual[..8]}…"));
+                    log.AppendLine($"  MISMATCH  {dispPath}  expected={vi.Sha1}  actual={actual}");
+                    continue;
+                }
+            }
+
+            verifiedDaIds.Add(vi.DerivedArtifactId);
+            long fSize = 0;
+            try { fSize = new FileInfo(dstPath).Length; } catch { }
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                dialog.AppendRow(entry.Label, "VERIFIED", dispPath, FormatBytes(fSize)));
+            log.AppendLine($"  VERIFIED  {dispPath}");
+        }
+
+        // ── STATE UPDATES ──────────────────────────────────────────────────
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            dialog.SetStatus("Applying state updates…"));
+
+        var missedDaIds = new List<string>(skippedDaIds.Count + failedDaIds.Count);
+        missedDaIds.AddRange(skippedDaIds);
+        missedDaIds.AddRange(failedDaIds);
+
+        int artPresent = store.BatchUpdateDerivedArtifactStatus(verifiedDaIds, "present");
+        int artMissing = store.BatchUpdateDerivedArtifactStatus(missedDaIds,   "missing");
+
+        var allChanged = new List<string>(verifiedDaIds.Count + missedDaIds.Count);
+        allChanged.AddRange(verifiedDaIds);
+        allChanged.AddRange(missedDaIds);
+        int relUpdated = store.RecalculateReleaseStatusForArtifacts(allChanged);
+
+        // Health: ok only if every repair target was reintegrated and verified.
+        int remainingIssues = missedDaIds.Count;
+        var newHealth = remainingIssues == 0 ? "ok" : "crit";
+        _catalog.UpdateVolumeHealth(entry.Id, newHealth);
+
+        log.AppendLine();
+        log.AppendLine("── Apply Summary ────────────────────────────────────────────");
+        log.AppendLine($"  Artifacts → present:   {artPresent}");
+        log.AppendLine($"  Artifacts → missing:   {artMissing}");
+        log.AppendLine($"  Releases recalculated: {relUpdated}");
+        log.AppendLine();
+        log.AppendLine("── Final Volume Health ──────────────────────────────────────");
+        log.AppendLine($"  Volume:  {entry.Label}");
+        log.AppendLine($"  Health:  {newHealth.ToUpper()}");
+        if (remainingIssues == 0)
+            log.AppendLine("  Result:  Repair complete — all targets recovered and verified.");
+        else
+            log.AppendLine($"  Result:  Repair incomplete — {remainingIssues} target(s) still missing or invalid.");
+        log.AppendLine();
+        log.AppendLine($"  Completed:       {DateTime.UtcNow:o}");
+        log.AppendLine($"  Targets:         {totalTargets}");
+        log.AppendLine($"  Reintegrated:    {reintegratedDaIds.Count}");
+        log.AppendLine($"  Verified:        {verifiedDaIds.Count}");
+        log.AppendLine($"  Failed/Skipped:  {failedDaIds.Count + skippedDaIds.Count}");
+
+        // ── WRITE LOG ──────────────────────────────────────────────────────
+        WriteRepairLog(appRoot, entry.Label, log, exportRepairLog);
+
+        // ── UI REFRESH ─────────────────────────────────────────────────────
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            RebuildLibraryDatasets();
+            RefreshVolumes();
+            dialog.UpdateStats(
+                totalTargets, verifiedDaIds.Count, skippedDaIds.Count,
+                totalTargets, verifiedDaIds.Count, missedDaIds.Count);
+        });
+
+        // ── FINAL STATUS ───────────────────────────────────────────────────
+        string summary;
+        if (remainingIssues == 0)
+        {
+            summary =
+                $"Volume Repair complete — {entry.Label}\n" +
+                $"Targets requested:     {totalTargets}\n" +
+                $"Files reintegrated:    {reintegratedDaIds.Count}\n" +
+                $"Files verified:        {verifiedDaIds.Count}\n" +
+                $"Artifacts → present:   {artPresent}  |  Releases recalculated: {relUpdated}\n" +
+                $"Volume health:         OK — Volume is now healthy.";
+        }
+        else
+        {
+            summary =
+                $"Volume Repair complete (partial) — {entry.Label}\n" +
+                $"Targets requested:     {totalTargets}\n" +
+                $"Recovered from incoming: {incomingMatches.Count}\n" +
+                $"Derived available:     {availableCount} of {totalTargets}\n" +
+                $"Files reintegrated:    {reintegratedDaIds.Count}\n" +
+                $"Files verified:        {verifiedDaIds.Count}\n" +
+                $"Artifacts → present:   {artPresent}  |  Artifacts still missing: {artMissing}  |  Releases recalculated: {relUpdated}\n" +
+                $"Volume health:         CRIT — {remainingIssues} target(s) still missing or invalid.";
+        }
+
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            dialog.SetStatus(
+                $"Done — Targets: {totalTargets}  Reintegrated: {reintegratedDaIds.Count}  " +
+                $"Verified: {verifiedDaIds.Count}  Remaining: {remainingIssues}  " +
+                $"Health: {newHealth.ToUpper()}");
+            dialog.SetCompleted(summary);
+        });
+    }
+
+    private static void WriteRepairLog(string appRoot, string volumeLabel, System.Text.StringBuilder log, bool enabled)
+    {
+        if (!enabled) return;
+        try
+        {
+            var logDir  = Path.Combine(appRoot, "logs", "repair");
+            Directory.CreateDirectory(logDir);
+            var ts      = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            var safe    = SafeFileName(volumeLabel);
+            var logFile = Path.Combine(logDir, $"{ts}-repair-{safe}.log");
+            File.WriteAllText(logFile, log.ToString());
+        }
+        catch { /* non-fatal */ }
     }
 
     // ── Shared helpers ────────────────────────────────────────────────────────
@@ -1824,7 +2698,7 @@ public partial class MainWindow : Window
             {
                 var logDir  = Path.Combine(AppContext.BaseDirectory, "logs", logSubdir);
                 Directory.CreateDirectory(logDir);
-                var logFile = Path.Combine(logDir, $"{startTime:yyyyMMdd-HHmmss}-{logLabel}.log");
+                var logFile = Path.Combine(logDir, $"{startTime:yyyyMMdd-HHmmss}-{logSubdir}-{logLabel}.log");
                 File.WriteAllText(logFile, log.ToString());
             }
             catch { /* non-fatal */ }
@@ -2308,7 +3182,7 @@ public partial class MainWindow : Window
             var (success, fileCount, copiedBytes, cleanupError, elapsed) =
                 await RunCopyMoveAsync(
                     "Move Volume", srcFolder, dstFolder, header,
-                    "move-volume", SafeFileName(entry.Label));
+                    "volume-move", SafeFileName(entry.Label));
 
             if (!success) return;
 
@@ -2421,7 +3295,7 @@ public partial class MainWindow : Window
     private void InitLibrary()
     {
         RebuildLibraryDatasets();
-        LibraryStatusFilter.ItemsSource   = new[] { "All Statuses", "Present", "New", "Outdated", "Pending", "Missing", "Lost" };
+        LibraryStatusFilter.ItemsSource   = new[] { "All Statuses", "Present", "Outdated", "Pending", "Missing", "Lost", "New" };
         LibraryStatusFilter.SelectedIndex = 0;
     }
 
@@ -2450,17 +3324,18 @@ public partial class MainWindow : Window
                     filesByRelId.TryGetValue(r.Id, out var romFiles);
                     return new LibraryEntry
                     {
-                        Name      = r.Name,
-                        Platform  = platformName,
-                        Status    = Capitalize(r.Status),
-                        Region    = r.Region,
-                        Languages = r.Languages.ToUpperInvariant(),
-                        Format    = r.Format,
-                        Size      = r.Size,
-                        Tier      = r.Tier,
-                        RomFiles  = romFiles ?? [],
-                        ReleaseId = r.Id,
-                        DbPath    = absPath,
+                        Name            = r.Name,
+                        Platform        = platformName,
+                        Status          = Capitalize(r.Status),
+                        Region          = r.Region,
+                        Languages       = r.Languages.ToUpperInvariant(),
+                        Format          = r.Format,
+                        Size            = r.Size,
+                        Tier            = r.Tier,
+                        RomFiles        = romFiles ?? [],
+                        ReleaseId       = r.Id,
+                        DbPath          = absPath,
+                        IntroducedAtUtc = r.IntroducedAtUtc,
                     };
                 })
                 .ToList();
@@ -2570,7 +3445,8 @@ public partial class MainWindow : Window
         var filtered = _activeDatasetEntries
             .Where(e => search == string.Empty ||
                         e.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
-            .Where(e => status == "All Statuses" || e.Status == status)
+            .Where(e => status == "All Statuses"
+                     || (status == "New" ? e.IsNew : e.Status == status))
             .ToList();
 
         LibraryList.ItemsSource = filtered;
@@ -2595,6 +3471,7 @@ public partial class MainWindow : Window
         DetailPlatform.Text         = entry.Platform;
         DetailStatusText.Text       = entry.Status;
         DetailStatusText.Foreground = entry.StatusBrush;
+        DetailNewBadge.IsVisible    = entry.IsNew;
         DetailTier.Text             = entry.TierDisplay;
         DetailTier.Foreground       = entry.TierBrush;
         DetailRegion.Text           = entry.Region;
@@ -3045,96 +3922,207 @@ public partial class MainWindow : Window
         return File.Exists(path1x) ? path1x : null;
     }
 
-    private void InitArchiveFormatsChart()
+    // ── Dashboard ─────────────────────────────────────────────────────────────
+
+    private void InitDashboard()
     {
-        ArchiveFormatsChart.Segments =
-        [
-            new DonutSegment { Value = 50, Fill = new SolidColorBrush(Color.Parse("#7B68EE")) }, // .iso
-            new DonutSegment { Value = 40, Fill = new SolidColorBrush(Color.Parse("#4A90D9")) }, // .chd
-            new DonutSegment { Value = 10, Fill = new SolidColorBrush(Color.Parse("#3D7A5C")) }, // .cue
-        ];
-    }
+        // ── Archive Overview ─────────────────────────────────────────────────
+        var platforms = _catalog.LoadPlatforms();
+        var datLines  = _catalog.LoadDatLines();
+        var volumes   = _catalog.GetVolumes();
+        var disks     = _catalog.GetDisks();
 
-    // ── Layout engine wiring ──────────────────────────────────────────────────
+        DashPlatformsCount.Text = platforms.Count.ToString("N0");
+        DashDatLinesCount.Text  = datLines.Count.ToString("N0");
+        DashReleasesCount.Text  = datLines.Sum(dl => dl.ReleaseCount).ToString("N0");
+        DashArtifactsCount.Text = _catalog.CountStoredArtifacts().ToString("N0");
+        DashVolumesCount.Text   = volumes.Count.ToString("N0");
+        DashDisksCount.Text     = disks.Count.ToString("N0");
 
-    protected override void OnSizeChanged(SizeChangedEventArgs e)
-    {
-        base.OnSizeChanged(e);
-        ApplyDashboardLayout(e.NewSize.Width - SidebarWidth);
-    }
+        // ── Integrity & Attention ────────────────────────────────────────────
+        DashVolOk.Text   = volumes.Count(v => v.Status != "lost" && v.Health == "ok").ToString("N0");
+        DashVolCrit.Text = volumes.Count(v => v.Health == "crit").ToString("N0");
+        DashVolLost.Text = volumes.Count(v => v.Status == "lost").ToString("N0");
+        DashDiskLost.Text = disks.Count(d => d.Status == "lost").ToString("N0");
 
-    private void ApplyDashboardLayout(double contentWidth)
-    {
-        var mode    = DashboardLayoutEngine.ResolveMode(contentWidth);
-        var visible = _layoutEngine.ResolveWidgets(mode);
-        var ids     = new HashSet<string>(visible.Select(w => w.Id));
-
-        // Widget visibility (unchanged from v1)
-        CardLibraryCoverage.IsVisible     = ids.Contains(DashboardWidgetId.LibraryCoverage);
-        CardVolumes.IsVisible             = ids.Contains(DashboardWidgetId.Volumes);
-        CardSystems.IsVisible             = ids.Contains(DashboardWidgetId.Systems);
-        CardStorage.IsVisible             = ids.Contains(DashboardWidgetId.Storage);
-        CardRecentActivity.IsVisible      = ids.Contains(DashboardWidgetId.RecentActivitySummary);
-        WidgetRecentOperations.IsVisible  = ids.Contains(DashboardWidgetId.RecentOperations);
-        WidgetAttentionRequired.IsVisible = ids.Contains(DashboardWidgetId.AttentionRequired);
-        WidgetArchiveFormats.IsVisible    = ids.Contains(DashboardWidgetId.ArchiveFormats);
-
-        // Slot composition (v1.5): only reconfigure when mode actually changes
-        if (mode == _currentMode)
-            return;
-        _currentMode = mode;
-        ApplyMainWidgetsGridSlots(mode);
-    }
-
-    /// <summary>
-    /// Reconfigures MainWidgetsGrid column/row definitions and each widget's Grid cell
-    /// to match the target layout mode. No controls are moved between parents.
-    ///
-    ///  Compact  (1 col, 3 rows): vertical stack — RecentOps, Attention, ArchiveFormats
-    ///  Standard (2 cols, 2 rows): top row = RecentOps | Attention; second row = ArchiveFormats (col-span 2)
-    ///  Wide     (3 cols, 1 row):  all three side by side
-    /// </summary>
-    private void ApplyMainWidgetsGridSlots(DashboardLayoutMode mode)
-    {
-        switch (mode)
+        int relMissing = 0, relPending = 0, relOutdated = 0;
+        foreach (var dl in datLines)
         {
-            case DashboardLayoutMode.Compact:
-                MainWidgetsGrid.ColumnDefinitions = new ColumnDefinitions("*");
-                MainWidgetsGrid.RowDefinitions    = new RowDefinitions("Auto,Auto,Auto");
+            if (dl.DataStorePath.Length == 0) continue;
+            var dbPath = Path.Combine(_dataDir, dl.DataStorePath);
+            if (!File.Exists(dbPath)) continue;
+            var (missing, pending, outdated, _, _) = new DatLineStore(dbPath).GetAllStatusCounts();
+            relMissing  += missing;
+            relPending  += pending;
+            relOutdated += outdated;
+        }
+        DashRelMissing.Text  = relMissing.ToString("N0");
+        DashRelPending.Text  = relPending.ToString("N0");
+        DashRelOutdated.Text = relOutdated.ToString("N0");
 
-                Place(WidgetRecentOperations,  row: 0, col: 0, colSpan: 1, margin: new(0, 0, 0, 8));
-                Place(WidgetAttentionRequired, row: 1, col: 0, colSpan: 1, margin: new(0, 0, 0, 8));
-                Place(WidgetArchiveFormats,    row: 2, col: 0, colSpan: 1, margin: new(0));
-                break;
+        // ── Tools ────────────────────────────────────────────────────────────
+        var tools       = _catalog.LoadTools();
+        var appRoot     = AppContext.BaseDirectory;
+        var builtInIds  = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "7zip" };
+        int toolBuiltIn = 0, toolPresent = 0, toolMissing = 0;
+        foreach (var tool in tools)
+        {
+            if (builtInIds.Contains(tool.Id)) { toolBuiltIn++;  continue; }
+            var exePath = Path.Combine(appRoot, "tools", tool.FolderName, tool.ExecutableName);
+            if (File.Exists(exePath)) toolPresent++;
+            else toolMissing++;
+        }
+        DashToolsBuiltIn.Text = toolBuiltIn.ToString("N0");
+        DashToolsPresent.Text = toolPresent.ToString("N0");
+        DashToolsMissing.Text = toolMissing.ToString("N0");
 
-            case DashboardLayoutMode.Standard:
-                MainWidgetsGrid.ColumnDefinitions = new ColumnDefinitions("*,8,*");
-                MainWidgetsGrid.RowDefinitions    = new RowDefinitions("Auto,Auto");
+        LoadLatestLogs();
+    }
 
-                // Top row: RecentOps (col 0) | 8px gap col | Attention (col 2)
-                Place(WidgetRecentOperations,  row: 0, col: 0, colSpan: 1, margin: new(0, 0, 0, 8));
-                Place(WidgetAttentionRequired, row: 0, col: 2, colSpan: 1, margin: new(0, 0, 0, 8));
-                // Bottom row: ArchiveFormats spans all 3 columns (including gap column)
-                Place(WidgetArchiveFormats,    row: 1, col: 0, colSpan: 3, margin: new(0));
-                break;
+    private void OnDashboardRefresh(object? sender, RoutedEventArgs e) => InitDashboard();
 
-            case DashboardLayoutMode.Wide:
-                MainWidgetsGrid.ColumnDefinitions = new ColumnDefinitions("*,8,*,8,*");
-                MainWidgetsGrid.RowDefinitions    = new RowDefinitions("Auto");
+    private void LoadLatestLogs()
+    {
+        DashLatestLogsPanel.Children.Clear();
 
-                Place(WidgetRecentOperations,  row: 0, col: 0, colSpan: 1, margin: new(0));
-                Place(WidgetAttentionRequired, row: 0, col: 2, colSpan: 1, margin: new(0));
-                Place(WidgetArchiveFormats,    row: 0, col: 4, colSpan: 1, margin: new(0));
-                break;
+        var logsRoot = Path.Combine(AppContext.BaseDirectory, "logs");
+        var folderTypeMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ingest"]      = "Ingest",
+            ["verify"]      = "Verify",
+            ["repair"]      = "Repair",
+            ["volume-move"] = "Volume Move",
+            ["unexpected"]  = "Unexpected",
+        };
+
+        var entries = new List<(string Type, DateTime Timestamp, string FileName, string FullPath)>();
+
+        foreach (var (folder, typeName) in folderTypeMap)
+        {
+            var dir = Path.Combine(logsRoot, folder);
+            if (!Directory.Exists(dir)) continue;
+            foreach (var file in Directory.GetFiles(dir))
+            {
+                entries.Add((typeName, File.GetLastWriteTime(file), Path.GetFileName(file), file));
+            }
+        }
+
+        var recent = entries.OrderByDescending(e => e.Timestamp).Take(10).ToList();
+
+        if (recent.Count == 0)
+        {
+            DashLatestLogsPanel.Children.Add(new TextBlock
+            {
+                Text       = "No operations recorded yet.",
+                FontSize   = 12,
+                Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse("#555566")),
+            });
+            return;
+        }
+
+        // Column header
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("90,150,*,60"), Margin = new Avalonia.Thickness(0, 0, 0, 8) };
+        void AddHeader(int col, string text)
+        {
+            var tb = new TextBlock
+            {
+                Text       = text,
+                FontSize   = 10,
+                FontWeight = Avalonia.Media.FontWeight.SemiBold,
+                Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse("#444455")),
+            };
+            Grid.SetColumn(tb, col);
+            header.Children.Add(tb);
+        }
+        AddHeader(0, "TYPE");
+        AddHeader(1, "TIMESTAMP");
+        AddHeader(2, "FILE");
+        DashLatestLogsPanel.Children.Add(header);
+
+        // Divider
+        DashLatestLogsPanel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Avalonia.Media.Color.Parse("#1E1E2C")),
+            Margin     = new Avalonia.Thickness(0, 0, 0, 8),
+        });
+
+        var typeColors = new Dictionary<string, string>
+        {
+            ["Verify"]      = "#7B68EE",
+            ["Repair"]      = "#4A90D9",
+            ["Volume Move"] = "#E07040",
+            ["Unexpected"]  = "#FFA726",
+        };
+
+        foreach (var (type, ts, fileName, fullPath) in recent)
+        {
+            var row = new Grid
+            {
+                ColumnDefinitions = new ColumnDefinitions("90,150,*,60"),
+                Margin = new Avalonia.Thickness(0, 0, 0, 6),
+            };
+
+            var typeColor = typeColors.GetValueOrDefault(type, "#888899");
+
+            var typeBlock = new TextBlock
+            {
+                Text              = type,
+                FontSize          = 11,
+                FontWeight        = Avalonia.Media.FontWeight.SemiBold,
+                Foreground        = new SolidColorBrush(Avalonia.Media.Color.Parse(typeColor)),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            var timeBlock = new TextBlock
+            {
+                Text              = ts.ToString("yyyy-MM-dd HH:mm"),
+                FontSize          = 11,
+                Foreground        = new SolidColorBrush(Avalonia.Media.Color.Parse("#555566")),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            var nameBlock = new TextBlock
+            {
+                Text              = fileName,
+                FontSize          = 11,
+                Foreground        = new SolidColorBrush(Avalonia.Media.Color.Parse("#AAAACC")),
+                TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            var openBtn = new Button
+            {
+                Content     = "Open",
+                Tag         = fullPath,
+                Classes     = { "view-toggle" },
+                Padding     = new Avalonia.Thickness(8, 2),
+                FontSize    = 11,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            };
+            openBtn.Click += OnDashLogOpen;
+
+            Grid.SetColumn(typeBlock, 0);
+            Grid.SetColumn(timeBlock, 1);
+            Grid.SetColumn(nameBlock, 2);
+            Grid.SetColumn(openBtn,   3);
+            row.Children.Add(typeBlock);
+            row.Children.Add(timeBlock);
+            row.Children.Add(nameBlock);
+            row.Children.Add(openBtn);
+            DashLatestLogsPanel.Children.Add(row);
         }
     }
 
-    private static void Place(Control ctrl, int row, int col, int colSpan, Avalonia.Thickness margin)
+    private void OnDashLogOpen(object? sender, RoutedEventArgs e)
     {
-        Grid.SetRow(ctrl, row);
-        Grid.SetColumn(ctrl, col);
-        Grid.SetColumnSpan(ctrl, colSpan);
-        ctrl.Margin = margin;
+        if (sender is not Button btn || btn.Tag is not string filePath) return;
+        OpenLogFileInViewer(filePath);
+    }
+
+    private void OpenLogFileInViewer(string filePath)
+    {
+        SetActive(NavLogs);             // rebuilds tree, clears viewer
+        LogsFileLabel.Text = filePath;
+        try   { LogsContentBox.Text = File.ReadAllText(filePath); }
+        catch { LogsContentBox.Text = "Failed to load log."; }
     }
 
     // ── Navigation ────────────────────────────────────────────────────────────
@@ -3211,14 +4199,41 @@ public partial class MainWindow : Window
             .Where(d => d.DiskId.Length > 0)
             .ToDictionary(d => d.DiskId, StringComparer.Ordinal);
 
+        bool quarantineMismatch   = _catalog.GetBoolSetting("quarantine_mismatch_on_verify",   defaultValue: true);
+        bool quarantineUnexpected = _catalog.GetBoolSetting("quarantine_unexpected_on_verify", defaultValue: false);
+        var  quarantineBaseDir  = Path.Combine(
+            appRoot, "incoming-skip",
+            SafeFileName(info.CatalogPlatformId ?? "unknown"),
+            SafeFileName(info.Name));
+
         int totalVols = volumes.Count, verifiedVols = 0, skippedVols = 0;
-        int totalExpected = 0, totalVerified = 0, totalMissing = 0, totalMismatch = 0, totalUnexpected = 0;
+        int totalExpected = 0, totalVerified = 0, totalMissing = 0, totalMismatch = 0,
+            totalUnexpected = 0, totalQuarantined = 0;
         long verifiedBytes = 0;
+        int  quarantineFailures = 0;
+        int  unexpectedQuarantined = 0;
+        int  unexpectedQuarantineFailures = 0;
+        bool applyCancelled = false;
+
+        // Mismatches discovered during the read-only scan phase — consumed by apply phase below.
+        var mismatchFiles   = new List<(string AbsPath, string FileName, string DispPath, string HashDetail, string VolLabel, string DaId)>();
+        // Unexpected files discovered during scan — consumed by apply phase if quarantine is enabled.
+        var unexpectedFiles = new List<(string AbsPath, string FileName, string DispPath, string VolLabel)>();
+
+        // Artifact outcome lists — populated during the read-only scan, applied after confirmation.
+        var verifiedDaIds = new List<string>();
+        var missingDaIds  = new List<string>();
+
+        // Tracks which volume IDs and their health were actually scanned (not skipped/lost).
+        var scannedVolIds  = new HashSet<string>(StringComparer.Ordinal);
+        var volHealthLog   = new List<(string VolId, string Label, string Health)>();
 
         var log = new System.Text.StringBuilder();
         log.AppendLine($"DAT Line Verify — {info.Name}");
-        log.AppendLine($"Started:  {DateTime.UtcNow:o}");
-        log.AppendLine($"Volumes:  {totalVols}");
+        log.AppendLine($"Started:   {DateTime.UtcNow:o}");
+        log.AppendLine($"Volumes:   {totalVols}");
+        log.AppendLine();
+        log.AppendLine("── Per-Volume Scan ──────────────────────────────────────────");
         log.AppendLine();
 
         for (int vi = 0; vi < volumes.Count; vi++)
@@ -3315,7 +4330,7 @@ public partial class MainWindow : Window
 
             log.AppendLine($"  [{volLabel}] source={srcLabel}  expected={volExpected}");
 
-            // ── Verify expected files ────────────────────────────────────────
+            // ── Verify expected files (read-only scan) ───────────────────────
             foreach (var ei in expected)
             {
                 var relPath  = Path.Combine(SafeFileName(ei.ReleaseName), ei.FileName);
@@ -3325,6 +4340,7 @@ public partial class MainWindow : Window
                 if (!File.Exists(absPath))
                 {
                     volMissing++;
+                    missingDaIds.Add(ei.DerivedArtifactId);
                     await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                         dialog.AppendRow(volLabel, "MISSING", dispPath, ""));
                     log.AppendLine($"    MISSING  {dispPath}");
@@ -3342,14 +4358,17 @@ public partial class MainWindow : Window
                     !string.Equals(actualSha1, ei.Sha1, StringComparison.OrdinalIgnoreCase))
                 {
                     volMismatch++;
-                    var detail = $"exp:{ei.Sha1[..8]}… got:{actualSha1[..8]}…";
+                    var hashDetail = $"exp:{ei.Sha1[..8]}… got:{actualSha1[..8]}…";
                     await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                        dialog.AppendRow(volLabel, "MISMATCH", dispPath, detail));
+                        dialog.AppendRow(volLabel, "MISMATCH", dispPath, hashDetail));
                     log.AppendLine($"    MISMATCH  {dispPath}  expected={ei.Sha1}  actual={actualSha1}");
+                    // Record for apply phase — no filesystem changes here.
+                    mismatchFiles.Add((absPath, ei.FileName, dispPath, hashDetail, volLabel, ei.DerivedArtifactId));
                 }
                 else
                 {
                     volVerified++;
+                    verifiedDaIds.Add(ei.DerivedArtifactId);
                     verifiedBytes += actualSize;
                     var detail = sizeOk ? FormatBytes(actualSize) : $"size:{actualSize}≠{ei.SizeBytes}";
                     await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
@@ -3364,6 +4383,7 @@ public partial class MainWindow : Window
                 if (!expectedByRelPath.ContainsKey(rel))
                 {
                     volUnexpected++;
+                    unexpectedFiles.Add((Path.Combine(srcRoot, rel), Path.GetFileName(rel), rel, volLabel));
                     await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                         dialog.AppendRow(volLabel, "UNEXPECTED", rel, ""));
                     log.AppendLine($"    UNEXPECTED  {rel}");
@@ -3371,54 +4391,357 @@ public partial class MainWindow : Window
             }
 
             verifiedVols++;
-            totalExpected   += volExpected;
-            totalVerified   += volVerified;
-            totalMissing    += volMissing;
-            totalMismatch   += volMismatch;
-            totalUnexpected += volUnexpected;
+            totalExpected    += volExpected;
+            totalVerified    += volVerified;
+            totalMissing     += volMissing;
+            totalMismatch    += volMismatch;
+            totalUnexpected  += volUnexpected;
+
+            scannedVolIds.Add(vol.Id);
+            var health = (volMissing + volMismatch == 0) ? "OK" : "CRIT";
+            volHealthLog.Add((vol.Id, volLabel, health));
 
             log.AppendLine($"    → verified={volVerified} missing={volMissing} " +
-                           $"mismatch={volMismatch} unexpected={volUnexpected}");
+                           $"mismatch={volMismatch} unexpected={volUnexpected}  health={health}");
 
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                 dialog.UpdateStats(totalVols, verifiedVols, skippedVols,
                                    totalExpected, totalVerified, totalMissing));
         }
 
+        // ── Scan complete — update dialog before any apply ────────────────────
+        bool hasUnexpectedQuarantine = quarantineUnexpected && unexpectedFiles.Count > 0;
+
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            var parts = new System.Text.StringBuilder();
+            parts.Append($"Scan complete — Verified: {totalVerified}  Missing: {totalMissing}  " +
+                         $"Mismatch: {totalMismatch}  Unexpected: {totalUnexpected}");
+            if (totalUnexpected > 0)
+                parts.Append(quarantineUnexpected
+                    ? "  (unexpected: will be quarantined)"
+                    : "  (unexpected: scan-only, no changes applied)");
+            if (verifiedDaIds.Count > 0 || missingDaIds.Count > 0 ||
+                (quarantineMismatch && mismatchFiles.Count > 0) || hasUnexpectedQuarantine)
+                parts.Append("  |  Pending reconcile & apply.");
+            dialog.SetStatus(parts.ToString());
+        });
+
+        // ── Apply phase — gated on user confirmation ──────────────────────────
+        // Gates: quarantine of mismatch files, artifact-status DB writes, release recalculation.
+        bool hasVerifyChanges = verifiedDaIds.Count > 0 || missingDaIds.Count > 0;
+        bool hasQuarantine    = quarantineMismatch && mismatchFiles.Count > 0;
+
+        int appliedArtifacts = 0, appliedReleases = 0;
+        int artPresent = 0, artMissing = 0;
+
+        if (hasVerifyChanges || hasQuarantine || hasUnexpectedQuarantine)
+        {
+            // Build confirmation message describing what will happen.
+            int volsOk   = volHealthLog.Count(v => v.Health == "OK");
+            int volsCrit = volHealthLog.Count(v => v.Health == "CRIT");
+
+            var confirmLines = new System.Text.StringBuilder();
+            confirmLines.AppendLine("Verify & Reconcile — Apply Results?");
+            confirmLines.AppendLine();
+            confirmLines.AppendLine("── Scan Results ─────────────────────────────────────");
+            confirmLines.AppendLine($"  Volumes scanned:     {verifiedVols} of {totalVols}  ({skippedVols} skipped)");
+            confirmLines.AppendLine($"  Files expected:      {totalExpected}");
+            confirmLines.AppendLine($"    Verified:          {totalVerified}");
+            confirmLines.AppendLine($"    Missing:           {totalMissing}");
+            confirmLines.AppendLine($"    Mismatch:          {totalMismatch}");
+            confirmLines.AppendLine();
+            confirmLines.AppendLine("── Reconcile Actions ─────────────────────────────────");
+            confirmLines.AppendLine($"  Artifacts → present: {verifiedDaIds.Count}");
+            confirmLines.AppendLine($"  Artifacts → missing: {missingDaIds.Count}");
+            if (hasQuarantine)
+                confirmLines.AppendLine($"  Mismatches → quarantine: {mismatchFiles.Count}");
+            if (totalUnexpected > 0)
+            {
+                confirmLines.AppendLine();
+                confirmLines.AppendLine("── Unexpected Files ──────────────────────────────────");
+                confirmLines.AppendLine($"  Found:  {totalUnexpected}");
+                confirmLines.AppendLine(hasUnexpectedQuarantine
+                    ? $"  Action: Quarantine → incoming-skip/unexpected/"
+                    : "  Action: Report only  (quarantine disabled)");
+                confirmLines.AppendLine("  Note:   unexpected files do not affect artifact or release state.");
+            }
+            confirmLines.AppendLine();
+            confirmLines.AppendLine("── Volume Health Forecast ────────────────────────────");
+            confirmLines.AppendLine($"  Volumes → OK:   {volsOk}");
+            confirmLines.AppendLine($"  Volumes → CRIT: {volsCrit}");
+            confirmLines.AppendLine();
+            confirmLines.AppendLine("Release statuses will be recalculated.");
+            confirmLines.Append("Cancel to discard — no changes will be applied.");
+
+            bool applyConfirmed = await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                async () => await new ConfirmDialog("Apply Verify Results?", confirmLines.ToString())
+                    .ShowDialog<bool>(this));
+
+            if (!applyConfirmed)
+            {
+                applyCancelled = true;
+                goto WriteLog;
+            }
+
+            // Track mismatch daIds that were successfully quarantined.
+            var quarantinedDaIds = new List<string>();
+
+            // ── Quarantine mismatch files ──────────────────────────────────────
+            if (hasQuarantine)
+            {
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    dialog.SetStatus($"Applying quarantine to {mismatchFiles.Count} mismatch file(s)…"));
+
+                log.AppendLine();
+                log.AppendLine("── Quarantine Summary ───────────────────────────────────────");
+
+                foreach (var (mAbsPath, mFileName, mDispPath, mHashDetail, mVolLabel, mDaId) in mismatchFiles)
+                {
+                    if (!File.Exists(mAbsPath))
+                    {
+                        // File was already removed between scan and apply — treat as quarantined.
+                        totalQuarantined++;
+                        quarantinedDaIds.Add(mDaId);
+                        log.AppendLine($"    SKIP (already gone)  {mDispPath}");
+                        continue;
+                    }
+
+                    bool moved = false;
+                    string? moveError = null;
+                    try
+                    {
+                        Directory.CreateDirectory(quarantineBaseDir);
+                        var dest = IncomingSkipUniquePath(quarantineBaseDir, mFileName);
+                        try
+                        {
+                            File.Move(mAbsPath, dest, overwrite: false);
+                            moved = true;
+                        }
+                        catch
+                        {
+                            // Cross-volume fallback: copy then delete
+                            File.Copy(mAbsPath, dest, overwrite: false);
+                            File.Delete(mAbsPath);
+                            moved = true;
+                        }
+                    }
+                    catch (Exception moveEx)
+                    {
+                        moveError = moveEx.Message;
+                    }
+
+                    if (moved)
+                    {
+                        totalQuarantined++;
+                        quarantinedDaIds.Add(mDaId);
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(mVolLabel, "QUARANTINED", mDispPath, "moved to incoming-skip"));
+                        log.AppendLine($"    QUARANTINED  {mDispPath}  → incoming-skip");
+                    }
+                    else
+                    {
+                        quarantineFailures++;
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(mVolLabel, "QUARANTINE FAILED", mDispPath, $"error: {moveError}"));
+                        log.AppendLine($"    QUARANTINE FAILED  {mDispPath}  error={moveError}");
+                    }
+                }
+            }
+
+            // ── Quarantine unexpected files ────────────────────────────────────
+            // Unexpected quarantine never changes artifact or release state.
+            if (hasUnexpectedQuarantine)
+            {
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    dialog.SetStatus($"Quarantining {unexpectedFiles.Count} unexpected file(s)…"));
+
+                var unexpectedBaseDir = Path.Combine(appRoot, "incoming-skip", "unexpected");
+
+                log.AppendLine();
+                log.AppendLine("── Unexpected Summary ───────────────────────────────────────");
+
+                foreach (var (uAbsPath, uFileName, uDispPath, uVolLabel) in unexpectedFiles)
+                {
+                    if (!File.Exists(uAbsPath))
+                    {
+                        unexpectedQuarantined++;
+                        log.AppendLine($"    SKIP (already gone)  {uDispPath}");
+                        continue;
+                    }
+
+                    var volQuarantineDir = Path.Combine(unexpectedBaseDir, SafeFileName(uVolLabel));
+                    bool moved = false;
+                    string? moveError = null;
+                    try
+                    {
+                        Directory.CreateDirectory(volQuarantineDir);
+                        var dest = IncomingSkipUniquePath(volQuarantineDir, uFileName);
+                        try
+                        {
+                            File.Move(uAbsPath, dest, overwrite: false);
+                            moved = true;
+                        }
+                        catch
+                        {
+                            // Cross-volume fallback: copy then delete
+                            File.Copy(uAbsPath, dest, overwrite: false);
+                            File.Delete(uAbsPath);
+                            moved = true;
+                        }
+                    }
+                    catch (Exception moveEx)
+                    {
+                        moveError = moveEx.Message;
+                    }
+
+                    if (moved)
+                    {
+                        unexpectedQuarantined++;
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(uVolLabel, "QUARANTINED", uDispPath,
+                                "moved to incoming-skip/unexpected"));
+                        log.AppendLine($"    QUARANTINED  {uDispPath}  → incoming-skip/unexpected/{SafeFileName(uVolLabel)}");
+                    }
+                    else
+                    {
+                        unexpectedQuarantineFailures++;
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(uVolLabel, "QUARANTINE FAILED", uDispPath, $"error: {moveError}"));
+                        log.AppendLine($"    QUARANTINE FAILED  {uDispPath}  error={moveError}");
+                    }
+                }
+            }
+
+            // ── Artifact status DB writes ──────────────────────────────────────
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                dialog.SetStatus("Updating artifact and release records…"));
+
+            // VERIFIED → present; MISSING → missing; quarantined MISMATCH → missing.
+            // Non-quarantined MISMATCH artifacts are left unchanged (state unknown).
+            var missingUpdateIds = new List<string>(missingDaIds.Count + quarantinedDaIds.Count);
+            missingUpdateIds.AddRange(missingDaIds);
+            missingUpdateIds.AddRange(quarantinedDaIds);
+
+            artPresent = store.BatchUpdateDerivedArtifactStatus(verifiedDaIds, "present");
+            artMissing = store.BatchUpdateDerivedArtifactStatus(missingUpdateIds, "missing");
+            appliedArtifacts = artPresent + artMissing;
+
+            // ── Release recalculation ──────────────────────────────────────────
+            var allChangedDaIds = new List<string>(verifiedDaIds.Count + missingUpdateIds.Count);
+            allChangedDaIds.AddRange(verifiedDaIds);
+            allChangedDaIds.AddRange(missingUpdateIds);
+            appliedReleases = store.RecalculateReleaseStatusForArtifacts(allChangedDaIds);
+
+            log.AppendLine();
+            log.AppendLine("── Apply Summary ────────────────────────────────────────────");
+            log.AppendLine($"  Artifacts marked present:  {artPresent}");
+            log.AppendLine($"  Artifacts marked missing:  {artMissing}  (scan-missing={missingDaIds.Count}  quarantined={quarantinedDaIds.Count})");
+            log.AppendLine($"  Releases recalculated:     {appliedReleases}");
+
+            // ── Persist volume health ─────────────────────────────────────────
+            // health is set per-scanned-volume only; skipped/lost volumes are excluded.
+            log.AppendLine();
+            log.AppendLine("── Volume Health Summary ────────────────────────────────────");
+            foreach (var (vhVolId, vhLabel, vhHealth) in volHealthLog)
+            {
+                var dbHealth = vhHealth == "CRIT" ? "crit" : "ok";
+                _catalog.UpdateVolumeHealth(vhVolId, dbHealth);
+                log.AppendLine($"  [{vhLabel}]  {vhHealth}");
+            }
+
+            // ── UI refresh ────────────────────────────────────────────────────
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                RebuildLibraryDatasets();
+                RefreshVolumes();
+            });
+        }
+
+        WriteLog:
         // ── Write log ────────────────────────────────────────────────────────
         var endTime = DateTime.UtcNow;
         log.AppendLine();
-        log.AppendLine($"Completed: {endTime:o}");
-        log.AppendLine($"Volumes:   total={totalVols} verified={verifiedVols} skipped={skippedVols}");
-        log.AppendLine($"Files:     expected={totalExpected} verified={totalVerified} " +
-                       $"missing={totalMissing} mismatch={totalMismatch} unexpected={totalUnexpected}");
-        log.AppendLine($"SHA1 data: {FormatBytes(verifiedBytes)} verified");
+        log.AppendLine("── Scan Summary ─────────────────────────────────────────────");
+        log.AppendLine($"  Completed:     {endTime:o}");
+        log.AppendLine($"  Volumes:       total={totalVols}  scanned={verifiedVols}  skipped={skippedVols}");
+        log.AppendLine($"  Files:         expected={totalExpected}  verified={totalVerified}  missing={totalMissing}  mismatch={totalMismatch}  unexpected={totalUnexpected}");
+        log.AppendLine($"  Quarantined:   {totalQuarantined}  failures={quarantineFailures}");
+        if (totalUnexpected > 0)
+            log.AppendLine($"  Unexpected:    found={totalUnexpected}  quarantined={unexpectedQuarantined}" +
+                           $"  failures={unexpectedQuarantineFailures}" +
+                           (quarantineUnexpected ? "" : "  (report only)"));
+        log.AppendLine($"  SHA1-verified: {FormatBytes(verifiedBytes)}");
+        if (applyCancelled)
+            log.AppendLine("  Apply:         CANCELLED — no persistent changes applied");
+        else if (appliedArtifacts > 0 || appliedReleases > 0)
+            log.AppendLine($"  DB apply:      artifacts={appliedArtifacts}  releases={appliedReleases}");
+        else
+            log.AppendLine("  DB apply:      none (nothing to update)");
 
-        try
+        if (_catalog.GetBoolSetting("auto_export_verify_logs", defaultValue: true))
         {
-            var logDir  = Path.Combine(appRoot, "logs", "verify");
-            Directory.CreateDirectory(logDir);
-            var safe    = SafeFileName(info.Name);
-            var logFile = Path.Combine(logDir, $"{endTime:yyyyMMdd-HHmmss}-verify-{safe}.log");
-            File.WriteAllText(logFile, log.ToString());
+            try
+            {
+                var logDir  = Path.Combine(appRoot, "logs", "verify");
+                Directory.CreateDirectory(logDir);
+                var safe    = SafeFileName(info.Name);
+                var logFile = Path.Combine(logDir, $"{endTime:yyyyMMdd-HHmmss}-verify-{safe}.log");
+                File.WriteAllText(logFile, log.ToString());
+            }
+            catch { /* non-fatal */ }
         }
-        catch { /* non-fatal */ }
 
         // ── Final status ─────────────────────────────────────────────────────
-        bool clean = totalMissing == 0 && totalMismatch == 0;
-        var summary =
-            $"Done — {verifiedVols}/{totalVols} volume(s) verified  |  " +
-            $"Expected: {totalExpected}  Verified: {totalVerified}  " +
-            $"Missing: {totalMissing}  Mismatch: {totalMismatch}  Unexpected: {totalUnexpected}" +
-            (clean ? "  ✓ All expected files verified." : "");
+        bool clean    = totalMissing == 0 && totalMismatch == 0;
+        int critCount = volHealthLog.Count(v => v.Health == "CRIT");
+        int okCount   = volHealthLog.Count(v => v.Health == "OK");
+        string summary;
+        string unexpectedSummaryLine = "";
+        if (totalUnexpected > 0)
+        {
+            if (applyCancelled || !quarantineUnexpected)
+                unexpectedSummaryLine = $"\nUnexpected: {totalUnexpected} found  (reported only — no artifact changes)";
+            else
+                unexpectedSummaryLine =
+                    $"\nUnexpected: {totalUnexpected} found  |  Quarantined: {unexpectedQuarantined}" +
+                    (unexpectedQuarantineFailures > 0 ? $"  |  Failed: {unexpectedQuarantineFailures}" : "") +
+                    "  (no artifact changes)";
+        }
+
+        if (applyCancelled)
+        {
+            summary =
+                $"Scan complete — no persistent changes applied.\n" +
+                $"Volumes: {verifiedVols}/{totalVols} scanned  ({skippedVols} skipped)\n" +
+                $"Files: expected={totalExpected}  verified={totalVerified}  missing={totalMissing}  " +
+                $"mismatch={totalMismatch}  unexpected={totalUnexpected}" +
+                unexpectedSummaryLine +
+                (clean ? "\nAll expected files verified clean." : "");
+        }
+        else
+        {
+            summary =
+                $"Verify & Reconcile complete.\n" +
+                $"Volumes: {verifiedVols}/{totalVols} scanned  ({skippedVols} skipped)" +
+                (critCount > 0 ? $"  |  {critCount} CRIT  {okCount} OK" : $"  |  all {okCount} OK") + "\n" +
+                $"Files: expected={totalExpected}  verified={totalVerified}  missing={totalMissing}  " +
+                $"mismatch={totalMismatch}  unexpected={totalUnexpected}\n" +
+                $"Artifacts: {artPresent} → present  {artMissing} → missing  |  Releases recalculated: {appliedReleases}\n" +
+                $"Quarantined: {totalQuarantined}" +
+                (quarantineFailures > 0 ? $"  |  Quarantine failures: {quarantineFailures}" : "") +
+                unexpectedSummaryLine +
+                (clean ? "\nAll expected files verified clean." : "");
+        }
 
         await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
         {
             dialog.UpdateStats(totalVols, verifiedVols, skippedVols,
                                totalExpected, totalVerified, totalMissing);
             dialog.SetStatus(
-                $"Volumes: {totalVols}  Verified: {verifiedVols}  Skipped: {skippedVols}  |  " +
-                $"Expected: {totalExpected}  OK: {totalVerified}  Missing: {totalMissing}  " +
+                $"Volumes: {totalVols}  Scanned: {verifiedVols}  Skipped: {skippedVols}" +
+                (critCount > 0 ? $"  CRIT: {critCount}" : "") +
+                $"  |  Expected: {totalExpected}  OK: {totalVerified}  Missing: {totalMissing}  " +
                 $"Mismatch: {totalMismatch}  Unexpected: {totalUnexpected}  |  " +
                 $"SHA1-verified: {FormatBytes(verifiedBytes)}");
             dialog.SetCompleted(summary);
@@ -3610,8 +4933,8 @@ public partial class MainWindow : Window
 
         if (_catalog.GetBoolSetting("auto_export_ingestion_logs", defaultValue: true))
         {
-            var logsDir = Path.Combine(AppContext.BaseDirectory, "logs");
-            WriteIngestionLog(logsDir, platformId, datLineId, ingestResult);
+            var logsDir = Path.Combine(AppContext.BaseDirectory, "logs", "ingest");
+            WriteIngestionLog(logsDir, datLineId, ingestResult);
         }
 
         if (ingestResult.Success && ingestResult.ReleasesPresent > 0)
@@ -3633,7 +4956,8 @@ public partial class MainWindow : Window
         string                       datLineId,
         string                       absDbPath,
         string                       storageStrategyId,
-        IProgress<IngestionProgress> progress)
+        IProgress<IngestionProgress> progress,
+        Func<string, bool>?          shouldIngest = null)
     {
         var result  = new IngestionResult();
         var appRoot = AppContext.BaseDirectory;
@@ -3647,6 +4971,19 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(stagingRoot);
         Directory.CreateDirectory(sourceRoot);
         Directory.CreateDirectory(skipDir);
+
+        // ── Guard: check transform strategy before doing any real work ─────────
+        {
+            var dlRecord = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
+            if (dlRecord?.TransformStrategyType == "release_folder")
+            {
+                const string msg = "Release-folder transform strategy is not yet implemented for runtime ingest. " +
+                                   "Change the DAT line's Transform Strategy to 'None' or 'Per file extension' to proceed.";
+                result.Error = msg;
+                result.Operations.Add(new IngestionOperation("(all files)", "aborted-release-folder-not-implemented", msg));
+                return result;
+            }
+        }
 
         // ── Pre-Ingest: Extract archives ──────────────────────────────────────
         progress.Report(new IngestionProgress { PhaseText = "Pre-ingest: extracting archives…" });
@@ -3719,6 +5056,22 @@ public partial class MainWindow : Window
                 sha1 = Convert.ToHexString(SHA1.HashData(fs)).ToLowerInvariant();
             }
             catch { /* unreadable — will be skipped */ }
+
+            // If a filter predicate was supplied (e.g. from Repair), skip files
+            // whose SHA1 is not in the required set.
+            if (shouldIngest != null && sha1.Length > 0 && !shouldIngest(sha1))
+            {
+                progress.Report(new IngestionProgress
+                {
+                    PhaseText       = "Hashing and matching files…",
+                    IsIndeterminate = false,
+                    Total           = sourceFiles.Count,
+                    Processed       = hashProcessed,
+                    Accepted        = result.FilesMatched,
+                    Rejected        = hashProcessed - result.FilesMatched,
+                });
+                continue;
+            }
 
             List<(string ReleaseId, string RomName)>? matches = null;
 
@@ -3949,6 +5302,26 @@ public partial class MainWindow : Window
 
         var now = DateTime.UtcNow;
 
+        // Resolve transform + tool once for this ingestion run
+        var allTransforms = _catalog.LoadTransforms();
+        var allTools      = _catalog.LoadTools();
+        var activeXform   = allTransforms.FirstOrDefault(t => t.Id == storageStrategyId)
+                         ?? new TransformRecord { Id = "no_compression", Name = "No Compression", CommandTemplate = "" };
+        var activeTool    = allTools.FirstOrDefault(t => t.Id == activeXform.ToolId);
+
+        // Load transform strategy for this DAT line (file_extension dispatch)
+        var datLineStrategyType = "none";
+        var extMappingDict      = new Dictionary<string, ExtensionTransformMapping>(StringComparer.OrdinalIgnoreCase);
+        {
+            var dlRecord = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
+            if (dlRecord?.TransformStrategyType == "file_extension")
+            {
+                datLineStrategyType = "file_extension";
+                foreach (var m in _catalog.LoadExtensionMappings(datLineId))
+                    extMappingDict[m.FileExtension] = m;
+            }
+        }
+
         foreach (var releaseId in affectedReleaseIds)
         {
             if (!releases.TryGetValue(releaseId, out var release)) continue;
@@ -3993,6 +5366,55 @@ public partial class MainWindow : Window
             // ── Per-file: verify source + persist provenance + transform ─────
             foreach (var f in expectedFiles)
             {
+                // ── Strategy dispatch: resolve effective transform for this file ──
+                TransformRecord effectiveXform;
+                ToolRecord?     effectiveTool;
+                string          effectiveStratId;
+
+                if (datLineStrategyType == "file_extension")
+                {
+                    var fileExt = Path.GetExtension(f.RomName).ToLowerInvariant();
+                    if (fileExt.Length == 0) fileExt = "(no ext)";
+
+                    if (!extMappingDict.TryGetValue(fileExt, out var mapping))
+                    {
+                        var skipOp = new IngestionOperation(f.RomName, "skipped-no-strategy",
+                            $"No transform mapping for extension {fileExt}");
+                        result.Operations.Add(skipOp);
+                        progress.Report(new IngestionProgress { NewOperation = skipOp });
+                        continue;
+                    }
+
+                    if (mapping.IsDiscard)
+                    {
+                        var discardOp = new IngestionOperation(f.RomName, "discarded-by-strategy",
+                            $"Extension {fileExt} is set to Discard");
+                        result.Operations.Add(discardOp);
+                        progress.Report(new IngestionProgress { NewOperation = discardOp });
+                        continue;
+                    }
+
+                    var mappedXform = allTransforms.FirstOrDefault(t => t.Id == mapping.TransformId);
+                    if (mappedXform == null)
+                    {
+                        var skipOp = new IngestionOperation(f.RomName, "skipped-transform-missing",
+                            $"Mapped transform '{mapping.TransformId}' not found for extension {fileExt}");
+                        result.Operations.Add(skipOp);
+                        progress.Report(new IngestionProgress { NewOperation = skipOp });
+                        continue;
+                    }
+
+                    effectiveXform   = mappedXform;
+                    effectiveTool    = allTools.FirstOrDefault(t => t.Id == mappedXform.ToolId);
+                    effectiveStratId = mappedXform.Id == "no_compression" ? "none" : mappedXform.Id;
+                }
+                else
+                {
+                    effectiveXform   = activeXform;
+                    effectiveTool    = activeTool;
+                    effectiveStratId = storageStrategyId.Length > 0 ? storageStrategyId : "none";
+                }
+
                 var sourceFilePath = Path.Combine(sourceDir, f.RomName);
                 long fileSize      = 0;
                 try { fileSize = new FileInfo(sourceFilePath).Length; } catch { }
@@ -4055,15 +5477,21 @@ public partial class MainWindow : Window
                     // Resolve actual source artifact id (INSERT OR IGNORE means existing id wins)
                     srcArtifactId = store.GetSourceArtifactIdByContentKey(ck) ?? srcArtifactId;
 
-                    // ── 4. No-compression transform: copy to archive ───────────
+                    // ── 4. Transform: produce derived archive file ────────────
                     var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId, safeFolder);
                     Directory.CreateDirectory(archiveDir);
-                    var destPath = Path.Combine(archiveDir, f.RomName);
-                    var relPath  = $"archive/{platformId}/{datLineId}/{safeFolder}/{f.RomName}";
+                    var outputExt = effectiveXform.OutputExtension.Length > 0 ? effectiveXform.OutputExtension : "";
+                    var destName  = outputExt.Length > 0
+                        ? Path.GetFileNameWithoutExtension(f.RomName) + outputExt
+                        : f.RomName;
+                    var destPath = Path.Combine(archiveDir, destName);
+                    var relPath  = $"archive/{platformId}/{datLineId}/{safeFolder}/{destName}";
 
-                    // Copy if not already there with the right size
-                    if (!File.Exists(destPath) || new FileInfo(destPath).Length != fileSize)
-                        File.Copy(sourceFilePath, destPath, overwrite: true);
+                    if (!File.Exists(destPath))
+                    {
+                        if (!TransformEngine.ExecuteTransform(effectiveXform, effectiveTool, appRoot, sourceFilePath, destPath, out var xformError))
+                            throw new InvalidOperationException($"Transform failed: {xformError}");
+                    }
 
                     // ── 5. Hash derived file independently ────────────────────
                     // Even for no_compression these are treated as independently observed
@@ -4074,10 +5502,10 @@ public partial class MainWindow : Window
                     store.IngestDerivedArtifact(
                         contentIdentityKey: ck,
                         sourceArtifactId:   srcArtifactId,
-                        storageStrategyId:  storageStrategyId.Length > 0 ? storageStrategyId : "none",
-                        fileName:           f.RomName,
+                        storageStrategyId:  effectiveStratId,
+                        fileName:           destName,
                         relativePath:       relPath,
-                        derivedSizeBytes:   fileSize,
+                        derivedSizeBytes:   new FileInfo(destPath).Length,
                         hashedDerivedSha1:  hashedDerivedSha1);
 
                     // ── 7. Link release → content identity ────────────────────
@@ -4387,24 +5815,19 @@ public partial class MainWindow : Window
 
     private static void WriteIngestionLog(
         string          logsDir,
-        string          platformId,
         string          datLineId,
         IngestionResult result)
     {
         try
         {
             Directory.CreateDirectory(logsDir);
-            var date    = DateTime.UtcNow.ToString("yyyyMMdd");
-            var prefix  = $"ingestion-{platformId}-{date}";
-            int counter = 1;
-            string path;
-            do { path = Path.Combine(logsDir, $"{prefix}-{counter:D3}.log"); counter++; }
-            while (File.Exists(path));
+            var ts   = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            var safe = SafeFileName(datLineId);
+            var path = Path.Combine(logsDir, $"{ts}-ingest-{safe}.log");
 
             var sb = new System.Text.StringBuilder();
             sb.AppendLine("ARKADIA INGESTION LOG");
             sb.AppendLine($"Date:         {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
-            sb.AppendLine($"Platform:     {platformId}");
             sb.AppendLine($"DAT Line ID:  {datLineId}");
             sb.AppendLine();
             sb.AppendLine("COUNTS");
@@ -4891,6 +6314,499 @@ public partial class MainWindow : Window
             SetActive(btn);
     }
 
+    // ── Settings ─────────────────────────────────────────────────────────────
+
+    private void InitSettings()
+    {
+        LoadAllSettings();
+    }
+
+    private void LoadAllSettings()
+    {
+        SettingQuarantineMismatch.IsChecked      = _catalog.GetBoolSetting("quarantine_mismatch_on_verify",  defaultValue: false);
+        SettingQuarantineUnexpected.IsChecked    = _catalog.GetBoolSetting("quarantine_unexpected_on_verify", defaultValue: false);
+        SettingAutoExportLogs.IsChecked          = _catalog.GetBoolSetting("auto_export_ingestion_logs",     defaultValue: true);
+        SettingLogOnCopy.IsChecked               = _catalog.GetBoolSetting("log_on_copy",                    defaultValue: true);
+        SettingAutoExportVerifyLogs.IsChecked    = _catalog.GetBoolSetting("auto_export_verify_logs",        defaultValue: true);
+        SettingAutoExportRepairLogs.IsChecked    = _catalog.GetBoolSetting("auto_export_repair_logs",        defaultValue: true);
+        SettingShowDebugArtifactInfo.IsChecked   = _catalog.GetBoolSetting("show_debug_artifact_info",       defaultValue: false);
+    }
+
+    private void OnSaveSettings(object? sender, RoutedEventArgs e)
+    {
+        _catalog.SetSetting("quarantine_mismatch_on_verify",  SettingQuarantineMismatch.IsChecked    == true ? "true" : "false");
+        _catalog.SetSetting("quarantine_unexpected_on_verify", SettingQuarantineUnexpected.IsChecked  == true ? "true" : "false");
+        _catalog.SetSetting("auto_export_ingestion_logs",      SettingAutoExportLogs.IsChecked        == true ? "true" : "false");
+        _catalog.SetSetting("log_on_copy",                     SettingLogOnCopy.IsChecked             == true ? "true" : "false");
+        _catalog.SetSetting("auto_export_verify_logs",         SettingAutoExportVerifyLogs.IsChecked  == true ? "true" : "false");
+        _catalog.SetSetting("auto_export_repair_logs",         SettingAutoExportRepairLogs.IsChecked  == true ? "true" : "false");
+        _catalog.SetSetting("show_debug_artifact_info",        SettingShowDebugArtifactInfo.IsChecked == true ? "true" : "false");
+        // Apply show_debug_artifact_info immediately (affects current session without restart)
+        _showDebugArtifactInfo = SettingShowDebugArtifactInfo.IsChecked == true;
+    }
+
+    private void OnReloadSettings(object? sender, RoutedEventArgs e)
+        => LoadAllSettings();
+
+    // ── Operations ───────────────────────────────────────────────────────────
+
+    private List<TransformRecord>               _transforms       = [];
+    private TransformRecord?                    _editingTransform;
+    private Border?                             _selectedTransformBorder;
+    private readonly Dictionary<string, Border> _transformBorders = new();
+
+    private void InitOperations()
+    {
+        var appRoot       = AppContext.BaseDirectory;
+        var tools         = _catalog.LoadTools();
+        var builtInToolIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "7zip" };
+
+        OperationsToolsPanel.Children.Clear();
+        foreach (var tool in tools)
+        {
+            var exePath   = Path.Combine(appRoot, "tools", tool.FolderName, tool.ExecutableName);
+            var isBuiltIn = builtInToolIds.Contains(tool.Id);
+            var present   = !isBuiltIn && File.Exists(exePath);
+
+            var statusText  = isBuiltIn ? "BUILT-IN" : (present ? "PRESENT" : "MISSING");
+            var statusColor = isBuiltIn ? "#29B6F6"  : (present ? "#4CAF50"  : "#EF5350");
+            var pathColor   = isBuiltIn ? "#555566"  : (present ? "#555566"  : "#EF5350");
+
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("180,Auto,*"), Margin = new Avalonia.Thickness(0, 0, 0, 4) };
+            var nameBlock = new TextBlock
+            {
+                Text              = tool.Id,
+                FontSize          = 12,
+                Foreground        = new SolidColorBrush(Avalonia.Media.Color.Parse("#CCCCDD")),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            var statusBlock = new TextBlock
+            {
+                Text              = statusText,
+                FontSize          = 10,
+                FontWeight        = Avalonia.Media.FontWeight.SemiBold,
+                Foreground        = new SolidColorBrush(Avalonia.Media.Color.Parse(statusColor)),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Margin            = new Avalonia.Thickness(0, 0, 12, 0),
+            };
+            var pathBlock = new TextBlock
+            {
+                Text              = exePath,
+                FontSize          = 10,
+                Foreground        = new SolidColorBrush(Avalonia.Media.Color.Parse(pathColor)),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                TextWrapping      = Avalonia.Media.TextWrapping.NoWrap,
+            };
+            Avalonia.Controls.Grid.SetColumn(nameBlock,   0);
+            Avalonia.Controls.Grid.SetColumn(statusBlock, 1);
+            Avalonia.Controls.Grid.SetColumn(pathBlock,   2);
+            row.Children.Add(nameBlock);
+            row.Children.Add(statusBlock);
+            row.Children.Add(pathBlock);
+            OperationsToolsPanel.Children.Add(row);
+        }
+
+        _transforms = _catalog.LoadTransforms();
+        BuildTransformListPanel();
+        TransformEditorPanel.IsVisible = false;
+    }
+
+    // ── Logs ─────────────────────────────────────────────────────────────────
+
+    private void InitLogs() => BuildLogsTree();
+
+    private void BuildLogsTree()
+    {
+        LogsTreePanel.Children.Clear();
+        LogsContentBox.Text = "";
+        LogsFileLabel.Text  = "No file selected";
+
+        var logsRoot = Path.Combine(AppContext.BaseDirectory, "logs");
+        if (!Directory.Exists(logsRoot))
+        {
+            LogsTreePanel.Children.Add(new TextBlock
+            {
+                Text       = "(no logs directory)",
+                FontSize   = 11,
+                Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse("#555566")),
+                Margin     = new Avalonia.Thickness(4, 4),
+            });
+            return;
+        }
+
+        var folders = Directory.GetDirectories(logsRoot)
+                               .OrderBy(d => Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)
+                               .ToList();
+
+        if (folders.Count == 0)
+        {
+            LogsTreePanel.Children.Add(new TextBlock
+            {
+                Text       = "(no log folders)",
+                FontSize   = 11,
+                Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse("#555566")),
+                Margin     = new Avalonia.Thickness(4, 4),
+            });
+            return;
+        }
+
+        foreach (var folder in folders)
+        {
+            var folderName = Path.GetFileName(folder);
+
+            // Folder header
+            var folderLabel = new TextBlock
+            {
+                Text       = folderName + "/",
+                FontSize   = 11,
+                FontWeight = Avalonia.Media.FontWeight.SemiBold,
+                Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse("#7B68EE")),
+                Margin     = new Avalonia.Thickness(0, 8, 0, 2),
+            };
+            LogsTreePanel.Children.Add(folderLabel);
+
+            var files = Directory.GetFiles(folder)
+                                 .OrderByDescending(f => File.GetLastWriteTime(f))
+                                 .ToList();
+
+            if (files.Count == 0)
+            {
+                LogsTreePanel.Children.Add(new TextBlock
+                {
+                    Text       = "  (empty)",
+                    FontSize   = 10,
+                    Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse("#444455")),
+                    Margin     = new Avalonia.Thickness(12, 0),
+                });
+                continue;
+            }
+
+            foreach (var file in files)
+            {
+                var fileName = Path.GetFileName(file);
+                var filePath = file;
+
+                var fileBtn = new Button
+                {
+                    Content     = fileName,
+                    Tag         = filePath,
+                    Background  = Avalonia.Media.Brushes.Transparent,
+                    BorderThickness = new Avalonia.Thickness(0),
+                    Padding     = new Avalonia.Thickness(12, 3),
+                    HorizontalAlignment     = Avalonia.Layout.HorizontalAlignment.Stretch,
+                    HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+                    Foreground  = new SolidColorBrush(Avalonia.Media.Color.Parse("#AAAACC")),
+                    FontSize    = 11,
+                    Cursor      = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+                };
+                fileBtn.Click += OnLogsFileSelected;
+                LogsTreePanel.Children.Add(fileBtn);
+            }
+        }
+    }
+
+    private void OnLogsFileSelected(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button btn || btn.Tag is not string filePath)
+            return;
+
+        LogsFileLabel.Text = filePath;
+
+        try
+        {
+            LogsContentBox.Text = File.ReadAllText(filePath);
+        }
+        catch
+        {
+            LogsContentBox.Text = "Failed to load log.";
+        }
+    }
+
+    private void OnLogsRefresh(object? sender, RoutedEventArgs e)
+        => BuildLogsTree();
+
+    private void OnLogsOpenLatest(object? sender, RoutedEventArgs e)
+    {
+        var logsRoot = Path.Combine(AppContext.BaseDirectory, "logs");
+        if (!Directory.Exists(logsRoot))
+            return;
+
+        var latest = Directory.EnumerateFiles(logsRoot, "*", SearchOption.AllDirectories)
+                              .OrderByDescending(File.GetLastWriteTime)
+                              .FirstOrDefault();
+        if (latest is null)
+            return;
+
+        LogsFileLabel.Text = latest;
+        try
+        {
+            LogsContentBox.Text = File.ReadAllText(latest);
+        }
+        catch
+        {
+            LogsContentBox.Text = "Failed to load log.";
+        }
+    }
+
+    private void BuildTransformListPanel(string? selectId = null)
+    {
+        TransformsListPanel.Children.Clear();
+        _transformBorders.Clear();
+
+        var fileItems   = _transforms.Where(t => t.TransformType != "folder_strategy").ToList();
+        var folderItems = _transforms.Where(t => t.TransformType == "folder_strategy").ToList();
+
+        void AddGroupHeader(string label)
+        {
+            TransformsListPanel.Children.Add(new TextBlock
+            {
+                Text       = label,
+                FontSize   = 9,
+                FontWeight = Avalonia.Media.FontWeight.SemiBold,
+                Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse("#555566")),
+                Margin     = new Avalonia.Thickness(10, 10, 10, 4),
+            });
+        }
+
+        void AddItem(TransformRecord xform)
+        {
+            var border = new Border { Background = Brushes.Transparent };
+
+            // Badge
+            bool isFolder       = xform.IsFolderStrategy;
+            var badgeBg         = isFolder ? "#1E1800" : "#2A1030";
+            var badgeFg         = isFolder ? "#C8A000" : "#C060C0";
+            var badgeText       = isFolder ? "FOLDER"  : "FILE";
+            var badge = new Border
+            {
+                Background    = new SolidColorBrush(Avalonia.Media.Color.Parse(badgeBg)),
+                CornerRadius  = new Avalonia.CornerRadius(3),
+                Padding       = new Avalonia.Thickness(4, 1),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Child = new TextBlock
+                {
+                    Text       = badgeText,
+                    FontSize   = 9,
+                    FontWeight = Avalonia.Media.FontWeight.SemiBold,
+                    Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse(badgeFg)),
+                },
+            };
+
+            var nameBlock = new TextBlock
+            {
+                Text       = xform.Name,
+                FontSize   = 12,
+                Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse("#CCCCDD")),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+
+            var topRow = new StackPanel
+            {
+                Orientation = Avalonia.Layout.Orientation.Horizontal,
+                Spacing     = 6,
+            };
+            topRow.Children.Add(badge);
+            topRow.Children.Add(nameBlock);
+
+            var idBlock = new TextBlock
+            {
+                Text       = xform.Id,
+                FontSize   = 10,
+                Foreground = new SolidColorBrush(Avalonia.Media.Color.Parse("#555566")),
+            };
+
+            var sp = new StackPanel { Margin = new Avalonia.Thickness(10, 6), Spacing = 3 };
+            sp.Children.Add(topRow);
+            sp.Children.Add(idBlock);
+            border.Child = sp;
+
+            border.PointerPressed += (_, _) => SelectTransform(xform, border);
+            _transformBorders[xform.Id] = border;
+            TransformsListPanel.Children.Add(border);
+        }
+
+        if (fileItems.Count > 0)
+        {
+            AddGroupHeader("── FILE TRANSFORMS ──");
+            foreach (var xform in fileItems) AddItem(xform);
+        }
+        if (folderItems.Count > 0)
+        {
+            AddGroupHeader("── FOLDER TRANSFORMS ──");
+            foreach (var xform in folderItems) AddItem(xform);
+        }
+
+        // Restore or set selection
+        var targetId = selectId ?? _editingTransform?.Id;
+        if (targetId != null && _transformBorders.TryGetValue(targetId, out var b))
+        {
+            var target = _transforms.FirstOrDefault(t => t.Id == targetId);
+            if (target != null) SelectTransform(target, b);
+        }
+    }
+
+    private void SelectTransform(TransformRecord t, Border border)
+    {
+        if (_selectedTransformBorder != null)
+            _selectedTransformBorder.Background = Brushes.Transparent;
+
+        border.Background        = new SolidColorBrush(Avalonia.Media.Color.Parse("#1A1A2C"));
+        _selectedTransformBorder = border;
+        _editingTransform        = t;
+
+        TransformNameBox.Text          = t.Name;
+        TransformIdText.Text           = t.Id;
+        TransformToolText.Text         = t.ToolId.Length > 0 ? t.ToolId : "(none)";
+        TransformTypeBox.SelectedIndex = t.TransformType == "folder_strategy" ? 1 : 0;
+        TransformCmdBox.Text           = t.CommandTemplate;
+        TransformOutputExtBox.Text     = t.OutputExtension;
+        TransformEditorPanel.IsVisible = true;
+        UpdateCommandPreview();
+    }
+
+    private void OnTransformFieldChanged(object? sender, Avalonia.Controls.TextChangedEventArgs e)
+        => UpdateCommandPreview();
+
+    private void UpdateCommandPreview()
+    {
+        var cmd = TransformCmdBox.Text ?? "";
+        var ext = TransformOutputExtBox.Text?.Trim() ?? "";
+
+        TransformExtWarning.IsVisible = cmd.Length > 0 && ext.Length == 0;
+
+        if (cmd.Length == 0)
+        {
+            TransformPreviewText.Text = "(no command template)";
+            return;
+        }
+
+        var sampleInput  = "sample_input.ext";
+        var sampleOutput = "sample_output" + (ext.Length > 0 ? ext : ".ext");
+        TransformPreviewText.Text = Data.TransformEngine.BuildCommand(cmd, sampleInput, sampleOutput);
+    }
+
+    private async void OnSaveTransform(object? sender, RoutedEventArgs e)
+    {
+        if (_editingTransform is not TransformRecord t)
+            return;
+
+        var name = TransformNameBox.Text?.Trim() ?? "";
+        if (name.Length == 0)
+        {
+            await new InfoDialog("Invalid Name", "Transform name cannot be empty.").ShowDialog(this);
+            return;
+        }
+
+        var cmd = TransformCmdBox.Text?.Trim() ?? "";
+
+        // Validate: all non-empty templates must contain {input} and {output}.
+        if (cmd.Length > 0 &&
+            (!cmd.Contains("{input}", StringComparison.Ordinal) ||
+             !cmd.Contains("{output}", StringComparison.Ordinal)))
+        {
+            await new InfoDialog("Invalid Template",
+                "Command template must include {input} and {output}.\n\n" +
+                "These placeholders tell Arkadia where to read the source file\n" +
+                "and where to write the output file.")
+                .ShowDialog(this);
+            return;
+        }
+
+        var xformType = TransformTypeBox.SelectedIndex == 1 ? "folder_strategy" : "file_strategy";
+
+        var updated = new TransformRecord
+        {
+            Id              = t.Id,
+            Name            = name,
+            ToolId          = t.ToolId,
+            TransformType   = xformType,
+            CommandTemplate = cmd,
+            OutputExtension = TransformOutputExtBox.Text?.Trim() ?? "",
+            IsEnabled       = t.IsEnabled,
+        };
+
+        _catalog.SaveTransform(updated);
+        _transforms = _catalog.LoadTransforms();
+        BuildTransformListPanel(updated.Id);
+    }
+
+    private void OnNewTransform(object? sender, RoutedEventArgs e)
+    {
+        var draft = new TransformRecord
+        {
+            Id              = "custom_" + Guid.NewGuid().ToString("N")[..8],
+            Name            = "New Transform",
+            ToolId          = "",
+            CommandTemplate = "",
+            OutputExtension = "",
+            IsEnabled       = true,
+            TransformType   = "file_strategy",
+        };
+        _transforms.Add(draft);
+        BuildTransformListPanel(draft.Id);
+    }
+
+    private async void OnTestTransform(object? sender, RoutedEventArgs e)
+    {
+        if (_editingTransform is not TransformRecord t)
+            return;
+
+        var cmd = TransformCmdBox.Text?.Trim() ?? "";
+
+        if (t.Id == "no_compression" || cmd.Length == 0)
+        {
+            await new InfoDialog("Nothing to Test",
+                "The no_compression transform uses a plain file copy — there is no external command to test.")
+                .ShowDialog(this);
+            return;
+        }
+
+        var testXform = new Data.TransformRecord
+        {
+            Id              = t.Id,
+            Name            = t.Name,
+            ToolId          = t.ToolId,
+            CommandTemplate = cmd,
+            OutputExtension = TransformOutputExtBox.Text?.Trim() ?? "",
+            IsEnabled       = true,
+        };
+
+        var appRoot   = AppContext.BaseDirectory;
+        var testTool  = _catalog.LoadTools().FirstOrDefault(tool => tool.Id == testXform.ToolId);
+
+        var tempDir    = Path.Combine(Path.GetTempPath(), $"arkadia_test_{Guid.NewGuid():N}");
+        var inputExt   = ".bin";
+        var outputExt  = testXform.OutputExtension.Length > 0 ? testXform.OutputExtension : inputExt;
+        var inputPath  = Path.Combine(tempDir, $"sample_input{inputExt}");
+        var outputPath = Path.Combine(tempDir, $"sample_output{outputExt}");
+
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            File.WriteAllBytes(inputPath, new byte[512]);
+
+            bool ok = Data.TransformEngine.ExecuteTransform(
+                testXform, testTool, appRoot, inputPath, outputPath, out var error);
+
+            if (ok)
+                await new InfoDialog("Test Successful",
+                    $"Transform executed successfully.\n\nOutput file: {Path.GetFileName(outputPath)}")
+                    .ShowDialog(this);
+            else
+                await new InfoDialog("Test Failed",
+                    $"Transform failed:\n\n{error}")
+                    .ShowDialog(this);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            await new InfoDialog("Test Error", ex.Message).ShowDialog(this);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, recursive: true); } catch { }
+        }
+    }
+
     private void SetActive(Button btn)
     {
         if (_activeButton == btn)
@@ -4909,5 +6825,1280 @@ public partial class MainWindow : Window
 
         if (btn.Tag is string label)
             PageTitle.Text = label;
+
+        if (btn == NavDashboard)
+            InitDashboard();
+
+        if (btn == NavSettings)
+            LoadAllSettings();
+
+        if (btn == NavOperations)
+            InitOperations();
+
+        if (btn == NavAnalytics)
+            BuildAnalytics();
+
+        if (btn == NavLogs)
+            BuildLogsTree();
+    }
+
+    // ── Analytics ─────────────────────────────────────────────────────────────
+
+    private sealed record AnalyticsData(
+        long                       TotalSourceBytes,
+        long                       TotalDerivedBytes,
+        long                       SavedBytes,
+        double                     SavedPct,
+        Dictionary<string, long>   DerivedByStrategy,
+        Dictionary<string, int>    ExtensionCounts,
+        int RelMissing, int RelPending, int RelOutdated, int RelPresent, int RelLost,
+        List<VolumeRecord>         Volumes,
+        Dictionary<string, string> PlatformNames,
+        Dictionary<string, string> DatLineNames,
+        Dictionary<string, string> StrategyNames);
+
+    private AnalyticsData? _analyticsData;
+
+    private void InitAnalytics() { /* view is populated on first activation */ }
+
+    private void BuildAnalytics()
+    {
+        // ── Collect catalog-level data ────────────────────────────────────────
+        var datLines   = _catalog.LoadDatLines();
+        var volumes      = _catalog.GetVolumes();
+        var volArtCounts = _catalog.GetArtifactCountsByVolume();
+        var platNames  = _catalog.LoadPlatforms()
+                                 .ToDictionary(p => p.Id, p => p.Name);
+        var dlNames    = datLines.ToDictionary(dl => dl.Id, dl => dl.Name);
+        var stratNames = _catalog.LoadStorageStrategies()
+                                 .ToDictionary(s => s.Id, s => s.Name);
+        // Merge transform names so file-extension-strategy artifacts display correctly.
+        // For that strategy, storage_strategy_id stores the transform ID directly
+        // (e.g. "chd_dvd_compression"). Transform IDs and storage strategy IDs are
+        // disjoint, so no collision can occur.
+        foreach (var t in _catalog.LoadTransforms())
+            stratNames.TryAdd(t.Id, t.Name);
+
+        // ── Aggregate across all per-DAT-line stores ──────────────────────────
+        long totalSource  = 0;
+        long totalDerived = 0;
+        var  byStrategy   = new Dictionary<string, long>(StringComparer.Ordinal);
+        var  extCounts    = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        int  relMissing = 0, relPending = 0, relOutdated = 0, relPresent = 0, relLost = 0;
+
+        foreach (var dl in datLines)
+        {
+            if (dl.DataStorePath.Length == 0) continue;
+            var dbPath = Path.Combine(_dataDir, dl.DataStorePath);
+            if (!File.Exists(dbPath)) continue;
+            var store   = new DatLineStore(dbPath);
+            var summary = store.GetAnalyticsSummary();
+
+            totalSource  += summary.TotalSourceBytes;
+            totalDerived += summary.TotalDerivedBytes;
+            foreach (var (sid, bytes) in summary.DerivedByStrategy)
+                byStrategy[sid] = byStrategy.GetValueOrDefault(sid) + bytes;
+            foreach (var (ext, cnt) in summary.ExtensionCounts)
+                extCounts[ext] = extCounts.GetValueOrDefault(ext) + cnt;
+
+            var (m, pe, o, pr, l) = store.GetAllStatusCounts();
+            relMissing  += m;  relPending  += pe;
+            relOutdated += o;  relPresent  += pr;  relLost += l;
+        }
+
+        long   savedBytes = Math.Max(0L, totalSource - totalDerived);
+        double savedPct   = totalSource > 0 ? savedBytes * 100.0 / totalSource : 0.0;
+
+        _analyticsData = new AnalyticsData(
+            totalSource, totalDerived, savedBytes, savedPct,
+            byStrategy, extCounts,
+            relMissing, relPending, relOutdated, relPresent, relLost,
+            volumes, platNames, dlNames, stratNames);
+
+        // ── KPI strip ─────────────────────────────────────────────────────────
+        AnalyticsKpiSourceSize.Text      = FormatBytes(totalSource);
+        AnalyticsKpiDerivedSize.Text     = FormatBytes(totalDerived);
+        AnalyticsKpiSavedPct.Text        = totalSource > 0 ? $"{savedPct:F1}%" : "—";
+        AnalyticsKpiSavedAbs.Text        = totalSource > 0 ? FormatBytes(savedBytes) : "—";
+        AnalyticsKpiVolumes.Text         = volumes.Count.ToString("N0");
+        int critCount = volumes.Count(v => v.Health == "crit");
+        AnalyticsKpiCritVolumes.Text     = critCount.ToString("N0");
+        AnalyticsKpiStoredArtifacts.Text = _catalog.CountStoredArtifacts().ToString("N0");
+        AnalyticsKpiArtifactTypes.Text   = extCounts.Count.ToString("N0");
+
+        // Dynamic KPI emphasis
+        AnalyticsKpiSavedPct.Foreground = new SolidColorBrush(
+            totalSource > 0 ? Color.Parse("#4CAF50") : Color.Parse("#333344"));
+        AnalyticsKpiSavedAbs.Foreground = new SolidColorBrush(
+            totalSource > 0 ? Color.Parse("#7B68EE") : Color.Parse("#333344"));
+        // AT RISK card — all three text elements + stripe respond to critCount
+        bool hasCrit = critCount > 0;
+        AnalyticsKpiCritVolumes.Foreground = new SolidColorBrush(
+            hasCrit ? Color.Parse("#EF5350") : Color.Parse("#4CAF50"));
+        AnalyticsCritLabel.Foreground = new SolidColorBrush(
+            hasCrit ? Color.Parse("#7A2020") : Color.Parse("#2A6030"));
+        AnalyticsCritHelper.Foreground = new SolidColorBrush(
+            hasCrit ? Color.Parse("#5A1818") : Color.Parse("#1A4A22"));
+        AnalyticsCritAccent.Background = new SolidColorBrush(
+            hasCrit ? Color.Parse("#4A1010") : Color.Parse("#1A3020"));
+
+        // ── Sections ──────────────────────────────────────────────────────────
+        AnalyticsBuildSectionA(totalSource, totalDerived, savedBytes, savedPct);
+        AnalyticsBuildSectionB(byStrategy, totalDerived, stratNames);
+        AnalyticsBuildSectionC(extCounts);
+        AnalyticsBuildSectionD(volumes, platNames, dlNames, volArtCounts);
+        AnalyticsBuildSectionDisk();
+        AnalyticsBuildSectionE(relMissing, relPending, relOutdated, relPresent, relLost, volumes);
+    }
+
+    /// <summary>
+    /// Inline bar row: [label fixed] [bar stretch] [value fixed] — all on one line.
+    /// All rows in the same section share the same column widths, so bars start/end at identical x.
+    /// </summary>
+    private static Grid MakeBarRow(
+        string label, long value, long max, string valueText, Color barColor,
+        int labelWidth = 120, int valueWidth = 130,
+        int bottomMargin = 4, bool isFirst = false)
+    {
+        double fill = max > 0 ? Math.Clamp((double)value / max, 0.0, 1.0) : 0.0;
+
+        var row = new Grid
+        {
+            Height              = 28,
+            Margin              = new Avalonia.Thickness(0, 0, 0, bottomMargin),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+        };
+        row.ColumnDefinitions = new ColumnDefinitions($"{labelWidth},*,{valueWidth}");
+
+        // Col 0: Label
+        row.Children.Add(new TextBlock
+        {
+            Text              = label,
+            FontSize          = 12,
+            FontWeight        = isFirst ? FontWeight.SemiBold : FontWeight.Normal,
+            Foreground        = new SolidColorBrush(Color.Parse(isFirst ? "#DDDDEF" : "#AAAACC")),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
+        });
+
+        // Col 1: Bar — wrapper Border approach: track is a standalone Border (HAlign=Stretch)
+        // whose width comes from the parent column, never from internal column structure.
+        // Integer star weights avoid Avalonia's decimal-star-as-fixed-px parsing bug.
+        bool hasFill    = fill > 0.001;
+        bool isFullFill = fill >= 0.9995;
+
+        int fillW  = hasFill ? (int)Math.Round(fill * 10000) : 0;
+        int emptyW = 10000 - fillW;
+        var colStr = hasFill && !isFullFill ? $"{fillW}*,{emptyW}*" : "1*";
+
+        var fillGrid = new Grid { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+        fillGrid.ColumnDefinitions = new ColumnDefinitions(colStr);
+
+        if (hasFill)
+        {
+            fillGrid.Children.Add(new Border
+            {
+                Height              = 9,
+                Background          = new SolidColorBrush(barColor),
+                CornerRadius        = new Avalonia.CornerRadius(isFullFill ? 2 : 2, isFullFill ? 2 : 0,
+                                                                 isFullFill ? 2 : 0, 2),
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            });
+        }
+
+        var trackBorder = new Border
+        {
+            Height              = 9,
+            Background          = new SolidColorBrush(Color.Parse("#07071A")),
+            CornerRadius        = new Avalonia.CornerRadius(2),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+            Margin              = new Avalonia.Thickness(10, 0),
+            Child               = fillGrid,
+        };
+        Grid.SetColumn(trackBorder, 1);
+        row.Children.Add(trackBorder);
+
+        // Col 2: Value
+        var valBlock = new TextBlock
+        {
+            Text                = valueText,
+            FontSize            = 11,
+            Foreground          = new SolidColorBrush(Color.Parse(isFirst ? "#9999BB" : "#7777AA")),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        Grid.SetColumn(valBlock, 2);
+        row.Children.Add(valBlock);
+
+        return row;
+    }
+
+    /// <summary>Thin 3px bar, full-width proportional using star columns.</summary>
+    private static Grid MakeSizeBar(double fill, Color fillColor, int bottomMargin = 4)
+    {
+        bool hasFill    = fill > 0.001;
+        bool isFullFill = fill >= 0.9995;
+        var g = new Grid { Height = 5, Margin = new Avalonia.Thickness(0, 2, 0, bottomMargin) };
+
+        if (hasFill && !isFullFill)
+            g.ColumnDefinitions = new ColumnDefinitions($"{fill * 100:F2}*,{(1 - fill) * 100:F2}*");
+        else
+            g.ColumnDefinitions = new ColumnDefinitions("1*");
+
+        var track = new Border
+        {
+            Height = 5, CornerRadius = new Avalonia.CornerRadius(2),
+            Background = new SolidColorBrush(Color.Parse("#07071A")),
+        };
+        if (hasFill && !isFullFill) Grid.SetColumnSpan(track, 2);
+        g.Children.Add(track);
+
+        if (hasFill)
+        {
+            g.Children.Add(new Border
+            {
+                Height = 5,
+                CornerRadius = isFullFill
+                    ? new Avalonia.CornerRadius(2)
+                    : new Avalonia.CornerRadius(2, 0, 0, 2),
+                Background = new SolidColorBrush(fillColor),
+            });
+        }
+        return g;
+    }
+
+    // ── Section A: Storage &amp; Compression ──────────────────────────────────
+    //
+    // AnalyticsSectionAPanel is a Grid (not StackPanel).
+    // A Grid parent gives children a FINITE width during Measure, so star columns
+    // inside child Grids correctly resolve proportional fills.
+    // RowDefinitions are built dynamically each time this method runs.
+
+    private void AnalyticsBuildSectionA(long source, long derived, long saved, double savedPct)
+    {
+        var g = AnalyticsSectionAPanel;
+        g.Children.Clear();
+        g.RowDefinitions.Clear();
+
+        if (source == 0)
+        {
+            g.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            var skel = MakeSkeletonBars("Run an ingestion to populate this section.");
+            Grid.SetRow(skel, 0);
+            g.Children.Add(skel);
+            return;
+        }
+
+        double derivedRatio = source > 0 ? Math.Clamp((double)derived / source, 0.0, 1.0) : 0.0;
+        double savedRatio   = Math.Max(0.0, 1.0 - derivedRatio);
+        const int BAR_H     = 14;
+
+        // ── Row management ───────────────────────────────────────────────────
+        int nextRow = 0;
+
+        void DefRow(GridLength h)
+        {
+            g.RowDefinitions.Add(new RowDefinition(h));
+        }
+        void Put(Control c)
+        {
+            Grid.SetRow(c, nextRow);
+            g.Children.Add(c);
+        }
+        // Add an Auto-height content row, place c in it, advance row counter.
+        void AutoRow(Control c)  { DefRow(GridLength.Auto); Put(c); nextRow++; }
+        // Add an empty spacer row (no child needed — empty Grid row = whitespace).
+        void Gap(int px)         { DefRow(new GridLength(px)); nextRow++; }
+
+        // ── DIAGNOSTIC: MakeSection ──────────────────────────────────────────
+        // Two root causes identified from debug values (bgW=1082, srcTrack=101, drvTrack=526):
+        //   1. Decimal star strings like "100.00*" parse as fixed pixels in Avalonia,
+        //      not as star proportions — Source's single column resolved to 100px.
+        //   2. Grid.SetColumnSpan on a track Border placed inside the fill Grid was
+        //      silently ignored — Derived track showed only column-0 width (48.6%).
+        //
+        // Fix strategy:
+        //   • Track is a standalone Border (HAlign=Stretch) — its width comes from
+        //     its own stretch against the parent, never from any column structure.
+        //   • Fill segments live inside a fillGrid that is the track Border's Child.
+        //     The fillGrid's width = trackBorder's content width = always full width.
+        //   • Integer star weights (×10000) avoid all decimal parsing issues.
+        //   • Each section is a combined Grid("*,Auto" × "Auto,4,14") so the
+        //     bar row explicitly spans ColumnSpan=2 — no Auto column can clip it.
+        Grid MakeSection(string labelText, string valueText,
+                         bool fullFill, params (double ratio, Color color)[] segs)
+        {
+            const int FILL_H = 8;
+
+            // ── Outer section grid ────────────────────────────────────────────
+            var outer = new Grid { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+            outer.ColumnDefinitions = new ColumnDefinitions("*,Auto");
+            outer.RowDefinitions    = new RowDefinitions("Auto,4,14");
+
+            // Row 0 col 0: label
+            var lbl = new TextBlock
+            {
+                Text              = labelText,
+                FontSize          = 12,
+                FontWeight        = FontWeight.SemiBold,
+                Foreground        = new SolidColorBrush(Color.Parse("#DDDDEE")),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            Grid.SetRow(lbl, 0); Grid.SetColumn(lbl, 0);
+            outer.Children.Add(lbl);
+
+            // Row 0 col 1: value
+            var val = new TextBlock
+            {
+                Text                = valueText,
+                FontSize            = 11,
+                Foreground          = new SolidColorBrush(Color.Parse("#9999BB")),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                Margin              = new Avalonia.Thickness(8, 0, 0, 0),
+            };
+            Grid.SetRow(val, 0); Grid.SetColumn(val, 1);
+            outer.Children.Add(val);
+
+            // ── Fill segments (inside fillGrid, inside trackBorder) ───────────
+            double total  = Math.Clamp(segs.Sum(s => Math.Clamp(s.ratio, 0.0, 1.0)), 0.0, 1.0);
+            double empty  = 1.0 - total;
+
+            var colList = new List<string>();
+            foreach (var (r, _) in segs)
+            {
+                int iw = (int)Math.Round(Math.Clamp(r, 0.0, 1.0) * 10000);
+                if (iw > 0) colList.Add($"{iw}*");
+            }
+            int emptyIw = (int)Math.Round(empty * 10000);
+            if (emptyIw > 0) colList.Add($"{emptyIw}*");
+            if (colList.Count == 0) colList.Add("1*");
+
+            var fillGrid = new Grid { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+            fillGrid.ColumnDefinitions = new ColumnDefinitions(string.Join(",", colList));
+
+            var fills = new List<Border>();
+            int ci = 0;
+            bool hasEmpty = emptyIw > 0;
+            for (int i = 0; i < segs.Length; i++)
+            {
+                int iw = (int)Math.Round(Math.Clamp(segs[i].ratio, 0.0, 1.0) * 10000);
+                if (iw <= 0) continue;
+                bool isFirst = (ci == 0);
+                bool isLast  = (i == segs.Length - 1 && !hasEmpty);
+                var seg = new Border
+                {
+                    Background          = new SolidColorBrush(segs[i].color),
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                };
+                if (fullFill)
+                {
+                    seg.Height        = BAR_H;
+                    seg.CornerRadius  = new Avalonia.CornerRadius(
+                        isFirst ? 3 : 0, isLast ? 3 : 0,
+                        isLast  ? 3 : 0, isFirst ? 3 : 0);
+                    seg.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch;
+                }
+                else
+                {
+                    seg.Height            = FILL_H;
+                    seg.CornerRadius      = new Avalonia.CornerRadius(2);
+                    seg.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center;
+                }
+                Grid.SetColumn(seg, ci++);
+                fills.Add(seg);
+                fillGrid.Children.Add(seg);
+            }
+
+            // ── Track: standalone Border — width = HAlign.Stretch, never from columns
+            // fillGrid is its Child so it inherits the same full content width.
+            var trackBorder = new Border
+            {
+                Height              = BAR_H,
+                Background          = new SolidColorBrush(Color.Parse("#07071A")),
+                BorderBrush         = new SolidColorBrush(Color.Parse("#3A3A5A")),
+                BorderThickness     = new Avalonia.Thickness(1),
+                CornerRadius        = new Avalonia.CornerRadius(3),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Stretch,
+                Child               = fillGrid,
+            };
+            Grid.SetRow(trackBorder, 2);
+            Grid.SetColumnSpan(trackBorder, 2); // span * and Auto columns → full row width
+            outer.Children.Add(trackBorder);
+
+            return outer;
+        }
+
+        // ── SOURCE ────────────────────────────────────────────────────────────
+        AutoRow(MakeSection("Source", FormatBytes(source),
+            false, (1.0, Color.Parse("#29B6F6"))));
+
+        // ── GAP ───────────────────────────────────────────────────────────────
+        Gap(10);
+
+        // ── DERIVED ───────────────────────────────────────────────────────────
+        AutoRow(MakeSection("Derived", FormatBytes(derived),
+            false, (derivedRatio, Color.Parse("#7B68EE"))));
+
+        // ── SEPARATOR ─────────────────────────────────────────────────────────
+        Gap(18);
+
+        // ── SAVED RATIO ── same pill style as Source/Derived; stacked segments ─
+        AutoRow(MakeSection("Saved Ratio", $"{savedPct:F1}%  ({FormatBytes(saved)})",
+            false,
+            (derivedRatio, Color.Parse("#7B68EE")),
+            (savedRatio,   Color.Parse("#4CAF50"))));
+
+        // ── LEGEND ────────────────────────────────────────────────────────────
+        Gap(10);
+        var legend = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 16 };
+        void AddLegend(Color color, string text)
+        {
+            var item = new StackPanel
+            {
+                Orientation       = Avalonia.Layout.Orientation.Horizontal,
+                Spacing           = 6,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            item.Children.Add(new Border
+            {
+                Width = 10, Height = 10,
+                CornerRadius = new Avalonia.CornerRadius(2),
+                Background   = new SolidColorBrush(color),
+            });
+            item.Children.Add(new TextBlock
+            {
+                Text       = text,
+                FontSize   = 11,
+                Foreground = new SolidColorBrush(Color.Parse("#777788")),
+            });
+            legend.Children.Add(item);
+        }
+        AddLegend(Color.Parse("#29B6F6"), "Source (100%)");
+        AddLegend(Color.Parse("#7B68EE"), $"Derived ({derivedRatio * 100:F1}%)");
+        if (savedRatio > 0.001)
+            AddLegend(Color.Parse("#4CAF50"), $"Saved ({savedRatio * 100:F1}%)");
+        AutoRow(legend);
+
+        // ── BOTTOM SUMMARY ────────────────────────────────────────────────────
+        Gap(14);
+        var statGrid = new Grid { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+        statGrid.ColumnDefinitions = new ColumnDefinitions("*,*,*");
+        void AddStat(int col, string lbl, string val, Color color)
+        {
+            var sp = new StackPanel
+            {
+                Spacing             = 2,
+                HorizontalAlignment = col == 0 ? Avalonia.Layout.HorizontalAlignment.Left
+                                    : col == 2 ? Avalonia.Layout.HorizontalAlignment.Right
+                                               : Avalonia.Layout.HorizontalAlignment.Center,
+            };
+            sp.Children.Add(new TextBlock
+            {
+                Text          = lbl,
+                FontSize      = 10,
+                FontWeight    = FontWeight.SemiBold,
+                LetterSpacing = 1.0,
+                Foreground    = new SolidColorBrush(Color.Parse("#555566")),
+            });
+            sp.Children.Add(new TextBlock
+            {
+                Text       = val,
+                FontSize   = 16,
+                FontWeight = FontWeight.SemiBold,
+                Foreground = new SolidColorBrush(color),
+            });
+            Grid.SetColumn(sp, col);
+            statGrid.Children.Add(sp);
+        }
+        AddStat(0, "SOURCE",  FormatBytes(source),  Color.Parse("#AAAACC"));
+        AddStat(1, "DERIVED", FormatBytes(derived),  Color.Parse("#7B68EE"));
+        AddStat(2, "SAVED",   FormatBytes(saved),    Color.Parse("#5AC870"));
+        AutoRow(statGrid);
+    }
+
+    // ── Display label formatter ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Derives a human-readable label from a transform/strategy ID.
+    /// Used only as a fallback when no Name is found in the lookup dictionaries.
+    /// Rules: split on "_", title-case each word, drop the trailing word
+    /// "Compression" if more than one word remains.
+    /// Examples: "chd_dvd_compression" → "CHD DVD"
+    ///           "zip_compression"     → "ZIP"
+    ///           "no_compression"      → "No Compression"  (single meaningful word kept)
+    /// </summary>
+    private static string FormatStrategyLabel(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id)) return id;
+
+        var words = id.Split('_', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return id;
+
+        // Title-case each word (all-caps for ≤3-char words like "CHD", "CD", "DVD", "ZIP")
+        var parts = words.Select(w =>
+            w.Length <= 3
+                ? w.ToUpperInvariant()
+                : char.ToUpper(w[0]) + w[1..].ToLowerInvariant()
+        ).ToList();
+
+        // Drop trailing "Compression" only when at least one other word remains
+        if (parts.Count > 1 &&
+            string.Equals(parts[^1], "Compression", StringComparison.OrdinalIgnoreCase))
+            parts.RemoveAt(parts.Count - 1);
+
+        return string.Join(" ", parts);
+    }
+
+    // ── Section B: Compression by Strategy ───────────────────────────────────
+
+    private void AnalyticsBuildSectionB(
+        Dictionary<string, long> byStrategy, long totalDerived,
+        Dictionary<string, string> stratNames)
+    {
+        AnalyticsByStrategyPanel.Children.Clear();
+
+        if (byStrategy.Count == 0)
+        {
+            AnalyticsByStrategyPanel.Children.Add(MakeSkeletonBars("No derived artifacts recorded yet."));
+            return;
+        }
+
+        var palette = new[]
+        {
+            Color.Parse("#7B68EE"), Color.Parse("#4CAF50"), Color.Parse("#FF9800"),
+            Color.Parse("#29B6F6"), Color.Parse("#EF5350"), Color.Parse("#AB47BC"),
+        };
+
+        var sorted    = byStrategy.OrderByDescending(kv => kv.Value).ToList();
+        long maxBytes = sorted[0].Value;
+
+        // ── Resolve display labels first so we can measure them ───────────────
+        var rows = sorted.Select((kv, idx) =>
+        {
+            var label = stratNames.TryGetValue(kv.Key, out var n) && n.Length > 0
+                        ? n
+                        : FormatStrategyLabel(kv.Key);
+            return (label, bytes: kv.Value, isFirst: idx == 0);
+        }).ToList();
+
+        // ── Measure widest label using FormattedText (matches actual render) ──
+        // Font size = 12, SemiBold for first row, Normal for the rest.
+        const int LABEL_PAD = 12;  // breathing room between label and bar
+        const int LABEL_MIN = 90;
+        const int LABEL_MAX = 220; // cap so one unusually long label can't break layout
+        double maxLabelPx = rows.Max(r =>
+            new FormattedText(
+                r.label,
+                System.Globalization.CultureInfo.CurrentUICulture,
+                FlowDirection.LeftToRight,
+                new Typeface(FontFamily.Default, FontStyle.Normal,
+                             r.isFirst ? FontWeight.SemiBold : FontWeight.Normal),
+                12.0,
+                null).Width);
+        int labelWidth = Math.Clamp((int)Math.Ceiling(maxLabelPx) + LABEL_PAD, LABEL_MIN, LABEL_MAX);
+
+        // ── Build rows with the shared computed label width ───────────────────
+        int ci = 0;
+        foreach (var (label, bytes, isFirst) in rows)
+        {
+            double pct = totalDerived > 0 ? bytes * 100.0 / totalDerived : 0.0;
+            var color  = palette[ci++ % palette.Length];
+            AnalyticsByStrategyPanel.Children.Add(
+                MakeBarRow(label, bytes, maxBytes, $"{FormatBytes(bytes)} ({pct:F1}%)", color,
+                           labelWidth: labelWidth, valueWidth: 140, isFirst: isFirst));
+        }
+    }
+
+    // ── Section C: Artifact Type Distribution ─────────────────────────────────
+
+    private void AnalyticsBuildSectionC(Dictionary<string, int> extCounts)
+    {
+        AnalyticsArtifactTypePanel.Children.Clear();
+
+        if (extCounts.Count == 0)
+        {
+            AnalyticsArtifactTypePanel.Children.Add(MakeSkeletonBars("No derived artifacts recorded yet."));
+            return;
+        }
+
+        var palette = new[]
+        {
+            Color.Parse("#29B6F6"), Color.Parse("#7B68EE"), Color.Parse("#4CAF50"),
+            Color.Parse("#FF9800"), Color.Parse("#AB47BC"), Color.Parse("#EF5350"),
+        };
+
+        int total  = extCounts.Values.Sum();
+        var sorted = extCounts.OrderByDescending(kv => kv.Value).ToList();
+        int maxCnt = sorted[0].Value;
+        int ci     = 0;
+
+        foreach (var (ext, cnt) in sorted)
+        {
+            double pct = total > 0 ? cnt * 100.0 / total : 0.0;
+            bool first = ci == 0;
+            var color  = palette[ci++ % palette.Length];
+            AnalyticsArtifactTypePanel.Children.Add(
+                MakeBarRow(ext, cnt, maxCnt, $"{cnt:N0} ({pct:F1}%)", color,
+                           labelWidth: 70, valueWidth: 110, isFirst: first));
+        }
+    }
+
+    // ── Section D: Volume Heatmap ─────────────────────────────────────────────
+
+    private void AnalyticsBuildSectionD(
+        List<VolumeRecord> volumes,
+        Dictionary<string, string> platNames,
+        Dictionary<string, string> dlNames,
+        Dictionary<string, int>    artCounts)
+    {
+        AnalyticsVolumeHeatmapPanel.Children.Clear();
+
+        if (volumes.Count == 0)
+        {
+            AnalyticsVolumeHeatmapPanel.Children.Add(EmptyNote("No volumes created yet."));
+            return;
+        }
+
+        // Header row (no STATUS column)
+        AnalyticsVolumeHeatmapPanel.Children.Add(MakeHeatmapRow("LABEL", "PLATFORM", "HEALTH", "SIZE", isHeader: true));
+        AnalyticsVolumeHeatmapPanel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Color.Parse("#1A1A2E")),
+            Margin     = new Avalonia.Thickness(0, 2, 0, 4),
+        });
+
+        long maxActual = volumes.Max(v => v.ActualSizeBytes);
+        if (maxActual == 0) maxActual = 1L;
+
+        // Sort by occupancy descending — highest usage first, empty volumes last
+        foreach (var vol in volumes.OrderByDescending(v => v.ActualSizeBytes))
+        {
+            var pn      = platNames.TryGetValue(vol.PlatformId, out var p) ? p : vol.PlatformId;
+            int artCnt  = artCounts.GetValueOrDefault(vol.Id, 0);
+            var secondary = artCnt > 0 ? $"{pn} · {artCnt:N0} files" : pn;
+            bool isEmpty = vol.ActualSizeBytes == 0;
+            double fill  = Math.Clamp((double)vol.ActualSizeBytes / maxActual, 0.0, 1.0);
+            Color  color = vol.Health == "crit" ? Color.Parse("#EF5350") : Color.Parse("#4CAF50");
+            AnalyticsVolumeHeatmapPanel.Children.Add(
+                MakeHeatmapRow(vol.Label, secondary, vol.Health,
+                               FormatBytes(vol.ActualSizeBytes),
+                               sizeFill: fill, sizeBarColor: color, isEmpty: isEmpty));
+        }
+    }
+
+    // ── Section D2: Disk Heatmap ──────────────────────────────────────────────
+
+    private void AnalyticsBuildSectionDisk()
+    {
+        AnalyticsDiskHeatmapPanel.Children.Clear();
+
+        var disks      = _catalog.GetDisks();
+        var volCounts  = _catalog.GetVolumeCountsByDisk();
+
+        if (disks.Count == 0)
+        {
+            AnalyticsDiskHeatmapPanel.Children.Add(EmptyNote("No disks created yet."));
+            return;
+        }
+
+        // Compute occupancy per disk (used / declared); disks with no declared capacity sort last.
+        var diskData = disks.Select(d =>
+        {
+            var (cap, used, _) = _catalog.GetDiskUsage(d.Id);
+            int  volCount      = volCounts.GetValueOrDefault(d.Id, 0);
+            long declared      = cap > 0 ? cap : d.DeclaredCapacityBytes;
+            double occ         = declared > 0 ? Math.Clamp((double)used / declared, 0.0, 1.0) : 0.0;
+            bool   isEmpty     = used == 0 || volCount == 0;
+            string health      = d.Status == "lost" ? "crit"
+                               : occ >= 0.90        ? "warning"
+                               :                      "ok";
+            return (disk: d, used, declared, volCount, occ, isEmpty, health);
+        }).OrderByDescending(x => x.occ).ToList();
+
+        // Header row
+        AnalyticsDiskHeatmapPanel.Children.Add(
+            MakeDiskHeatmapRow("LABEL", "VOLUMES", "HEALTH", "USED / TOTAL", isHeader: true));
+        AnalyticsDiskHeatmapPanel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Color.Parse("#1A1A2E")),
+            Margin     = new Avalonia.Thickness(0, 2, 0, 4),
+        });
+
+        foreach (var (disk, used, declared, volCount, occ, isEmpty, health) in diskData)
+        {
+            string secondary = volCount switch
+            {
+                0 => "",
+                1 => "1 volume",
+                _ => $"{volCount} volumes",
+            };
+            string sizeText = declared > 0
+                ? $"{FormatBytes(used)} / {FormatBytes(declared)}"
+                : $"{FormatBytes(used)} / unknown";
+
+            AnalyticsDiskHeatmapPanel.Children.Add(
+                MakeDiskHeatmapRow(disk.Label, secondary, health, sizeText,
+                                   occFill: occ, isEmpty: isEmpty));
+        }
+    }
+
+    private static Grid MakeDiskHeatmapRow(
+        string label, string secondary, string health, string size,
+        bool isHeader = false, double occFill = 0.0, bool isEmpty = false)
+    {
+        // Columns: Label(120) | Secondary(140) | OCC(*) | Health(70) | Size(100)
+        var row = new Grid
+        {
+            Margin              = new Avalonia.Thickness(0, 0, 0, 2),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+        };
+        row.ColumnDefinitions = new ColumnDefinitions("120,120,*,70,140");
+
+        var headerFg = new SolidColorBrush(Color.Parse("#555566"));
+
+        Control MakeCell(int col, string text,
+            Avalonia.Layout.HorizontalAlignment align = Avalonia.Layout.HorizontalAlignment.Left,
+            SolidColorBrush? fg     = null,
+            FontWeight?      fwt    = null,
+            int fontSize            = 12,
+            bool noTrim             = false)
+        {
+            var tb = new TextBlock
+            {
+                Text                = text,
+                FontSize            = fontSize,
+                FontWeight          = fwt ?? FontWeight.Normal,
+                Foreground          = fg ?? new SolidColorBrush(Color.Parse("#AAAACC")),
+                Padding             = new Avalonia.Thickness(2, 4),
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                HorizontalAlignment = align,
+                TextTrimming        = noTrim
+                                      ? Avalonia.Media.TextTrimming.None
+                                      : Avalonia.Media.TextTrimming.CharacterEllipsis,
+                TextWrapping        = Avalonia.Media.TextWrapping.NoWrap,
+            };
+            Grid.SetColumn(tb, col);
+            return tb;
+        }
+
+        if (isHeader)
+        {
+            row.Children.Add(MakeCell(0, label,     fg: headerFg, fwt: FontWeight.SemiBold, fontSize: 10));
+            row.Children.Add(MakeCell(1, secondary, fg: headerFg, fwt: FontWeight.SemiBold, fontSize: 10));
+            row.Children.Add(MakeCell(2, "OCC",
+                align: Avalonia.Layout.HorizontalAlignment.Left,
+                fg: headerFg, fwt: FontWeight.SemiBold, fontSize: 10));
+            row.Children.Add(MakeCell(3, health,
+                align: Avalonia.Layout.HorizontalAlignment.Center,
+                fg: headerFg, fwt: FontWeight.SemiBold, fontSize: 10));
+            row.Children.Add(MakeCell(4, size,
+                align: Avalonia.Layout.HorizontalAlignment.Right,
+                fg: headerFg, fwt: FontWeight.SemiBold, fontSize: 10));
+        }
+        else
+        {
+            string labelHex = isEmpty ? "#555566" : "#DDDDEE";
+            string secHex   = isEmpty ? "#333344" : "#555566";
+            string sizeHex  = isEmpty ? "#333344" : "#AAAACC";
+
+            // Col 0: Disk label (bold)
+            row.Children.Add(MakeCell(0, label,
+                fg:  new SolidColorBrush(Color.Parse(labelHex)),
+                fwt: FontWeight.SemiBold));
+
+            // Col 1: Volume count secondary text (blank when 0)
+            if (secondary.Length > 0)
+                row.Children.Add(MakeCell(1, secondary,
+                    fg: new SolidColorBrush(Color.Parse(secHex))));
+
+            // Col 2: Occupancy bar — same pattern as Section A / Volume Heatmap
+            {
+                const int OCC_H   = 9;
+                bool hasFill      = occFill > 0.001;
+                bool isFullFill   = occFill >= 0.9995;
+
+                int fillW  = hasFill ? (int)Math.Round(occFill * 10000) : 0;
+                int emptyW = 10000 - fillW;
+                var colStr = hasFill && !isFullFill
+                    ? $"{fillW}*,{emptyW}*"
+                    : "1*";
+
+                var fillGrid = new Grid { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+                fillGrid.ColumnDefinitions = new ColumnDefinitions(colStr);
+
+                if (hasFill)
+                {
+                    fillGrid.Children.Add(new Border
+                    {
+                        Height              = OCC_H,
+                        Background          = new SolidColorBrush(Color.Parse("#4CAF50")),
+                        CornerRadius        = new Avalonia.CornerRadius(isFullFill ? 2 : 2, isFullFill ? 2 : 0,
+                                                                         isFullFill ? 2 : 0, 2),
+                        VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                    });
+                }
+
+                var occTrack = new Border
+                {
+                    Height              = OCC_H,
+                    Background          = new SolidColorBrush(Color.Parse("#07071A")),
+                    BorderBrush         = new SolidColorBrush(Color.Parse("#3A3A5A")),
+                    BorderThickness     = new Avalonia.Thickness(1),
+                    CornerRadius        = new Avalonia.CornerRadius(2),
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                    VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                    Margin              = new Avalonia.Thickness(0, 0, 8, 0),
+                    Child               = fillGrid,
+                };
+                Grid.SetColumn(occTrack, 2);
+                row.Children.Add(occTrack);
+            }
+
+            // Col 3: Health badge — lost=crit, >=90%=warning, else ok
+            {
+                var (healthColor, healthBg) = health switch
+                {
+                    "crit"    => (Color.Parse("#FF5252"), Color.Parse("#3A0A0A")),
+                    "warning" => (Color.Parse("#FF9800"), Color.Parse("#1E1400")),
+                    _         => (Color.Parse("#4CAF50"), Color.Parse("#0A200A")),
+                };
+                var hBadge = new Border
+                {
+                    Background          = new SolidColorBrush(healthBg),
+                    CornerRadius        = new Avalonia.CornerRadius(3),
+                    Padding             = new Avalonia.Thickness(6, 2),
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                    VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                    Margin              = new Avalonia.Thickness(2),
+                    Child               = new TextBlock
+                    {
+                        Text       = health,
+                        FontSize   = 11,
+                        Foreground = new SolidColorBrush(healthColor),
+                    },
+                };
+                Grid.SetColumn(hBadge, 3);
+                row.Children.Add(hBadge);
+            }
+
+            // Col 4: "used / total" — right-aligned, never truncated
+            row.Children.Add(MakeCell(4, size,
+                align:  Avalonia.Layout.HorizontalAlignment.Right,
+                fg:     new SolidColorBrush(Color.Parse(sizeHex)),
+                noTrim: true));
+        }
+
+        return row;
+    }
+
+    private static Grid MakeHeatmapRow(
+        string label, string platform, string health, string size,
+        bool isHeader = false, double sizeFill = 0.0, Color sizeBarColor = default,
+        bool isEmpty = false)
+    {
+        // Columns: Label(120) | Platform(200) | OCC(*) | Health(70) | Size(80)
+        // OCC is the star column so it dominates the row width.
+        var row = new Grid
+        {
+            Margin              = new Avalonia.Thickness(0, 0, 0, 2),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+        };
+        row.ColumnDefinitions = new ColumnDefinitions("120,200,*,70,80");
+
+        var headerFg = new SolidColorBrush(Color.Parse("#555566"));
+        int hFsize   = 10;
+
+        Control MakeCell(int col, string text,
+            Avalonia.Layout.HorizontalAlignment align = Avalonia.Layout.HorizontalAlignment.Left,
+            SolidColorBrush? fg  = null,
+            FontWeight?      fwt = null,
+            int fontSize         = 12)
+        {
+            var tb = new TextBlock
+            {
+                Text                = text,
+                FontSize            = fontSize,
+                FontWeight          = fwt ?? FontWeight.Normal,
+                Foreground          = fg ?? new SolidColorBrush(Color.Parse("#AAAACC")),
+                Padding             = new Avalonia.Thickness(2, 4),
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                HorizontalAlignment = align,
+                TextTrimming        = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            };
+            Grid.SetColumn(tb, col);
+            return tb;
+        }
+
+        if (isHeader)
+        {
+            row.Children.Add(MakeCell(0, label,    fg: headerFg, fwt: FontWeight.SemiBold, fontSize: hFsize));
+            row.Children.Add(MakeCell(1, platform, fg: headerFg, fwt: FontWeight.SemiBold, fontSize: hFsize));
+            row.Children.Add(MakeCell(2, "OCC",
+                align: Avalonia.Layout.HorizontalAlignment.Left,
+                fg: headerFg, fwt: FontWeight.SemiBold, fontSize: hFsize));
+            row.Children.Add(MakeCell(3, health,
+                align: Avalonia.Layout.HorizontalAlignment.Center,
+                fg: headerFg, fwt: FontWeight.SemiBold, fontSize: hFsize));
+            row.Children.Add(MakeCell(4, size,
+                align: Avalonia.Layout.HorizontalAlignment.Right,
+                fg: headerFg, fwt: FontWeight.SemiBold, fontSize: hFsize));
+        }
+        else
+        {
+            // Dim colours for empty (zero-size) volumes
+            string labelHex = isEmpty ? "#555566" : "#DDDDEE";
+            string platHex  = isEmpty ? "#333344" : "#555566";
+
+            // Col 0: Volume label
+            row.Children.Add(MakeCell(0, label,
+                fg:  new SolidColorBrush(Color.Parse(labelHex)),
+                fwt: FontWeight.SemiBold));
+
+            // Col 1: Platform · files
+            row.Children.Add(MakeCell(1, platform,
+                fg: new SolidColorBrush(Color.Parse(platHex))));
+
+            // Col 2: Occupancy bar — wrapper Border (full-width) + proportional fillGrid inside
+            // Uses the same layout approach as Section A: track is a standalone Border whose
+            // width comes from HAlign.Stretch, not from column structure. Fill segments live
+            // inside it via a proportional-star fillGrid.
+            {
+                const int OCC_H   = 9;
+                bool hasFill      = sizeFill > 0.001;
+                bool isFullFill   = sizeFill >= 0.9995;
+
+                // Proportional columns using integer star weights (avoids decimal-parse issues)
+                int fillW  = hasFill ? (int)Math.Round(sizeFill * 10000) : 0;
+                int emptyW = 10000 - fillW;
+                var colStr = hasFill && !isFullFill
+                    ? $"{fillW}*,{emptyW}*"
+                    : "1*";
+
+                var fillGrid = new Grid { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+                fillGrid.ColumnDefinitions = new ColumnDefinitions(colStr);
+
+                if (hasFill)
+                {
+                    bool roundRight = isFullFill;
+                    fillGrid.Children.Add(new Border
+                    {
+                        Height              = OCC_H,
+                        Background          = new SolidColorBrush(sizeBarColor),
+                        CornerRadius        = new Avalonia.CornerRadius(roundRight ? 2 : 2, roundRight ? 2 : 0,
+                                                                         roundRight ? 2 : 0, 2),
+                        VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                        HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                    });
+                }
+
+                var occTrack = new Border
+                {
+                    Height              = OCC_H,
+                    Background          = new SolidColorBrush(Color.Parse("#07071A")),
+                    BorderBrush         = new SolidColorBrush(Color.Parse("#3A3A5A")),
+                    BorderThickness     = new Avalonia.Thickness(1),
+                    CornerRadius        = new Avalonia.CornerRadius(2),
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                    VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                    Margin              = new Avalonia.Thickness(0, 0, 8, 0),
+                    Child               = fillGrid,
+                };
+                Grid.SetColumn(occTrack, 2);
+                row.Children.Add(occTrack);
+            }
+
+            // Col 3: Health badge — ok=green, warning=orange, crit=red
+            {
+                var (healthColor, healthBg) = health switch
+                {
+                    "crit"    => (Color.Parse("#FF5252"), Color.Parse("#3A0A0A")),
+                    "warning" => (Color.Parse("#FF9800"), Color.Parse("#1E1400")),
+                    _         => (Color.Parse("#4CAF50"), Color.Parse("#0A200A")), // ok
+                };
+                var hBadge = new Border
+                {
+                    Background          = new SolidColorBrush(healthBg),
+                    CornerRadius        = new Avalonia.CornerRadius(3),
+                    Padding             = new Avalonia.Thickness(6, 2),
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                    VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+                    Margin              = new Avalonia.Thickness(2),
+                    Child               = new TextBlock
+                    {
+                        Text       = health,
+                        FontSize   = 11,
+                        Foreground = new SolidColorBrush(healthColor),
+                    },
+                };
+                Grid.SetColumn(hBadge, 3);
+                row.Children.Add(hBadge);
+            }
+
+            // Col 4: Size — right-aligned
+            row.Children.Add(MakeCell(4, size,
+                align: Avalonia.Layout.HorizontalAlignment.Right,
+                fg:    new SolidColorBrush(isEmpty ? Color.Parse("#333344") : Color.Parse("#AAAACC"))));
+        }
+
+        return row;
+    }
+
+    // ── Section E: Archive State Overview ─────────────────────────────────────
+
+    private void AnalyticsBuildSectionE(
+        int missing, int pending, int outdated, int present, int lost,
+        List<VolumeRecord> volumes)
+    {
+        // Release status
+        AnalyticsReleaseStatusPanel.Children.Clear();
+        int relTotal = missing + pending + outdated + present + lost;
+        var relRows  = new (string Label, int Count, string Hex)[]
+        {
+            ("Present",  present,  "#4CAF50"),  // green  — same as Volume Health OK / Section A saved
+            ("Missing",  missing,  "#EF5350"),  // red    — same as Volume Health Critical
+            ("Outdated", outdated, "#FF9800"),  // orange — existing warning tone
+            ("Pending",  pending,  "#29B6F6"),  // cyan   — same as Section A Source
+            ("Lost",     lost,     "#FF5252"),  // red+   — same as health badge crit; distinguishes from Missing
+        };
+        foreach (var (lbl, cnt, hex) in relRows)
+        {
+            double pct = relTotal > 0 ? cnt * 100.0 / relTotal : 0.0;
+            AnalyticsReleaseStatusPanel.Children.Add(
+                MakeBarRow(lbl, cnt, Math.Max(relTotal, 1), $"{cnt:N0} ({pct:F1}%)", Color.Parse(hex),
+                           labelWidth: 75, valueWidth: 110));
+        }
+
+        // Volume health
+        AnalyticsVolumeHealthPanel.Children.Clear();
+        int volOk   = volumes.Count(v => v.Status != "lost" && v.Health == "ok");
+        int volCrit = volumes.Count(v => v.Health == "crit");
+        int volLost = volumes.Count(v => v.Status == "lost");
+        int volTotal = volumes.Count;
+        var volRows  = new (string Label, int Count, string Hex)[]
+        {
+            ("OK",       volOk,   "#4CAF50"),
+            ("Critical", volCrit, "#EF5350"),
+            ("Lost",     volLost, "#666677"),
+        };
+        foreach (var (lbl, cnt, hex) in volRows)
+        {
+            double pct = volTotal > 0 ? cnt * 100.0 / volTotal : 0.0;
+            AnalyticsVolumeHealthPanel.Children.Add(
+                MakeBarRow(lbl, cnt, Math.Max(volTotal, 1), $"{cnt:N0} ({pct:F1}%)", Color.Parse(hex),
+                           labelWidth: 75, valueWidth: 110));
+        }
+    }
+
+    // ── Shared helper ─────────────────────────────────────────────────────────
+
+    private static TextBlock EmptyNote(string text) => new()
+    {
+        Text       = text,
+        FontSize   = 12,
+        Foreground = new SolidColorBrush(Color.Parse("#555566")),
+    };
+
+    /// <summary>
+    /// Structured skeleton with 3 dim ghost bars + hint text.
+    /// Used as a premium empty state for sections B, C, and A.
+    /// </summary>
+    private static StackPanel MakeSkeletonBars(string hint)
+    {
+        var panel = new StackPanel { Spacing = 8 };
+        double[] widths  = [0.65, 0.40, 0.25];
+        double[] opacity = [0.17, 0.11, 0.06];
+        for (int i = 0; i < 3; i++)
+        {
+            var ghost = new StackPanel { Spacing = 4, Opacity = opacity[i] };
+            ghost.Children.Add(new Border
+            {
+                Height              = 10,
+                Width               = 90 * widths[i],
+                Background          = new SolidColorBrush(Color.Parse("#5555AA")),
+                CornerRadius        = new Avalonia.CornerRadius(2),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            });
+            ghost.Children.Add(new Border
+            {
+                Height     = 9,
+                Background = new SolidColorBrush(Color.Parse("#333366")),
+                CornerRadius = new Avalonia.CornerRadius(2),
+            });
+            panel.Children.Add(ghost);
+        }
+        panel.Children.Add(new TextBlock
+        {
+            Text       = hint,
+            FontSize   = 11,
+            Foreground = new SolidColorBrush(Color.Parse("#555566")),
+            Margin     = new Avalonia.Thickness(0, 4, 0, 0),
+        });
+        return panel;
+    }
+
+    // ── Analytics event handlers ──────────────────────────────────────────────
+
+    private void OnAnalyticsRefresh(object? sender, RoutedEventArgs e) => BuildAnalytics();
+
+    private async void OnAnalyticsGenerateReports(object? sender, RoutedEventArgs e)
+    {
+        if (_analyticsData is null)
+        {
+            await new InfoDialog("No Data",
+                "Refresh first to collect analytics data before generating reports.")
+                .ShowDialog(this);
+            return;
+        }
+
+        try
+        {
+            var reportsDir = Path.Combine(AppContext.BaseDirectory, "reports", "analytics");
+            Directory.CreateDirectory(reportsDir);
+            var ts = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+
+            File.WriteAllText(
+                Path.Combine(reportsDir, $"{ts}-analytics-compression-gain.html"),
+                AnalyticsHtmlCompressionGain(_analyticsData), Encoding.UTF8);
+
+            File.WriteAllText(
+                Path.Combine(reportsDir, $"{ts}-analytics-artifact-types.html"),
+                AnalyticsHtmlArtifactTypes(_analyticsData), Encoding.UTF8);
+
+            File.WriteAllText(
+                Path.Combine(reportsDir, $"{ts}-analytics-volume-heatmap.html"),
+                AnalyticsHtmlVolumeHeatmap(_analyticsData), Encoding.UTF8);
+
+            await new InfoDialog("Reports Generated",
+                $"3 HTML reports written to:\n{reportsDir}").ShowDialog(this);
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            await new InfoDialog("Report Error", ex.Message).ShowDialog(this);
+        }
+    }
+
+    private void OnAnalyticsOpenFolder(object? sender, RoutedEventArgs e)
+    {
+        var reportsDir = Path.Combine(AppContext.BaseDirectory, "reports", "analytics");
+        Directory.CreateDirectory(reportsDir);
+        try { Process.Start(new ProcessStartInfo(reportsDir) { UseShellExecute = true }); }
+        catch { }
+    }
+
+    // ── HTML report builders ──────────────────────────────────────────────────
+
+    private static string AnalyticsHtmlHeader(string title) => $$"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8"/>
+        <title>Arkadia Analytics — {{title}}</title>
+        <style>
+        *{box-sizing:border-box;margin:0;padding:0;}
+        body{font-family:'Segoe UI',sans-serif;background:#0A0A15;color:#CCCCDD;padding:36px;line-height:1.6;}
+        h1{font-size:22px;font-weight:700;color:#7B68EE;margin-bottom:6px;}
+        .sub{font-size:12px;color:#444455;margin-bottom:32px;}
+        h2{font-size:11px;font-weight:600;letter-spacing:1.8px;color:#666677;text-transform:uppercase;margin:28px 0 14px;}
+        .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:32px;}
+        .kpi{background:#0D0D1A;border:1px solid #1A1A2E;border-radius:8px;padding:16px;}
+        .kpi-label{font-size:10px;font-weight:600;letter-spacing:1.5px;color:#444455;text-transform:uppercase;margin-bottom:4px;}
+        .kpi-value{font-size:24px;font-weight:700;color:#CCCCDD;}
+        table{width:100%;border-collapse:collapse;font-size:13px;}
+        th{text-align:left;font-size:10px;font-weight:600;letter-spacing:1px;color:#555566;padding:6px 10px;border-bottom:1px solid #1A1A2E;}
+        td{padding:8px 10px;border-bottom:1px solid #0F0F1E;}
+        tr:hover td{background:#0D0D1A;}
+        .bar-wrap{background:#111118;border-radius:3px;height:8px;}
+        .bar{height:8px;border-radius:3px;display:block;}
+        .badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:500;}
+        .ok{background:#081A08;color:#4CAF50;}.crit{background:#1F0A0A;color:#EF5350;}
+        .lost{background:#111118;color:#666677;}.present{background:#0A0D1F;color:#AAAACC;}
+        </style>
+        </head>
+        <body>
+        <h1>Arkadia Analytics — {{title}}</h1>
+        <div class="sub">Generated {{DateTime.Now:yyyy-MM-dd HH:mm:ss}}</div>
+        """;
+
+    private static string AnalyticsHtmlFooter() => "\n</body>\n</html>";
+
+    private static string AnalyticsHtmlCompressionGain(AnalyticsData d)
+    {
+        var sb = new StringBuilder();
+        sb.Append(AnalyticsHtmlHeader("Compression Gain"));
+
+        // KPI row
+        sb.Append("<div class=\"kpis\">");
+        void Kpi(string lbl, string val) =>
+            sb.Append($"<div class=\"kpi\"><div class=\"kpi-label\">{lbl}</div><div class=\"kpi-value\">{val}</div></div>");
+        Kpi("Source Size",    FormatBytes(d.TotalSourceBytes));
+        Kpi("Derived Size",   FormatBytes(d.TotalDerivedBytes));
+        Kpi("Space Saved",    d.TotalSourceBytes > 0 ? $"{d.SavedPct:F1}%" : "—");
+        Kpi("Saved Absolute", d.TotalSourceBytes > 0 ? FormatBytes(d.SavedBytes) : "—");
+        sb.Append("</div>");
+
+        sb.Append("<h2>Compression by Strategy</h2>");
+        sb.Append("<table><thead><tr><th>Strategy</th><th>Size</th><th>% of Derived</th><th style='width:220px'>Bar</th></tr></thead><tbody>");
+        long maxB = d.DerivedByStrategy.Values.DefaultIfEmpty(0L).Max();
+        foreach (var (sid, bytes) in d.DerivedByStrategy.OrderByDescending(kv => kv.Value))
+        {
+            double pct = d.TotalDerivedBytes > 0 ? bytes * 100.0 / d.TotalDerivedBytes : 0.0;
+            var    nm  = d.StrategyNames.TryGetValue(sid, out var n) ? n : sid;
+            int    bw  = maxB > 0 ? (int)(bytes * 200.0 / maxB) : 0;
+            sb.Append($"<tr><td>{nm}</td><td>{FormatBytes(bytes)}</td><td>{pct:F1}%</td>" +
+                      $"<td><div class=\"bar-wrap\"><div class=\"bar\" style=\"width:{bw}px;background:#7B68EE\"></div></div></td></tr>");
+        }
+        sb.Append("</tbody></table>");
+        sb.Append(AnalyticsHtmlFooter());
+        return sb.ToString();
+    }
+
+    private static string AnalyticsHtmlArtifactTypes(AnalyticsData d)
+    {
+        var sb = new StringBuilder();
+        sb.Append(AnalyticsHtmlHeader("Artifact Type Distribution"));
+
+        int total = d.ExtensionCounts.Values.Sum();
+        sb.Append($"<p style='color:#888899;margin-bottom:24px;font-size:13px;'>{total:N0} total artifacts across {d.ExtensionCounts.Count} distinct file types.</p>");
+        sb.Append("<table><thead><tr><th>Extension</th><th>Count</th><th>% of Total</th><th style='width:220px'>Bar</th></tr></thead><tbody>");
+        int maxC = d.ExtensionCounts.Values.DefaultIfEmpty(0).Max();
+        foreach (var (ext, cnt) in d.ExtensionCounts.OrderByDescending(kv => kv.Value))
+        {
+            double pct = total > 0 ? cnt * 100.0 / total : 0.0;
+            int    bw  = maxC > 0 ? (int)(cnt * 200.0 / maxC) : 0;
+            sb.Append($"<tr><td>{ext}</td><td>{cnt:N0}</td><td>{pct:F1}%</td>" +
+                      $"<td><div class=\"bar-wrap\"><div class=\"bar\" style=\"width:{bw}px;background:#29B6F6\"></div></div></td></tr>");
+        }
+        sb.Append("</tbody></table>");
+        sb.Append(AnalyticsHtmlFooter());
+        return sb.ToString();
+    }
+
+    private static string AnalyticsHtmlVolumeHeatmap(AnalyticsData d)
+    {
+        var sb = new StringBuilder();
+        sb.Append(AnalyticsHtmlHeader("Volume Heatmap"));
+
+        sb.Append($"<p style='color:#888899;margin-bottom:24px;font-size:13px;'>{d.Volumes.Count:N0} volumes tracked.</p>");
+        sb.Append("<table><thead><tr><th>Label</th><th>Platform</th><th>Status</th><th>Health</th><th>Size</th></tr></thead><tbody>");
+        foreach (var vol in d.Volumes.OrderBy(v => v.Label))
+        {
+            var pn = d.PlatformNames.TryGetValue(vol.PlatformId, out var p) ? p : vol.PlatformId;
+            var sc = vol.Status == "lost" ? "lost"    : "present";
+            var hc = vol.Health == "crit" ? "crit"   : "ok";
+            sb.Append($"<tr><td>{vol.Label}</td><td>{pn}</td>" +
+                      $"<td><span class=\"badge {sc}\">{vol.Status}</span></td>" +
+                      $"<td><span class=\"badge {hc}\">{vol.Health}</span></td>" +
+                      $"<td>{FormatBytes(vol.ActualSizeBytes)}</td></tr>");
+        }
+        sb.Append("</tbody></table>");
+        sb.Append(AnalyticsHtmlFooter());
+        return sb.ToString();
     }
 }

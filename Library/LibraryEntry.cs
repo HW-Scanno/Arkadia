@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Arkadia.Data;
 using Avalonia.Media;
@@ -33,6 +34,15 @@ public sealed class LibraryEntry
     /// <summary>Absolute path to the DAT-line SQLite DB that owns this release.</summary>
     public string DbPath { get; init; } = "";
 
+    /// <summary>
+    /// Set when the release was first introduced by a DAT update.
+    /// NULL for releases created during initial import or that predate this feature.
+    /// </summary>
+    public DateTime? IntroducedAtUtc { get; init; }
+
+    /// <summary>True when this release was newly introduced by a DAT update (change marker).</summary>
+    public bool IsNew => IntroducedAtUtc.HasValue;
+
     /// <summary>Display value: "—" for Missing/Pending status or unassigned tier; otherwise the raw tier.</summary>
     public string TierDisplay => Status is "Missing" or "Pending" || Tier == "" ? "—" : Tier;
 
@@ -40,7 +50,6 @@ public sealed class LibraryEntry
     public IBrush StatusBrush => Status switch
     {
         "Present"  => new SolidColorBrush(Color.Parse("#4CAF50")),
-        "New"      => new SolidColorBrush(Color.Parse("#29B6F6")),
         "Pending"  => new SolidColorBrush(Color.Parse("#FFD54F")),
         "Missing"  => new SolidColorBrush(Color.Parse("#FFA726")),
         "Outdated" => new SolidColorBrush(Color.Parse("#FF8A65")),

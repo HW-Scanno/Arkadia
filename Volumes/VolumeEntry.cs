@@ -10,6 +10,7 @@ public sealed class VolumeEntry
     public required string  PlatformId       { get; init; }
     public required string  DatLineId        { get; init; }
     public required string  Status           { get; init; }
+    public required string  Health           { get; init; }  // ok | crit
     public required long    PlannedSizeBytes { get; init; }
     public required long    ActualSizeBytes  { get; init; }
     public required string  CurrentLocation  { get; init; }  // "disk:<label>" | "source" | "workspace" | "—"
@@ -29,18 +30,18 @@ public sealed class VolumeEntry
 
     public IBrush StatusBrush => Status switch
     {
-        "present" => new SolidColorBrush(Color.Parse("#4CAF50")),
-        "offline" => new SolidColorBrush(Color.Parse("#FFD54F")),
-        "lost"    => new SolidColorBrush(Color.Parse("#EF5350")),
-        _         => new SolidColorBrush(Color.Parse("#888899")),
+        "present" when Health == "crit" => new SolidColorBrush(Color.Parse("#EF5350")),
+        "present"                       => new SolidColorBrush(Color.Parse("#4CAF50")),
+        "lost"                          => new SolidColorBrush(Color.Parse("#EF5350")),
+        _                               => new SolidColorBrush(Color.Parse("#888899")),
     };
 
     public string StatusLabel => Status switch
     {
-        "present" => "OK",
-        "offline" => "WARN",
-        "lost"    => "CRIT",
-        _         => Status.ToUpperInvariant(),
+        "present" when Health == "crit" => "CRIT",
+        "present"                       => "OK",
+        "lost"                          => "LOST",
+        _                               => Status.ToUpperInvariant(),
     };
 
     private static string FormatBytes(long b)

@@ -206,6 +206,9 @@ public sealed class DatLineStore
             """);
         RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_content_links_release_id ON release_content_links(release_id)");
         RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_content_links_cik        ON release_content_links(content_identity_key)");
+
+        // Add introduced_at_utc marker column for newly-introduced-by-DAT-update tracking.
+        RunMigration(conn, "ALTER TABLE releases ADD COLUMN introduced_at_utc TEXT");
     }
 
     private static void RunMigration(SqliteConnection conn, string sql)
@@ -232,19 +235,22 @@ public sealed class DatLineStore
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO releases(id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key)
-                VALUES($id, $datLineId, $name, $status, $tier, $region, $languages, $format, $size, $contentKey)
+                INSERT INTO releases(id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key, introduced_at_utc)
+                VALUES($id, $datLineId, $name, $status, $tier, $region, $languages, $format, $size, $contentKey, $introducedAt)
                 """;
-            cmd.Parameters.AddWithValue("$id",         r.Id);
-            cmd.Parameters.AddWithValue("$datLineId",  r.DatLineId);
-            cmd.Parameters.AddWithValue("$name",       r.Name);
-            cmd.Parameters.AddWithValue("$status",     r.Status);
-            cmd.Parameters.AddWithValue("$tier",       r.Tier);
-            cmd.Parameters.AddWithValue("$region",     r.Region);
-            cmd.Parameters.AddWithValue("$languages",  r.Languages);
-            cmd.Parameters.AddWithValue("$format",     r.Format);
-            cmd.Parameters.AddWithValue("$size",       r.Size);
-            cmd.Parameters.AddWithValue("$contentKey", r.ReleaseContentKey);
+            cmd.Parameters.AddWithValue("$id",           r.Id);
+            cmd.Parameters.AddWithValue("$datLineId",    r.DatLineId);
+            cmd.Parameters.AddWithValue("$name",         r.Name);
+            cmd.Parameters.AddWithValue("$status",       r.Status);
+            cmd.Parameters.AddWithValue("$tier",         r.Tier);
+            cmd.Parameters.AddWithValue("$region",       r.Region);
+            cmd.Parameters.AddWithValue("$languages",    r.Languages);
+            cmd.Parameters.AddWithValue("$format",       r.Format);
+            cmd.Parameters.AddWithValue("$size",         r.Size);
+            cmd.Parameters.AddWithValue("$contentKey",   r.ReleaseContentKey);
+            cmd.Parameters.AddWithValue("$introducedAt", r.IntroducedAtUtc.HasValue
+                ? (object)r.IntroducedAtUtc.Value.ToString("o")
+                : DBNull.Value);
             cmd.ExecuteNonQuery();
         }
 
@@ -268,7 +274,7 @@ public sealed class DatLineStore
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key
+            SELECT id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key, introduced_at_utc
             FROM releases
             ORDER BY name
             """;
@@ -285,7 +291,9 @@ public sealed class DatLineStore
                 Languages  = reader.IsDBNull(6) ? "" : reader.GetString(6),
                 Format     = reader.IsDBNull(7) ? "" : reader.GetString(7),
                 Size       = reader.IsDBNull(8) ? "" : reader.GetString(8),
-                ReleaseContentKey = reader.IsDBNull(9) ? "" : reader.GetString(9),
+                ReleaseContentKey  = reader.IsDBNull(9)  ? "" : reader.GetString(9),
+                IntroducedAtUtc    = reader.IsDBNull(10) ? null
+                    : DateTime.Parse(reader.GetString(10)),
             });
         return list;
     }
@@ -580,6 +588,29 @@ public sealed class DatLineStore
     }
 
     /// <summary>
+    /// Returns counts for all five release statuses in a single query.
+    /// Used by the dashboard to avoid loading every release row into memory.
+    /// </summary>
+    public (int Missing, int Pending, int Outdated, int Present, int Lost) GetAllStatusCounts()
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                COALESCE(SUM(CASE WHEN status = 'missing'  THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'pending'  THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'outdated' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'present'  THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'lost'     THEN 1 ELSE 0 END), 0)
+            FROM releases
+            """;
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return (0, 0, 0, 0, 0);
+        return (reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2),
+                reader.GetInt32(3), reader.GetInt32(4));
+    }
+
+    /// <summary>
     /// Returns other releases in this DAT line that share file content (by SHA1/MD5) with the
     /// given release. Results are sorted by shared-file count DESC, then release name ASC.
     /// </summary>
@@ -714,6 +745,101 @@ public sealed class DatLineStore
 
         tx.Commit();
         return (artifactCount, releaseCount);
+    }
+
+    /// <summary>
+    /// Sets the status column of the given derived_artifact IDs to <paramref name="status"/>
+    /// in a single transaction. Returns the number of rows actually updated.
+    /// </summary>
+    public int BatchUpdateDerivedArtifactStatus(IReadOnlyList<string> daIds, string status)
+    {
+        if (daIds.Count == 0) return 0;
+
+        var dp = string.Join(",", Enumerable.Range(0, daIds.Count).Select(i => $"$d{i}"));
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+        using var cmd  = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = $"UPDATE derived_artifacts SET status = $status WHERE id IN ({dp})";
+        cmd.Parameters.AddWithValue("$status", status);
+        for (int i = 0; i < daIds.Count; i++)
+            cmd.Parameters.AddWithValue($"$d{i}", daIds[i]);
+        int count = cmd.ExecuteNonQuery();
+        tx.Commit();
+        return count;
+    }
+
+    /// <summary>
+    /// Recalculates release status for every release linked (via release_content_links)
+    /// to any of the given derived artifact IDs.
+    /// Rules:
+    ///   — "outdated" and "pending" releases are never touched.
+    ///   — All other releases: if ALL linked derived artifacts are 'present' → 'present'.
+    ///     Otherwise → 'missing'.
+    /// Returns the number of release rows actually changed.
+    /// </summary>
+    public int RecalculateReleaseStatusForArtifacts(IReadOnlyList<string> daIds)
+    {
+        if (daIds.Count == 0) return 0;
+
+        var dp = string.Join(",", Enumerable.Range(0, daIds.Count).Select(i => $"$d{i}"));
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        // Find all release IDs affected by these derived artifacts.
+        var releaseIds = new List<string>();
+        using (var findCmd = conn.CreateCommand())
+        {
+            findCmd.Transaction = tx;
+            findCmd.CommandText = $"""
+                SELECT DISTINCT rcl.release_id
+                FROM release_content_links rcl
+                JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                WHERE da.id IN ({dp})
+                """;
+            for (int i = 0; i < daIds.Count; i++)
+                findCmd.Parameters.AddWithValue($"$d{i}", daIds[i]);
+            using var rf = findCmd.ExecuteReader();
+            while (rf.Read()) releaseIds.Add(rf.GetString(0));
+        }
+
+        if (releaseIds.Count == 0) { tx.Commit(); return 0; }
+
+        // For each affected release determine whether ALL its linked artifacts are 'present'.
+        var rp = string.Join(",", Enumerable.Range(0, releaseIds.Count).Select(i => $"$r{i}"));
+        int updated = 0;
+        using (var updCmd = conn.CreateCommand())
+        {
+            updCmd.Transaction = tx;
+            // Single UPDATE: compute new status inline via correlated sub-selects.
+            updCmd.CommandText = $"""
+                UPDATE releases
+                SET status = CASE
+                    WHEN (
+                        SELECT COUNT(*)
+                        FROM release_content_links rcl
+                        JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                        WHERE rcl.release_id = releases.id
+                    ) > 0
+                    AND (
+                        SELECT COUNT(*)
+                        FROM release_content_links rcl
+                        JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                        WHERE rcl.release_id = releases.id AND da.status != 'present'
+                    ) = 0
+                    THEN 'present'
+                    ELSE 'missing'
+                END
+                WHERE id IN ({rp})
+                  AND status NOT IN ('outdated', 'pending')
+                """;
+            for (int i = 0; i < releaseIds.Count; i++)
+                updCmd.Parameters.AddWithValue($"$r{i}", releaseIds[i]);
+            updated = updCmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        return updated;
     }
 
     public List<DerivedArtifactRecord> GetDerivedArtifacts()
@@ -1201,6 +1327,68 @@ public sealed class DatLineStore
         CreatedAtUtc       = DateTime.Parse(r.GetString(11)),
         VerifiedAtUtc      = r.IsDBNull(12) ? null : DateTime.Parse(r.GetString(12)),
     };
+
+    // ── Analytics ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns aggregate storage metrics for this DAT line in a single scan.
+    /// Collects source totals, derived totals grouped by storage strategy,
+    /// and a file-extension count from derived artifact file names.
+    /// </summary>
+    public DatLineAnalyticsSummary GetAnalyticsSummary()
+    {
+        using var conn = Open();
+
+        // Total source bytes
+        long sourceBytes = 0;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT COALESCE(SUM(source_size_bytes), 0) FROM source_artifacts";
+            sourceBytes = (long)(cmd.ExecuteScalar() ?? 0L);
+        }
+
+        // Derived bytes and count per storage strategy
+        var derivedByStrategy = new Dictionary<string, long>(StringComparer.Ordinal);
+        long totalDerived = 0;
+        int  totalCount   = 0;
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT storage_strategy_id,
+                       COALESCE(SUM(derived_size_bytes), 0),
+                       COUNT(*)
+                FROM derived_artifacts
+                GROUP BY storage_strategy_id
+                """;
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                var sid   = r.GetString(0);
+                var bytes = r.GetInt64(1);
+                var cnt   = r.GetInt32(2);
+                derivedByStrategy[sid]  = bytes;
+                totalDerived           += bytes;
+                totalCount             += cnt;
+            }
+        }
+
+        // File extension distribution from derived artifact file names
+        var extCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT file_name FROM derived_artifacts";
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
+            {
+                var ext = System.IO.Path.GetExtension(r.GetString(0)).ToLowerInvariant();
+                if (ext.Length > 0)
+                    extCounts[ext] = extCounts.GetValueOrDefault(ext) + 1;
+            }
+        }
+
+        return new DatLineAnalyticsSummary(
+            sourceBytes, totalDerived, derivedByStrategy, extCounts, totalCount);
+    }
 
     private SqliteConnection Open()
     {

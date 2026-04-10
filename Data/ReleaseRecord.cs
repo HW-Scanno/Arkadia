@@ -1,3 +1,5 @@
+using System;
+
 namespace Arkadia.Data;
 
 public sealed class ReleaseRecord
@@ -23,4 +25,11 @@ public sealed class ReleaseRecord
     /// Empty string for releases imported before this field was introduced.
     /// </summary>
     public string ReleaseContentKey { get; set; } = "";
+
+    /// <summary>
+    /// UTC timestamp set when this release was first introduced by a DAT update.
+    /// NULL for releases created during initial import or that predate this field.
+    /// This is a change marker, not a primary status.
+    /// </summary>
+    public DateTime? IntroducedAtUtc { get; set; }
 }

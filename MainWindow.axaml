@@ -1,15 +1,16 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:dash="using:Arkadia.Dashboard"
         xmlns:lib="using:Arkadia.Library"
         xmlns:sys="using:Arkadia.Systems"
         xmlns:pend="using:Arkadia.Pending"
         xmlns:disks="using:Arkadia.Disks"
         xmlns:vols="using:Arkadia.Volumes"
+        xmlns:data="using:Arkadia.Data"
         x:Class="Arkadia.MainWindow"
         Title="Arkadia"
-        Width="1400" Height="720"
-        MinWidth="800" MinHeight="500"
+        Width="1400" Height="785"
+        MinWidth="800" MinHeight="565"
+        WindowStartupLocation="CenterScreen"
         Background="{DynamicResource ArkBackground}"
         FontFamily="Inter,Segoe UI,sans-serif">
 
@@ -316,6 +317,12 @@
                             <TextBlock Text="Operations" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
+                    <Button x:Name="NavAnalytics" Classes="nav" Tag="Analytics" Click="OnNavClick">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <PathIcon Width="14" Height="14" Data="M0 10H2V14H0Z M3 7H5V14H3Z M6 4H8V14H6Z M9 1H11V14H9Z M12 5H14V14H12Z"/>
+                            <TextBlock Text="Analytics" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -341,305 +348,153 @@
                           Grid.Row="1"
                           HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="28,24,28,32" Spacing="16">
+                <StackPanel Margin="28,24,28,32" Spacing="20">
 
-                    <!-- ════════════════════════════════
-                         Summary cards row
-                    ════════════════════════════════ -->
+                    <!-- Refresh -->
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,4">
+                        <Button Content="Refresh" Classes="view-toggle" Click="OnDashboardRefresh"/>
+                    </StackPanel>
+
+                    <!-- ════ ARCHIVE OVERVIEW ════ -->
+                    <TextBlock Text="ARCHIVE OVERVIEW"
+                               FontSize="10" FontWeight="SemiBold" LetterSpacing="1.5"
+                               Foreground="#555566" Margin="0,0,0,0"/>
+
                     <UniformGrid Rows="1">
 
-                        <!-- Library Coverage -->
-                        <Border x:Name="CardLibraryCoverage" Classes="card">
-                            <StackPanel>
-                                <TextBlock Classes="widget-title" Text="LIBRARY COVERAGE"/>
-                                <TextBlock Classes="card-value" Text="91.2%"/>
-                                <Border Classes="card-divider"/>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Present"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="12,340"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Missing"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="1,203"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Lost"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="45"/>
-                                </Grid>
+                        <!-- Platforms -->
+                        <Border Classes="card">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="widget-title" Text="PLATFORMS"/>
+                                <TextBlock x:Name="DashPlatformsCount" Classes="card-value" Text="—"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- DAT Lines -->
+                        <Border Classes="card">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="widget-title" Text="DAT LINES"/>
+                                <TextBlock x:Name="DashDatLinesCount" Classes="card-value" Text="—"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Releases -->
+                        <Border Classes="card">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="widget-title" Text="RELEASES"/>
+                                <TextBlock x:Name="DashReleasesCount" Classes="card-value" Text="—"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Artifacts Stored -->
+                        <Border Classes="card">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="widget-title" Text="ARTIFACTS STORED"/>
+                                <TextBlock x:Name="DashArtifactsCount" Classes="card-value" Text="—"/>
                             </StackPanel>
                         </Border>
 
                         <!-- Volumes -->
-                        <Border x:Name="CardVolumes" Classes="card">
-                            <StackPanel>
+                        <Border Classes="card">
+                            <StackPanel Spacing="4">
                                 <TextBlock Classes="widget-title" Text="VOLUMES"/>
-                                <TextBlock Classes="card-value" Text="32"/>
+                                <TextBlock x:Name="DashVolumesCount" Classes="card-value" Text="—"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- Disks -->
+                        <Border Classes="card">
+                            <StackPanel Spacing="4">
+                                <TextBlock Classes="widget-title" Text="DISKS"/>
+                                <TextBlock x:Name="DashDisksCount" Classes="card-value" Text="—"/>
+                            </StackPanel>
+                        </Border>
+
+                    </UniformGrid>
+
+                    <!-- ════ INTEGRITY &amp; ATTENTION ════ -->
+                    <TextBlock Text="INTEGRITY &amp; ATTENTION"
+                               FontSize="10" FontWeight="SemiBold" LetterSpacing="1.5"
+                               Foreground="#555566" Margin="0,8,0,0"/>
+
+                    <UniformGrid Rows="1">
+
+                        <!-- Volume Health -->
+                        <Border Classes="card">
+                            <StackPanel Spacing="0">
+                                <TextBlock Classes="widget-title" Text="VOLUME HEALTH"/>
                                 <Border Classes="card-divider"/>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Verified"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="28"/>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="OK"/>
+                                    <TextBlock Grid.Column="1" x:Name="DashVolOk" Classes="card-val" Text="—"/>
                                 </Grid>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Needs Verify"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="3"/>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Critical"/>
+                                    <TextBlock Grid.Column="1" x:Name="DashVolCrit" Classes="card-val-accent" Text="—"/>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,Auto">
                                     <TextBlock Grid.Column="0" Classes="card-key" Text="Lost"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="1"/>
+                                    <TextBlock Grid.Column="1" x:Name="DashVolLost" Classes="card-val-accent" Text="—"/>
                                 </Grid>
                             </StackPanel>
                         </Border>
 
-                        <!-- Systems -->
-                        <Border x:Name="CardSystems" Classes="card">
-                            <StackPanel>
-                                <TextBlock Classes="widget-title" Text="SYSTEMS"/>
-                                <TextBlock Classes="card-value" Text="3"/>
+                        <!-- Release Status -->
+                        <Border Classes="card">
+                            <StackPanel Spacing="0">
+                                <TextBlock Classes="widget-title" Text="RELEASE STATUS"/>
                                 <Border Classes="card-divider"/>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Online"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="3"/>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Disks Lost"/>
+                                    <TextBlock Grid.Column="1" x:Name="DashDiskLost" Classes="card-val-accent" Text="—"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Missing"/>
+                                    <TextBlock Grid.Column="1" x:Name="DashRelMissing" Classes="card-val-accent" Text="—"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Pending"/>
+                                    <TextBlock Grid.Column="1" x:Name="DashRelPending" Classes="card-val" Text="—"/>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Offline"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="0"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Agents"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="3"/>
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Outdated"/>
+                                    <TextBlock Grid.Column="1" x:Name="DashRelOutdated" Classes="card-val" Text="—"/>
                                 </Grid>
                             </StackPanel>
                         </Border>
 
-                        <!-- Storage -->
-                        <Border x:Name="CardStorage" Classes="card">
-                            <StackPanel>
-                                <TextBlock Classes="widget-title" Text="STORAGE"/>
-                                <TextBlock Classes="card-value" Text="14.2 TB"/>
+                        <!-- Tools -->
+                        <Border Classes="card">
+                            <StackPanel Spacing="0">
+                                <TextBlock Classes="widget-title" Text="TOOLS"/>
                                 <Border Classes="card-divider"/>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Used"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="14.2 TB"/>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Built-In"/>
+                                    <TextBlock Grid.Column="1" x:Name="DashToolsBuiltIn" Classes="card-val" Text="—"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Present"/>
+                                    <TextBlock Grid.Column="1" x:Name="DashToolsPresent" Classes="card-val" Text="—"/>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Free"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="3.8 TB"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Disks"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="6"/>
-                                </Grid>
-                            </StackPanel>
-                        </Border>
-
-                        <!-- Recent Activity -->
-                        <Border x:Name="CardRecentActivity" Classes="card" Margin="0">
-                            <StackPanel>
-                                <TextBlock Classes="widget-title" Text="RECENT ACTIVITY"/>
-                                <TextBlock Classes="card-value" Text="Today"/>
-                                <Border Classes="card-divider"/>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key"        Text="Ingested"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val-accent" Text="+120"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key"        Text="Compressed"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val-accent" Text="+45"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Volumes built"/>
-                                    <TextBlock Grid.Column="1" Classes="card-val" Text="+2"/>
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Missing"/>
+                                    <TextBlock Grid.Column="1" x:Name="DashToolsMissing" Classes="card-val-accent" Text="—"/>
                                 </Grid>
                             </StackPanel>
                         </Border>
 
                     </UniformGrid>
 
-                    <!-- ════════════════════════════════════════════════════════
-                         Main widgets grid
-                         Code-behind reconfigures columns/rows on every resize:
-                           Compact  (< 700)    → 1 col, 3 rows (vertical stack)
-                           Standard (700-1099) → 2 cols, 2 rows (RecentOps|Attention; ArchiveFormats spans)
-                           Wide     (≥ 1100)   → 3 cols, 1 row  (side-by-side)
-                    ════════════════════════════════════════════════════════ -->
-                    <Grid x:Name="MainWidgetsGrid"
-                          ColumnDefinitions="*"
-                          RowDefinitions="Auto,Auto,Auto">
+                    <!-- ════ LATEST LOG OPERATIONS ════ -->
+                    <TextBlock Text="LATEST LOG OPERATIONS"
+                               FontSize="10" FontWeight="SemiBold" LetterSpacing="1.5"
+                               Foreground="#555566" Margin="0,8,0,0"/>
 
-                        <!-- ── Recent Operations ── -->
-                        <Border x:Name="WidgetRecentOperations"
-                                Grid.Row="0" Grid.Column="0"
-                                Margin="0,0,0,8"
-                                Background="{DynamicResource ArkSurface}"
-                                BorderBrush="{DynamicResource ArkSurfaceAlt}"
-                                BorderThickness="1"
-                                CornerRadius="8" Padding="22,18">
-                            <StackPanel Spacing="0">
-
-                                <!-- Panel header -->
-                                <DockPanel Margin="0,0,0,14">
-                                    <TextBlock Classes="widget-title" Margin="0"
-                                               Text="RECENT OPERATIONS"
-                                               VerticalAlignment="Center"/>
-                                    <TextBlock Text="Today"
-                                               FontSize="10" LetterSpacing="0.5"
-                                               Foreground="{DynamicResource ArkTextSecondary}"
-                                               HorizontalAlignment="Right"
-                                               VerticalAlignment="Center"/>
-                                </DockPanel>
-
-                                <!-- Column headers -->
-                                <Border BorderBrush="{DynamicResource ArkSurfaceAlt}"
-                                        BorderThickness="0,0,0,1" Padding="6,0,6,8" Margin="0,0,0,2">
-                                    <Grid ColumnDefinitions="100,72,*,80">
-                                        <TextBlock Grid.Column="0" Classes="col-header" Text="TIME"/>
-                                        <TextBlock Grid.Column="1" Classes="col-header" Text="TYPE"/>
-                                        <TextBlock Grid.Column="2" Classes="col-header" Text="DETAIL"/>
-                                        <TextBlock Grid.Column="3" Classes="col-header" Text="STATUS" HorizontalAlignment="Right"/>
-                                    </Grid>
-                                </Border>
-
-                                <!-- Log rows — alternating background -->
-                                <Border Padding="6,8">
-                                    <Grid ColumnDefinitions="100,72,*,80">
-                                        <TextBlock Grid.Column="0" Text="14:32:10" FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"/>
-                                        <TextBlock Grid.Column="1" Text="Ingest"   FontSize="12" Foreground="{DynamicResource ArkTextPrimary}"/>
-                                        <TextBlock Grid.Column="2" Text="Vol-0029 — 120 items added from /archive/2026-03" FontSize="12" Foreground="{DynamicResource ArkTextPrimary}" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Grid.Column="3" Text="Done" FontSize="12" Foreground="{DynamicResource ArkAccent}" HorizontalAlignment="Right" FontWeight="SemiBold"/>
-                                    </Grid>
-                                </Border>
-                                <Border Padding="6,8" Background="{DynamicResource ArkSurfaceAlt}" CornerRadius="4">
-                                    <Grid ColumnDefinitions="100,72,*,80">
-                                        <TextBlock Grid.Column="0" Text="13:58:04" FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"/>
-                                        <TextBlock Grid.Column="1" Text="Compress" FontSize="12" Foreground="{DynamicResource ArkTextPrimary}"/>
-                                        <TextBlock Grid.Column="2" Text="Vol-0028 — 45 items compressed (zstd-3)" FontSize="12" Foreground="{DynamicResource ArkTextPrimary}" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Grid.Column="3" Text="Done" FontSize="12" Foreground="{DynamicResource ArkAccent}" HorizontalAlignment="Right" FontWeight="SemiBold"/>
-                                    </Grid>
-                                </Border>
-                                <Border Padding="6,8">
-                                    <Grid ColumnDefinitions="100,72,*,80">
-                                        <TextBlock Grid.Column="0" Text="12:14:38" FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"/>
-                                        <TextBlock Grid.Column="1" Text="Verify"   FontSize="12" Foreground="{DynamicResource ArkTextPrimary}"/>
-                                        <TextBlock Grid.Column="2" Text="Vol-0027 — full checksum pass, 0 errors" FontSize="12" Foreground="{DynamicResource ArkTextPrimary}" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Grid.Column="3" Text="Done" FontSize="12" Foreground="{DynamicResource ArkAccent}" HorizontalAlignment="Right" FontWeight="SemiBold"/>
-                                    </Grid>
-                                </Border>
-                                <Border Padding="6,8" Background="{DynamicResource ArkSurfaceAlt}" CornerRadius="4">
-                                    <Grid ColumnDefinitions="100,72,*,80">
-                                        <TextBlock Grid.Column="0" Text="11:05:22" FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"/>
-                                        <TextBlock Grid.Column="1" Text="Build"    FontSize="12" Foreground="{DynamicResource ArkTextPrimary}"/>
-                                        <TextBlock Grid.Column="2" Text="Vol-0026 — volume index rebuilt, 14.2 GB" FontSize="12" Foreground="{DynamicResource ArkTextPrimary}" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Grid.Column="3" Text="Done" FontSize="12" Foreground="{DynamicResource ArkAccent}" HorizontalAlignment="Right" FontWeight="SemiBold"/>
-                                    </Grid>
-                                </Border>
-                                <Border Padding="6,8">
-                                    <Grid ColumnDefinitions="100,72,*,80">
-                                        <TextBlock Grid.Column="0" Text="09:47:11" FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"/>
-                                        <TextBlock Grid.Column="1" Text="Verify"   FontSize="12" Foreground="{DynamicResource ArkTextPrimary}"/>
-                                        <TextBlock Grid.Column="2" Text="Vol-0024 — 3 checksum mismatches detected" FontSize="12" Foreground="{DynamicResource ArkTextPrimary}" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Grid.Column="3" Text="Warning" FontSize="12" Foreground="#FFA726" HorizontalAlignment="Right" FontWeight="SemiBold"/>
-                                    </Grid>
-                                </Border>
-                                <Border Padding="6,8" Background="{DynamicResource ArkSurfaceAlt}" CornerRadius="4">
-                                    <Grid ColumnDefinitions="100,72,*,80">
-                                        <TextBlock Grid.Column="0" Text="08:30:00" FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"/>
-                                        <TextBlock Grid.Column="1" Text="Build"    FontSize="12" Foreground="{DynamicResource ArkTextPrimary}"/>
-                                        <TextBlock Grid.Column="2" Text="Vol-0025 — volume index rebuilt, 9.6 GB" FontSize="12" Foreground="{DynamicResource ArkTextPrimary}" TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Grid.Column="3" Text="Done" FontSize="12" Foreground="{DynamicResource ArkAccent}" HorizontalAlignment="Right" FontWeight="SemiBold"/>
-                                    </Grid>
-                                </Border>
-
-                            </StackPanel>
-                        </Border>
-
-                        <!-- ── Attention Required ── -->
-                        <Border x:Name="WidgetAttentionRequired"
-                                Grid.Row="1" Grid.Column="0"
-                                Margin="0,0,0,8"
-                                Background="{DynamicResource ArkSurface}"
-                                BorderBrush="{DynamicResource ArkSurfaceAlt}"
-                                BorderThickness="1"
-                                CornerRadius="8" Padding="22,18">
-                            <StackPanel Spacing="0">
-
-                                <TextBlock Classes="widget-title" Text="ATTENTION REQUIRED"
-                                           Foreground="#FFA726"/>
-
-                                <Grid ColumnDefinitions="18,8,*" Margin="0,0,0,6">
-                                    <TextBlock Grid.Column="0" Text="▲" FontSize="10" Foreground="#FFA726" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="2" Text="Vol-0024: 3 checksum mismatches — verification required"
-                                               FontSize="12" Foreground="{DynamicResource ArkTextPrimary}" TextWrapping="Wrap"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="18,8,*" Margin="0,0,0,6">
-                                    <TextBlock Grid.Column="0" Text="▲" FontSize="10" Foreground="#FFA726" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="2" Text="Vol-0031: last verified 47 days ago — verify overdue"
-                                               FontSize="12" Foreground="{DynamicResource ArkTextPrimary}" TextWrapping="Wrap"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="18,8,*">
-                                    <TextBlock Grid.Column="0" Text="●" FontSize="10" Foreground="#EF5350" VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="2" Text="Disk 4 (WD-4TB-C): S.M.A.R.T. reallocated sector count increasing"
-                                               FontSize="12" Foreground="{DynamicResource ArkTextPrimary}" TextWrapping="Wrap"/>
-                                </Grid>
-
-                            </StackPanel>
-                        </Border>
-
-                        <!-- ── Archive Formats — hidden in Compact ── -->
-                        <Border x:Name="WidgetArchiveFormats"
-                                Grid.Row="2" Grid.Column="0"
-                                Margin="0"
-                                Background="{DynamicResource ArkSurface}"
-                                BorderBrush="{DynamicResource ArkSurfaceAlt}"
-                                BorderThickness="1"
-                                CornerRadius="8" Padding="22,18">
-                            <StackPanel Spacing="0">
-
-                                <TextBlock Classes="widget-title" Text="ARCHIVE FORMATS"/>
-
-                                <!-- Chart + legend -->
-                                <Grid ColumnDefinitions="118,28,*">
-
-                                    <dash:DonutChartControl
-                                        x:Name="ArchiveFormatsChart"
-                                        Grid.Column="0"
-                                        Width="108" Height="108"
-                                        RingThickness="22"
-                                        HorizontalAlignment="Center"
-                                        VerticalAlignment="Center"/>
-
-                                    <StackPanel Grid.Column="2" Spacing="12" VerticalAlignment="Center">
-
-                                        <Grid ColumnDefinitions="10,10,*,Auto">
-                                            <Border Grid.Column="0" Width="10" Height="10" CornerRadius="2" Background="#7B68EE" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="2" Text=".iso" FontSize="12" FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource ArkTextPrimary}" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="3" Text="50%" FontSize="12"
-                                                       Foreground="{DynamicResource ArkTextSecondary}" VerticalAlignment="Center"/>
-                                        </Grid>
-
-                                        <Grid ColumnDefinitions="10,10,*,Auto">
-                                            <Border Grid.Column="0" Width="10" Height="10" CornerRadius="2" Background="#4A90D9" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="2" Text=".chd" FontSize="12" FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource ArkTextPrimary}" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="3" Text="40%" FontSize="12"
-                                                       Foreground="{DynamicResource ArkTextSecondary}" VerticalAlignment="Center"/>
-                                        </Grid>
-
-                                        <Grid ColumnDefinitions="10,10,*,Auto">
-                                            <Border Grid.Column="0" Width="10" Height="10" CornerRadius="2" Background="#3D7A5C" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="2" Text=".cue" FontSize="12" FontWeight="SemiBold"
-                                                       Foreground="{DynamicResource ArkTextPrimary}" VerticalAlignment="Center"/>
-                                            <TextBlock Grid.Column="3" Text="10%" FontSize="12"
-                                                       Foreground="{DynamicResource ArkTextSecondary}" VerticalAlignment="Center"/>
-                                        </Grid>
-
-                                    </StackPanel>
-                                </Grid>
-
-                            </StackPanel>
-                        </Border>
-
-                    </Grid><!-- /MainWidgetsGrid -->
+                    <Border Background="{DynamicResource ArkSurface}"
+                            BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                            BorderThickness="1" CornerRadius="8" Padding="22,16">
+                        <StackPanel x:Name="DashLatestLogsPanel" Spacing="0"/>
+                    </Border>
 
                 </StackPanel>
             </ScrollViewer>
@@ -965,12 +820,23 @@
                                                    Foreground="{Binding TierBrush}"
                                                    HorizontalAlignment="Center"
                                                    VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="2"
-                                                   Text="{Binding Name}"
-                                                   FontSize="13"
-                                                   Foreground="{DynamicResource ArkTextPrimary}"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center"/>
+                                        <StackPanel Grid.Column="2"
+                                                    Orientation="Horizontal"
+                                                    Spacing="6"
+                                                    VerticalAlignment="Center">
+                                            <Border Background="#112233" CornerRadius="3"
+                                                    Padding="4,1"
+                                                    IsVisible="{Binding IsNew}"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="NEW" FontSize="9" FontWeight="SemiBold"
+                                                           Foreground="#29B6F6" LetterSpacing="0.8"/>
+                                            </Border>
+                                            <TextBlock Text="{Binding Name}"
+                                                       FontSize="13"
+                                                       Foreground="{DynamicResource ArkTextPrimary}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center"/>
+                                        </StackPanel>
                                         <TextBlock Grid.Column="3"
                                                    Text="{Binding Region}"
                                                    FontSize="12"
@@ -1044,9 +910,17 @@
                                     <TextBlock Grid.Column="0" Classes="card-key" Text="Platform"  Margin="0"/>
                                     <TextBlock Grid.Column="1" x:Name="DetailPlatform" Classes="card-val" Margin="0"/>
                                 </Grid>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Status"    Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="DetailStatusText" FontSize="12" FontWeight="SemiBold" Margin="0"/>
+                                <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,8">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Status" Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="DetailStatusText"
+                                               FontSize="12" FontWeight="SemiBold" Margin="0,0,8,0"/>
+                                    <Border Grid.Column="2" x:Name="DetailNewBadge"
+                                            IsVisible="False"
+                                            Background="#112233" CornerRadius="3"
+                                            Padding="5,2" VerticalAlignment="Center">
+                                        <TextBlock Text="NEW" FontSize="9" FontWeight="SemiBold"
+                                                   Foreground="#29B6F6" LetterSpacing="0.8"/>
+                                    </Border>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
                                     <TextBlock Grid.Column="0" Classes="card-key" Text="Tier"      Margin="0"/>
@@ -1890,6 +1764,11 @@
                                             Classes="view-toggle"
                                             Margin="0,0,8,8"
                                             Click="OnMoveVolume"/>
+                                    <Button x:Name="VolumeDetailRepairBtn"
+                                            Content="Repair" IsEnabled="False"
+                                            Classes="view-toggle"
+                                            Margin="0,0,8,8"
+                                            Click="OnRepairVolume"/>
                                     <Button x:Name="VolumeDetailArtifactsBtn"
                                             Content="Artifacts…" IsEnabled="False"
                                             Classes="view-toggle"
@@ -1905,6 +1784,744 @@
                 </Grid><!-- /list+detail -->
 
             </Grid><!-- /ViewVolumes -->
+
+            <!-- ═══════════════════════════════════════════════ LOGS ═══ -->
+            <Grid x:Name="ViewLogs" Grid.Row="1" IsVisible="False" RowDefinitions="Auto,*">
+
+                <!-- header -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="28,24,28,0" Spacing="12">
+                    <TextBlock Text="LOGS"
+                               FontSize="11" FontWeight="SemiBold" LetterSpacing="1.5"
+                               Foreground="#555566" VerticalAlignment="Center"/>
+                    <Button x:Name="LogsRefreshBtn"
+                            Content="Refresh"
+                            Classes="view-toggle"
+                            Click="OnLogsRefresh"/>
+                    <Button x:Name="LogsOpenLatestBtn"
+                            Content="Open Latest"
+                            Classes="view-toggle"
+                            Click="OnLogsOpenLatest"/>
+                </StackPanel>
+
+                <!-- split: tree | viewer -->
+                <Grid Grid.Row="1" ColumnDefinitions="240,*" Margin="28,18,28,24">
+
+                    <!-- left: folder/file tree -->
+                    <Border Grid.Column="0"
+                            Background="#0A0A12" BorderBrush="#1E1E2C"
+                            BorderThickness="1" CornerRadius="6"
+                            Margin="0,0,12,0">
+                        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="LogsTreePanel" Spacing="0" Margin="8,8"/>
+                        </ScrollViewer>
+                    </Border>
+
+                    <!-- right: file content viewer -->
+                    <Border Grid.Column="1"
+                            Background="#0A0A12" BorderBrush="#1E1E2C"
+                            BorderThickness="1" CornerRadius="6">
+                        <Grid RowDefinitions="Auto,*">
+                            <TextBlock x:Name="LogsFileLabel"
+                                       Grid.Row="0"
+                                       Text="No file selected"
+                                       FontSize="11" Foreground="#555566"
+                                       Margin="12,10,12,8"/>
+                            <ScrollViewer Grid.Row="1"
+                                          HorizontalScrollBarVisibility="Auto"
+                                          VerticalScrollBarVisibility="Auto">
+                                <TextBox x:Name="LogsContentBox"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         TextWrapping="NoWrap"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         Foreground="#AAAACC"
+                                         FontFamily="Cascadia Code,Consolas,Courier New,monospace"
+                                         FontSize="12"
+                                         Padding="12,0,12,12"/>
+                            </ScrollViewer>
+                        </Grid>
+                    </Border>
+
+                </Grid>
+
+            </Grid><!-- /ViewLogs -->
+
+            <!-- ═══════════════════════════════════════════ SETTINGS ═══ -->
+            <Grid x:Name="ViewSettings" Grid.Row="1" IsVisible="False" RowDefinitions="Auto,*">
+
+                <!-- header -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="28,24,28,0" Spacing="12">
+                    <TextBlock Text="SETTINGS"
+                               FontSize="11" FontWeight="SemiBold" LetterSpacing="1.5"
+                               Foreground="#555566" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <ScrollViewer Grid.Row="1" Margin="28,18,28,24">
+                    <StackPanel Spacing="20" MaxWidth="680" HorizontalAlignment="Left">
+
+                        <!-- ── VERIFY BEHAVIOR card ──────────────────────────── -->
+                        <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                BorderThickness="1" CornerRadius="6" Padding="20,16">
+                            <StackPanel Spacing="0">
+
+                                <TextBlock Text="VERIFY BEHAVIOR"
+                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                           Foreground="#555566" Margin="0,0,0,16"/>
+
+                                <!-- quarantine_mismatch_on_verify -->
+                                <StackPanel Spacing="4" Margin="0,0,0,14">
+                                    <CheckBox x:Name="SettingQuarantineMismatch"
+                                              Content="Quarantine mismatches during verify"
+                                              FontSize="12" Foreground="#CCCCDD"/>
+                                    <TextBlock Text="When enabled, files that fail checksum verification can be moved to incoming-skip during Verify apply."
+                                               FontSize="11" Foreground="#555577"
+                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                                <!-- quarantine_unexpected_on_verify -->
+                                <StackPanel Spacing="4">
+                                    <CheckBox x:Name="SettingQuarantineUnexpected"
+                                              Content="Quarantine unexpected files during verify"
+                                              FontSize="12" Foreground="#CCCCDD"/>
+                                    <TextBlock Text="When enabled, files present on volume but not expected by the DAT can be moved to incoming-skip during Verify apply."
+                                               FontSize="11" Foreground="#555577"
+                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                            </StackPanel>
+                        </Border><!-- /Verify Behavior card -->
+
+                        <!-- ── LOGGING card ──────────────────────────────────── -->
+                        <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                BorderThickness="1" CornerRadius="6" Padding="20,16">
+                            <StackPanel Spacing="0">
+
+                                <TextBlock Text="LOGGING"
+                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                           Foreground="#555566" Margin="0,0,0,16"/>
+
+                                <!-- auto_export_ingestion_logs -->
+                                <StackPanel Spacing="4" Margin="0,0,0,14">
+                                    <CheckBox x:Name="SettingAutoExportLogs"
+                                              Content="Auto-export ingestion logs"
+                                              FontSize="12" Foreground="#CCCCDD"/>
+                                    <TextBlock Text="Automatically write a log file to the logs/ folder each time an ingestion run completes."
+                                               FontSize="11" Foreground="#555577"
+                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                                <!-- log_on_copy -->
+                                <StackPanel Spacing="4" Margin="0,0,0,14">
+                                    <CheckBox x:Name="SettingLogOnCopy"
+                                              Content="Auto-export copy logs"
+                                              FontSize="12" Foreground="#CCCCDD"/>
+                                    <TextBlock Text="Automatically include individual file copy operations in the volume build log."
+                                               FontSize="11" Foreground="#555577"
+                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                                <!-- auto_export_verify_logs -->
+                                <StackPanel Spacing="4" Margin="0,0,0,14">
+                                    <CheckBox x:Name="SettingAutoExportVerifyLogs"
+                                              Content="Auto-export verify logs"
+                                              FontSize="12" Foreground="#CCCCDD"/>
+                                    <TextBlock Text="Automatically write a log file to the logs/verify/ folder each time a verify run completes."
+                                               FontSize="11" Foreground="#555577"
+                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                                <!-- auto_export_repair_logs -->
+                                <StackPanel Spacing="4">
+                                    <CheckBox x:Name="SettingAutoExportRepairLogs"
+                                              Content="Auto-export repair logs"
+                                              FontSize="12" Foreground="#CCCCDD"/>
+                                    <TextBlock Text="Automatically write a log file to the logs/repair/ folder each time a repair run completes."
+                                               FontSize="11" Foreground="#555577"
+                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                            </StackPanel>
+                        </Border><!-- /Ingest Behavior card -->
+
+                        <!-- ── DEBUG card ─────────────────────────────────────── -->
+                        <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                BorderThickness="1" CornerRadius="6" Padding="20,16">
+                            <StackPanel Spacing="0">
+
+                                <TextBlock Text="DEBUG"
+                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                           Foreground="#555566" Margin="0,0,0,16"/>
+
+                                <!-- show_debug_artifact_info -->
+                                <StackPanel Spacing="4">
+                                    <CheckBox x:Name="SettingShowDebugArtifactInfo"
+                                              Content="Show debug artifact info in Library"
+                                              FontSize="12" Foreground="#CCCCDD"/>
+                                    <TextBlock Text="When enabled, detailed artifact and content identity data is shown in the Library release detail panel. Takes effect immediately."
+                                               FontSize="11" Foreground="#555577"
+                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                            </StackPanel>
+                        </Border><!-- /Debug card -->
+
+                        <!-- ── Save / Reload ──────────────────────────────────── -->
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button Content="Save Settings"
+                                    Classes="view-toggle"
+                                    Click="OnSaveSettings"/>
+                            <Button Content="Reload"
+                                    Classes="view-toggle"
+                                    Click="OnReloadSettings"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </ScrollViewer>
+
+            </Grid><!-- /ViewSettings -->
+
+            <!-- ═══════════════════════════════════════════ OPERATIONS ═══ -->
+            <Grid x:Name="ViewOperations" Grid.Row="1" IsVisible="False" RowDefinitions="Auto,*">
+
+                <!-- header -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="28,24,28,0" Spacing="12">
+                    <TextBlock Text="OPERATIONS"
+                               FontSize="11" FontWeight="SemiBold" LetterSpacing="1.5"
+                               Foreground="#555566" VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <ScrollViewer Grid.Row="1" Margin="28,18,28,24">
+                    <StackPanel Spacing="20">
+
+                        <!-- ── TOOLS card ─────────────────────────────────────── -->
+                        <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                BorderThickness="1" CornerRadius="6" Padding="20,16">
+                            <StackPanel Spacing="0">
+
+                                <TextBlock Text="TOOLS"
+                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                           Foreground="#555566" Margin="0,0,0,12"/>
+
+                                <!-- tool rows injected here by code -->
+                                <StackPanel x:Name="OperationsToolsPanel" Spacing="4"/>
+
+                            </StackPanel>
+                        </Border><!-- /Tools card -->
+
+                        <!-- ── TRANSFORMS card ───────────────────────────────── -->
+                        <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                BorderThickness="1" CornerRadius="6" Padding="20,16">
+                            <StackPanel Spacing="0">
+
+                                <TextBlock Text="TRANSFORMS"
+                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                           Foreground="#555566" Margin="0,0,0,8"/>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                    <Button Content="+ New Transform"
+                                            Classes="view-toggle"
+                                            Click="OnNewTransform"/>
+                                </StackPanel>
+
+                                <Border Background="#08080F" BorderBrush="#1A1A28"
+                                        BorderThickness="1" CornerRadius="4" Padding="12,8" Margin="0,0,0,12">
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="Transform Types"
+                                                   FontSize="10" FontWeight="SemiBold" Foreground="#7B68EE"
+                                                   Margin="0,0,0,4"/>
+                                        <TextBlock FontSize="11" Foreground="#555577">
+                                            <Run FontWeight="SemiBold" Foreground="#C060C0">File</Run>
+                                            <Run Foreground="#555577"> — applied independently to each source file.</Run>
+                                        </TextBlock>
+                                        <TextBlock FontSize="11" Foreground="#555577">
+                                            <Run FontWeight="SemiBold" Foreground="#C8A000">Folder</Run>
+                                            <Run Foreground="#555577"> — applied to the entire release folder as a unit.</Run>
+                                        </TextBlock>
+                                    </StackPanel>
+                                </Border>
+
+                        <Grid ColumnDefinitions="220,*" MinHeight="340">
+
+                            <!-- transform list (built dynamically in code-behind with group headers) -->
+                            <Border Grid.Column="0"
+                                    Margin="0,0,16,0"
+                                    Background="#0A0A12"
+                                    BorderBrush="#1E1E2C"
+                                    BorderThickness="1"
+                                    CornerRadius="6">
+                                <ScrollViewer>
+                                    <StackPanel x:Name="TransformsListPanel" Spacing="0"/>
+                                </ScrollViewer>
+                            </Border>
+
+                            <!-- transform editor -->
+                            <StackPanel x:Name="TransformEditorPanel"
+                                        Grid.Column="1"
+                                        Spacing="0"
+                                        IsVisible="False">
+
+                                <!-- name (editable) -->
+                                <TextBlock Text="Name"
+                                           FontSize="10" FontWeight="SemiBold" Foreground="#555566"
+                                           Margin="0,0,0,6"/>
+                                <TextBox x:Name="TransformNameBox"
+                                         Background="#0D0D1A" Foreground="#CCCCDD"
+                                         BorderBrush="#2A2A3C" BorderThickness="1"
+                                         CornerRadius="4" Padding="8,6"
+                                         FontSize="12"
+                                         Margin="0,0,0,12"/>
+
+                                <!-- read-only info row -->
+                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,8">
+                                    <TextBlock Grid.Column="0" Text="ID"
+                                               FontSize="10" FontWeight="SemiBold" Foreground="#555566"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="TransformIdText" Grid.Column="1"
+                                               FontSize="12" Foreground="#AAAACC"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,12">
+                                    <TextBlock Grid.Column="0" Text="Tool"
+                                               FontSize="10" FontWeight="SemiBold" Foreground="#555566"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="TransformToolText" Grid.Column="1"
+                                               FontSize="12" Foreground="#AAAACC"
+                                               VerticalAlignment="Center"/>
+                                </Grid>
+
+                                <!-- transform type -->
+                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,16">
+                                    <TextBlock Grid.Column="0" Text="Type"
+                                               FontSize="10" FontWeight="SemiBold" Foreground="#555566"
+                                               VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="TransformTypeBox"
+                                              Grid.Column="1"
+                                              Background="#0D0D1A" Foreground="#CCCCDD"
+                                              BorderBrush="#2A2A3C" BorderThickness="1"
+                                              FontSize="12">
+                                        <ComboBoxItem Content="File"   Tag="file"/>
+                                        <ComboBoxItem Content="Folder" Tag="folder"/>
+                                    </ComboBox>
+                                </Grid>
+
+                                <!-- command template -->
+                                <TextBlock Text="Command Template"
+                                           FontSize="10" FontWeight="SemiBold" Foreground="#555566"
+                                           Margin="0,0,0,6"/>
+                                <TextBox x:Name="TransformCmdBox"
+                                         Background="#0D0D1A" Foreground="#CCCCDD"
+                                         BorderBrush="#2A2A3C" BorderThickness="1"
+                                         CornerRadius="4" Padding="8,6"
+                                         FontSize="12"
+                                         Margin="0,0,0,10"
+                                         TextChanged="OnTransformFieldChanged"/>
+
+                                <!-- output extension -->
+                                <TextBlock Text="Output Extension"
+                                           FontSize="10" FontWeight="SemiBold" Foreground="#555566"
+                                           Margin="0,0,0,6"/>
+                                <TextBox x:Name="TransformOutputExtBox"
+                                         Background="#0D0D1A" Foreground="#CCCCDD"
+                                         BorderBrush="#2A2A3C" BorderThickness="1"
+                                         CornerRadius="4" Padding="8,6"
+                                         FontSize="12" MaxWidth="120" HorizontalAlignment="Left"
+                                         Margin="0,0,0,4"
+                                         TextChanged="OnTransformFieldChanged"/>
+
+                                <!-- output extension warning -->
+                                <TextBlock x:Name="TransformExtWarning"
+                                           Text="No output extension set — derived filename will match the source."
+                                           FontSize="10" Foreground="#E8A000"
+                                           IsVisible="False"
+                                           Margin="0,0,0,12"/>
+
+                                <!-- resolved command preview -->
+                                <TextBlock Text="Resolved Command:"
+                                           FontSize="10" FontWeight="SemiBold" Foreground="#555566"
+                                           Margin="0,0,0,6"/>
+                                <Border Background="#08080F" BorderBrush="#1A1A28"
+                                        BorderThickness="1" CornerRadius="4" Padding="8,6"
+                                        Margin="0,0,0,16">
+                                    <TextBlock x:Name="TransformPreviewText"
+                                               FontSize="11" Foreground="#9A9AB8"
+                                               TextWrapping="Wrap"
+                                               FontFamily="Cascadia Code,Consolas,Courier New,monospace"/>
+                                </Border>
+
+                                <!-- save + test -->
+                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,20">
+                                    <Button x:Name="TransformSaveBtn"
+                                            Content="Save"
+                                            Classes="view-toggle"
+                                            Click="OnSaveTransform"/>
+                                    <Button x:Name="TransformTestBtn"
+                                            Content="Test Transform"
+                                            Classes="view-toggle"
+                                            Click="OnTestTransform"/>
+                                </StackPanel>
+
+                                <Border Height="1" Background="#1E1E2C" Margin="0,0,0,16"/>
+
+                                <!-- ── always-visible placeholder reference ──── -->
+                                <TextBlock Text="Available placeholders:"
+                                           FontSize="10" FontWeight="SemiBold" Foreground="#555566"
+                                           Margin="0,0,0,8"/>
+
+                                <Border Background="#08080F" BorderBrush="#1A1A28"
+                                        BorderThickness="1" CornerRadius="4" Padding="12,10"
+                                        TextElement.FontFamily="Cascadia Code,Consolas,Courier New,monospace"
+                                        TextElement.FontSize="11">
+                                    <StackPanel Spacing="3">
+                                        <TextBlock Text="Required placeholders: {input} and {output}"
+                                                   FontSize="10" FontWeight="SemiBold" Foreground="#CC6666"
+                                                   Margin="0,0,0,2"/>
+                                        <Border Height="1" Background="#2A1A1A" Margin="0,0,0,4"/>
+                                        <Grid ColumnDefinitions="130,*">
+                                            <TextBlock Grid.Column="0" Text="{}{input}"        Foreground="#7B68EE"/>
+                                            <TextBlock Grid.Column="1" Text="→ full input path   (C:\roms\game.iso)" Foreground="#666677"/>
+                                        </Grid>
+                                        <Grid ColumnDefinitions="130,*">
+                                            <TextBlock Grid.Column="0" Text="{}{output}"       Foreground="#7B68EE"/>
+                                            <TextBlock Grid.Column="1" Text="→ full output path  (C:\archive\game.chd)" Foreground="#666677"/>
+                                        </Grid>
+                                        <Border Height="1" Background="#1A1A28" Margin="0,4,0,4"/>
+                                        <Grid ColumnDefinitions="130,*">
+                                            <TextBlock Grid.Column="0" Text="{}{input_stem}"   Foreground="#7B68EE"/>
+                                            <TextBlock Grid.Column="1" Text="→ name without ext  (game)" Foreground="#666677"/>
+                                        </Grid>
+                                        <Grid ColumnDefinitions="130,*">
+                                            <TextBlock Grid.Column="0" Text="{}{output_stem}"  Foreground="#7B68EE"/>
+                                            <TextBlock Grid.Column="1" Text="→ name without ext  (game)" Foreground="#666677"/>
+                                        </Grid>
+                                        <Grid ColumnDefinitions="130,*">
+                                            <TextBlock Grid.Column="0" Text="{}{input_name}"   Foreground="#7B68EE"/>
+                                            <TextBlock Grid.Column="1" Text="→ name with ext     (game.iso)" Foreground="#666677"/>
+                                        </Grid>
+                                        <Grid ColumnDefinitions="130,*">
+                                            <TextBlock Grid.Column="0" Text="{}{output_name}"  Foreground="#7B68EE"/>
+                                            <TextBlock Grid.Column="1" Text="→ name with ext     (game.chd)" Foreground="#666677"/>
+                                        </Grid>
+                                        <Grid ColumnDefinitions="130,*">
+                                            <TextBlock Grid.Column="0" Text="{}{input_dir}"    Foreground="#7B68EE"/>
+                                            <TextBlock Grid.Column="1" Text="→ input directory   (C:\roms\)" Foreground="#666677"/>
+                                        </Grid>
+                                        <Grid ColumnDefinitions="130,*">
+                                            <TextBlock Grid.Column="0" Text="{}{output_dir}"   Foreground="#7B68EE"/>
+                                            <TextBlock Grid.Column="1" Text="→ output directory  (C:\archive\)" Foreground="#666677"/>
+                                        </Grid>
+                                        <Border Height="1" Background="#1A1A28" Margin="0,6,0,6"/>
+                                        <TextBlock Text="Examples:" Foreground="#444455" Margin="0,0,0,4"/>
+                                        <TextBlock Text="CHD:   createcd -i &quot;{input}&quot; -o &quot;{output}&quot;"
+                                                   Foreground="#555566"/>
+                                        <TextBlock Text="ZIP:   a -tzip &quot;{output}&quot; &quot;{input}&quot;"
+                                                   Foreground="#555566"/>
+                                        <TextBlock Text="Custom: tool.exe &quot;{input_stem}&quot; &quot;{output_stem}&quot;"
+                                                   Foreground="#555566"/>
+                                    </StackPanel>
+                                </Border>
+
+                            </StackPanel><!-- /TransformEditorPanel -->
+
+                        </Grid><!-- /transforms Grid -->
+
+                            </StackPanel>
+                        </Border><!-- /Transforms card -->
+
+                    </StackPanel>
+                </ScrollViewer>
+
+            </Grid><!-- /ViewOperations -->
+
+            <!-- ── Analytics view ── -->
+            <ScrollViewer x:Name="ViewAnalytics"
+                          Grid.Row="1"
+                          IsVisible="False"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="28,24,28,32" Spacing="24">
+
+                    <!-- Action row -->
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="6">
+                        <Button Content="Refresh"
+                                Classes="view-toggle"
+                                Click="OnAnalyticsRefresh"/>
+                        <Button Content="Generate All Reports"
+                                Classes="view-toggle"
+                                Click="OnAnalyticsGenerateReports"/>
+                        <Button Content="Open Analytics Folder"
+                                Classes="view-toggle"
+                                Click="OnAnalyticsOpenFolder"/>
+                    </StackPanel>
+
+                    <!-- KPI strip header -->
+                    <TextBlock Text="ARCHIVE METRICS"
+                               FontSize="10" FontWeight="SemiBold" LetterSpacing="1.5"
+                               Foreground="#555566" Margin="0,0,0,-8"/>
+
+                    <!-- KPI cards (8)
+                         Typography scale:
+                           label:  10px SemiBold LetterSpacing=1.0  #ArkTextSecondary
+                           value:  20px Bold  #777788  (standard) | 28px #4CAF50 (hero) | 22px #7B68EE (secondary)
+                           helper: 10px Normal  #7A7A8F  TextWrapping=Wrap
+                         Accent cards use Grid RowDefinitions="4,*" so the inner content Border
+                         stretches to fill the remaining cell height, enabling VerticalAlignment=Center.
+                    -->
+                    <UniformGrid Rows="1">
+
+                        <!-- SOURCE SIZE — dark cyan accent -->
+                        <Border Classes="card" Padding="0">
+                            <Grid RowDefinitions="4,*">
+                                <Border Grid.Row="0" Height="4" Background="#1A4A5A"
+                                        CornerRadius="7,7,0,0"/>
+                                <Border Grid.Row="1" Padding="12,8,12,12">
+                                    <StackPanel Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="SOURCE SIZE"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.0"
+                                                   Foreground="#2A8AAA"
+                                                   TextAlignment="Center" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="AnalyticsKpiSourceSize"
+                                                   FontSize="20" FontWeight="Bold" Foreground="#26C6DA" Text="—"
+                                                   TextAlignment="Center" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="raw ingested data"
+                                                   FontSize="10" Foreground="#1A6880"
+                                                   TextAlignment="Center" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <!-- DERIVED SIZE — light cyan accent -->
+                        <Border Classes="card" Padding="0">
+                            <Grid RowDefinitions="4,*">
+                                <Border Grid.Row="0" Height="4" Background="#0D3040"
+                                        CornerRadius="7,7,0,0"/>
+                                <Border Grid.Row="1" Padding="12,8,12,12">
+                                    <StackPanel Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="DERIVED SIZE"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.0"
+                                                   Foreground="#2090B0"
+                                                   TextAlignment="Center" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="AnalyticsKpiDerivedSize"
+                                                   FontSize="20" FontWeight="Bold" Foreground="#29B6F6" Text="—"
+                                                   TextAlignment="Center" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="stored archive size"
+                                                   FontSize="10" Foreground="#1A7090"
+                                                   TextAlignment="Center" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <!-- SPACE SAVED — primary accent (color emphasis only) -->
+                        <Border Classes="card" Padding="0"
+                                BorderBrush="#1A3D22" BorderThickness="1">
+                            <Grid RowDefinitions="4,*">
+                                <Border Grid.Row="0" Height="4" Background="#2A6030"
+                                        CornerRadius="7,7,0,0"/>
+                                <Border Grid.Row="1" Padding="12,8,12,12">
+                                    <StackPanel Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="SPACE SAVED"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.0"
+                                                   Foreground="#4A9A55"
+                                                   TextAlignment="Center" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="AnalyticsKpiSavedPct"
+                                                   FontSize="20" FontWeight="Bold"
+                                                   Foreground="#4CAF50" Text="—"
+                                                   TextAlignment="Center" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="compression ratio"
+                                                   FontSize="10" Foreground="#4A9A55"
+                                                   TextAlignment="Center" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <!-- SAVED ABSOLUTE — purple accent (full) -->
+                        <Border Classes="card" Padding="0">
+                            <Grid RowDefinitions="4,*">
+                                <Border Grid.Row="0" Height="4" Background="#2A2560"
+                                        CornerRadius="7,7,0,0"/>
+                                <Border Grid.Row="1" Padding="12,8,12,12">
+                                    <StackPanel Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                        <TextBlock Text="SAVED ABSOLUTE"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.0"
+                                                   Foreground="#6050BB"
+                                                   TextAlignment="Center" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="AnalyticsKpiSavedAbs"
+                                                   FontSize="20" FontWeight="Bold"
+                                                   Foreground="#7B68EE" Text="—"
+                                                   TextAlignment="Center" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="bytes recovered"
+                                                   FontSize="10" Foreground="#4A3A90"
+                                                   TextAlignment="Center" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <!-- VOLUMES -->
+                        <Border Classes="card" Padding="12,12,12,14">
+                            <StackPanel Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                <TextBlock Text="VOLUMES"
+                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.0"
+                                           Foreground="{DynamicResource ArkTextSecondary}"
+                                           TextAlignment="Center" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="AnalyticsKpiVolumes"
+                                           FontSize="20" FontWeight="Bold" Foreground="#777788" Text="—"
+                                           TextAlignment="Center" HorizontalAlignment="Center"/>
+                                <TextBlock Text="archive volumes"
+                                           FontSize="10" Foreground="#7A7A8F"
+                                           TextAlignment="Center" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- AT RISK — fully dynamic accent (green=ok, red=crit) -->
+                        <Border Classes="card" Padding="0" x:Name="AnalyticsCritCard">
+                            <Grid RowDefinitions="4,*">
+                                <Border Grid.Row="0" x:Name="AnalyticsCritAccent" Height="4"
+                                        Background="#1A1A2E" CornerRadius="7,7,0,0"/>
+                                <Border Grid.Row="1" Padding="12,8,12,12">
+                                    <StackPanel Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                        <TextBlock x:Name="AnalyticsCritLabel" Text="AT RISK"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.0"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"
+                                                   TextAlignment="Center" TextWrapping="Wrap"/>
+                                        <TextBlock x:Name="AnalyticsKpiCritVolumes"
+                                                   FontSize="20" FontWeight="Bold" Text="—"
+                                                   TextAlignment="Center" HorizontalAlignment="Center"/>
+                                        <TextBlock x:Name="AnalyticsCritHelper" Text="critical volumes"
+                                                   FontSize="10" Foreground="#7A7A8F"
+                                                   TextAlignment="Center" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <!-- STORED ARTIFACTS -->
+                        <Border Classes="card" Padding="12,12,12,14">
+                            <StackPanel Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                <TextBlock Text="ARTIFACTS"
+                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.0"
+                                           Foreground="{DynamicResource ArkTextSecondary}"
+                                           TextAlignment="Center" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="AnalyticsKpiStoredArtifacts"
+                                           FontSize="20" FontWeight="Bold" Foreground="#777788" Text="—"
+                                           TextAlignment="Center" HorizontalAlignment="Center"/>
+                                <TextBlock Text="stored in volumes"
+                                           FontSize="10" Foreground="#7A7A8F"
+                                           TextAlignment="Center" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- FILE TYPES -->
+                        <Border Classes="card" Padding="12,12,12,14" Margin="0">
+                            <StackPanel Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Stretch">
+                                <TextBlock Text="FILE TYPES"
+                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.0"
+                                           Foreground="{DynamicResource ArkTextSecondary}"
+                                           TextAlignment="Center" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="AnalyticsKpiArtifactTypes"
+                                           FontSize="20" FontWeight="Bold" Foreground="#777788" Text="—"
+                                           TextAlignment="Center" HorizontalAlignment="Center"/>
+                                <TextBlock Text="distinct extensions"
+                                           FontSize="10" Foreground="#7A7A8F"
+                                           TextAlignment="Center" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+
+                    </UniformGrid>
+
+                    <!-- Section A: Storage &amp; Compression -->
+                    <Border HorizontalAlignment="Stretch"
+                            Background="{DynamicResource ArkSurface}"
+                            CornerRadius="8" Padding="20,18"
+                            BorderBrush="{DynamicResource ArkSurfaceAlt}" BorderThickness="1">
+                        <StackPanel Spacing="0" HorizontalAlignment="Stretch">
+                            <TextBlock Classes="widget-title" Text="STORAGE &amp; COMPRESSION"/>
+                            <Grid x:Name="AnalyticsSectionAPanel" HorizontalAlignment="Stretch"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Sections B + C: side by side -->
+                    <Grid ColumnDefinitions="*,16,*" HorizontalAlignment="Stretch">
+
+                        <Border Grid.Column="0"
+                                HorizontalAlignment="Stretch"
+                                Background="{DynamicResource ArkSurface}"
+                                CornerRadius="8" Padding="20,18"
+                                BorderBrush="{DynamicResource ArkSurfaceAlt}" BorderThickness="1">
+                            <StackPanel Spacing="0" HorizontalAlignment="Stretch">
+                                <TextBlock Classes="widget-title" Text="COMPRESSION BY STRATEGY"/>
+                                <StackPanel x:Name="AnalyticsByStrategyPanel" Spacing="6" HorizontalAlignment="Stretch"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="2"
+                                HorizontalAlignment="Stretch"
+                                Background="{DynamicResource ArkSurface}"
+                                CornerRadius="8" Padding="20,18"
+                                BorderBrush="{DynamicResource ArkSurfaceAlt}" BorderThickness="1">
+                            <StackPanel Spacing="0" HorizontalAlignment="Stretch">
+                                <TextBlock Classes="widget-title" Text="ARTIFACT TYPE DISTRIBUTION"/>
+                                <StackPanel x:Name="AnalyticsArtifactTypePanel" Spacing="6" HorizontalAlignment="Stretch"/>
+                            </StackPanel>
+                        </Border>
+
+                    </Grid>
+
+                    <!-- Section D: Volume Heatmap -->
+                    <Border HorizontalAlignment="Stretch"
+                            Background="{DynamicResource ArkSurface}"
+                            CornerRadius="8" Padding="20,18"
+                            BorderBrush="{DynamicResource ArkSurfaceAlt}" BorderThickness="1">
+                        <StackPanel Spacing="0" HorizontalAlignment="Stretch">
+                            <TextBlock Classes="widget-title" Text="VOLUME HEATMAP"/>
+                            <StackPanel x:Name="AnalyticsVolumeHeatmapPanel" Spacing="0" HorizontalAlignment="Stretch"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Section D2: Disk Heatmap -->
+                    <Border HorizontalAlignment="Stretch"
+                            Background="{DynamicResource ArkSurface}"
+                            CornerRadius="8" Padding="20,18"
+                            BorderBrush="{DynamicResource ArkSurfaceAlt}" BorderThickness="1">
+                        <StackPanel Spacing="0" HorizontalAlignment="Stretch">
+                            <TextBlock Classes="widget-title" Text="DISK HEATMAP"/>
+                            <StackPanel x:Name="AnalyticsDiskHeatmapPanel" Spacing="0" HorizontalAlignment="Stretch"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Section E: Archive State Overview — two columns -->
+                    <Grid ColumnDefinitions="*,16,*" HorizontalAlignment="Stretch">
+
+                        <Border Grid.Column="0"
+                                HorizontalAlignment="Stretch"
+                                Background="{DynamicResource ArkSurface}"
+                                CornerRadius="8" Padding="20,18"
+                                BorderBrush="{DynamicResource ArkSurfaceAlt}" BorderThickness="1">
+                            <StackPanel Spacing="0" HorizontalAlignment="Stretch">
+                                <TextBlock Classes="widget-title" Text="RELEASE STATUS"/>
+                                <StackPanel x:Name="AnalyticsReleaseStatusPanel" Spacing="6" HorizontalAlignment="Stretch"/>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Grid.Column="2"
+                                HorizontalAlignment="Stretch"
+                                Background="{DynamicResource ArkSurface}"
+                                CornerRadius="8" Padding="20,18"
+                                BorderBrush="{DynamicResource ArkSurfaceAlt}" BorderThickness="1">
+                            <StackPanel Spacing="0" HorizontalAlignment="Stretch">
+                                <TextBlock Classes="widget-title" Text="VOLUME HEALTH"/>
+                                <StackPanel x:Name="AnalyticsVolumeHealthPanel" Spacing="6" HorizontalAlignment="Stretch"/>
+                            </StackPanel>
+                        </Border>
+
+                    </Grid>
+
+                </StackPanel>
+            </ScrollViewer><!-- /ViewAnalytics -->
 
         </Grid>
     </Grid>

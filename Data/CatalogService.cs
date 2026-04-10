@@ -140,6 +140,21 @@ public sealed class CatalogService
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS tools (
+                tool_id          TEXT PRIMARY KEY,
+                folder_name      TEXT NOT NULL,
+                executable_name  TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS transforms (
+                transform_id      TEXT PRIMARY KEY,
+                name              TEXT NOT NULL,
+                tool_id           TEXT,
+                command_template  TEXT NOT NULL DEFAULT '',
+                output_extension  TEXT NOT NULL DEFAULT '',
+                is_enabled        INTEGER NOT NULL DEFAULT 1
+            );
             """;
         cmd.ExecuteNonQuery();
 
@@ -160,6 +175,19 @@ public sealed class CatalogService
         RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN data_store_path TEXT NOT NULL DEFAULT ''");
         RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN dat_category TEXT NOT NULL DEFAULT ''"  );
         RunMigration(conn, "ALTER TABLE volume_artifacts ADD COLUMN content_identity_key TEXT NOT NULL DEFAULT ''"  );
+        RunMigration(conn, "ALTER TABLE volumes ADD COLUMN health TEXT NOT NULL DEFAULT 'ok'");
+        RunMigration(conn, "ALTER TABLE transforms ADD COLUMN transform_type TEXT NOT NULL DEFAULT 'file_strategy'");
+        RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN transform_strategy_type TEXT NOT NULL DEFAULT 'none'");
+        RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN folder_transform_id TEXT");
+        RunMigration(conn, """
+            CREATE TABLE IF NOT EXISTS dat_line_extension_transforms (
+                dat_line_id    TEXT NOT NULL,
+                file_extension TEXT NOT NULL,
+                transform_id   TEXT,
+                is_discard     INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (dat_line_id, file_extension)
+            )
+            """);
 
         // ── Seed storage_strategies if empty ──────────────────────────────────
         using var stratCheck = conn.CreateCommand();
@@ -179,14 +207,49 @@ public sealed class CatalogService
             stratSeed.ExecuteNonQuery();
         }
 
+        // ── Seed tools if empty ───────────────────────────────────────────────
+        using var toolCheck = conn.CreateCommand();
+        toolCheck.CommandText = "SELECT COUNT(*) FROM tools";
+        if ((long)(toolCheck.ExecuteScalar() ?? 0L) == 0)
+        {
+            using var toolSeed = conn.CreateCommand();
+            toolSeed.CommandText = """
+                INSERT INTO tools(tool_id, folder_name, executable_name) VALUES
+                    ('chdman', 'chdman', 'chdman.exe'),
+                    ('7zip',   '7zip',   '7z.exe');
+                """;
+            toolSeed.ExecuteNonQuery();
+        }
+
+        // ── Seed transforms if empty ──────────────────────────────────────────
+        using var txCheck = conn.CreateCommand();
+        txCheck.CommandText = "SELECT COUNT(*) FROM transforms";
+        if ((long)(txCheck.ExecuteScalar() ?? 0L) == 0)
+        {
+            using var txSeed = conn.CreateCommand();
+            txSeed.CommandText = """
+                INSERT INTO transforms(transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type) VALUES
+                    ('no_compression',      'No Compression',      null,     '',                                         '',     1, 'file_strategy'),
+                    ('chd_cd_compression',  'CHD CD Compression',  'chdman', 'createcd -i "{input}" -o "{output}"',      '.chd', 1, 'file_strategy'),
+                    ('chd_dvd_compression', 'CHD DVD Compression', 'chdman', 'createdvd -i "{input}" -o "{output}"',     '.chd', 1, 'file_strategy'),
+                    ('chd_gd_compression',  'CHD GD Compression',  'chdman', 'createcd -i "{input}" -o "{output}"',      '.chd', 1, 'file_strategy'),
+                    ('zip_compression',     'ZIP Compression',     '7zip',   'a -tzip "{output}" "{input}"',             '.zip', 1, 'folder_strategy');
+                """;
+            txSeed.ExecuteNonQuery();
+        }
+
         // ── Seed default settings if missing ─────────────────────────────────
         using var settingSeed = conn.CreateCommand();
         settingSeed.CommandText = """
             INSERT OR IGNORE INTO settings(key, value) VALUES
                 ('show_debug_artifact_info', 'false'),
                 ('auto_export_ingestion_logs', 'true'),
+                ('auto_export_verify_logs', 'true'),
+                ('auto_export_repair_logs', 'true'),
                 ('disk_sequence', '0'),
-                ('log_on_copy', 'true')
+                ('log_on_copy', 'true'),
+                ('quarantine_unexpected_on_verify', 'false'),
+                ('quarantine_mismatch_on_verify', 'false')
             """;
         settingSeed.ExecuteNonQuery();
 
@@ -370,6 +433,77 @@ public sealed class CatalogService
         return list;
     }
 
+    // ── Tools ─────────────────────────────────────────────────────────────────
+
+    public List<ToolRecord> LoadTools()
+    {
+        var list = new List<ToolRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT tool_id, folder_name, executable_name FROM tools ORDER BY tool_id";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new ToolRecord
+            {
+                Id             = r.GetString(0),
+                FolderName     = r.GetString(1),
+                ExecutableName = r.GetString(2),
+            });
+        return list;
+    }
+
+    // ── Transforms ────────────────────────────────────────────────────────────
+
+    public List<TransformRecord> LoadTransforms()
+    {
+        var list = new List<TransformRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type
+            FROM transforms
+            ORDER BY transform_id
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new TransformRecord
+            {
+                Id              = r.GetString(0),
+                Name            = r.GetString(1),
+                ToolId          = r.IsDBNull(2) ? "" : r.GetString(2),
+                CommandTemplate = r.GetString(3),
+                OutputExtension = r.GetString(4),
+                IsEnabled       = r.GetInt32(5) != 0,
+                TransformType   = r.IsDBNull(6) ? "file_strategy" : r.GetString(6),
+            });
+        return list;
+    }
+
+    public void SaveTransform(TransformRecord t)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO transforms(transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type)
+            VALUES($id, $name, $toolId, $cmd, $ext, $enabled, $type)
+            ON CONFLICT(transform_id) DO UPDATE SET
+                name              = excluded.name,
+                tool_id           = excluded.tool_id,
+                command_template  = excluded.command_template,
+                output_extension  = excluded.output_extension,
+                is_enabled        = excluded.is_enabled,
+                transform_type    = excluded.transform_type
+            """;
+        cmd.Parameters.AddWithValue("$id",      t.Id);
+        cmd.Parameters.AddWithValue("$name",    t.Name);
+        cmd.Parameters.AddWithValue("$toolId",  t.ToolId.Length > 0 ? t.ToolId : DBNull.Value);
+        cmd.Parameters.AddWithValue("$cmd",     t.CommandTemplate);
+        cmd.Parameters.AddWithValue("$ext",     t.OutputExtension);
+        cmd.Parameters.AddWithValue("$enabled", t.IsEnabled ? 1 : 0);
+        cmd.Parameters.AddWithValue("$type",    t.TransformType);
+        cmd.ExecuteNonQuery();
+    }
+
     // ── Settings ──────────────────────────────────────────────────────────────
 
     public string GetSetting(string key, string defaultValue = "")
@@ -411,7 +545,8 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, platform_id, name, authority, dat_category, version, storage_strategy_id, data_store_path, release_count, imported_at_utc
+            SELECT id, platform_id, name, authority, dat_category, version, storage_strategy_id, data_store_path, release_count, imported_at_utc,
+                   transform_strategy_type, folder_transform_id
             FROM dat_lines
             ORDER BY imported_at_utc DESC
             """;
@@ -419,16 +554,18 @@ public sealed class CatalogService
         while (reader.Read())
             list.Add(new DatLineRecord
             {
-                Id                 = reader.GetString(0),
-                PlatformId         = reader.GetString(1),
-                Name               = reader.GetString(2),
-                Authority          = reader.GetString(3),
-                DatCategory        = reader.IsDBNull(4) ? "" : reader.GetString(4),
-                Version            = reader.IsDBNull(5) ? "" : reader.GetString(5),
-                StorageStrategyId  = reader.IsDBNull(6) ? "" : reader.GetString(6),
-                DataStorePath      = reader.IsDBNull(7) ? "" : reader.GetString(7),
-                ReleaseCount       = reader.GetInt32(8),
-                ImportedAtUtc      = DateTime.Parse(reader.GetString(9)),
+                Id                    = reader.GetString(0),
+                PlatformId            = reader.GetString(1),
+                Name                  = reader.GetString(2),
+                Authority             = reader.GetString(3),
+                DatCategory           = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                Version               = reader.IsDBNull(5) ? "" : reader.GetString(5),
+                StorageStrategyId     = reader.IsDBNull(6) ? "" : reader.GetString(6),
+                DataStorePath         = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                ReleaseCount          = reader.GetInt32(8),
+                ImportedAtUtc         = DateTime.Parse(reader.GetString(9)),
+                TransformStrategyType = reader.IsDBNull(10) ? "none" : reader.GetString(10),
+                FolderTransformId     = reader.IsDBNull(11) ? "" : reader.GetString(11),
             });
         return list;
     }
@@ -489,6 +626,75 @@ public sealed class CatalogService
         cmd.Parameters.AddWithValue("$releaseCount", releaseCount);
         cmd.Parameters.AddWithValue("$importedAt",   importedAtUtc.ToString("o"));
         cmd.ExecuteNonQuery();
+    }
+
+    // ── Transform Strategy ────────────────────────────────────────────────────
+
+    public void SaveDatLineTransformStrategy(string datLineId, string strategyType, string? folderTransformId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dat_lines
+            SET transform_strategy_type = $type,
+                folder_transform_id     = $folderId
+            WHERE id = $id
+            """;
+        cmd.Parameters.AddWithValue("$id",       datLineId);
+        cmd.Parameters.AddWithValue("$type",     strategyType);
+        cmd.Parameters.AddWithValue("$folderId", (object?)folderTransformId ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public List<ExtensionTransformMapping> LoadExtensionMappings(string datLineId)
+    {
+        var list = new List<ExtensionTransformMapping>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT dat_line_id, file_extension, transform_id, is_discard
+            FROM dat_line_extension_transforms
+            WHERE dat_line_id = $id
+            ORDER BY file_extension
+            """;
+        cmd.Parameters.AddWithValue("$id", datLineId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new ExtensionTransformMapping
+            {
+                DatLineId     = r.GetString(0),
+                FileExtension = r.GetString(1),
+                TransformId   = r.IsDBNull(2) ? "" : r.GetString(2),
+                IsDiscard     = r.GetInt32(3) != 0,
+            });
+        return list;
+    }
+
+    public void SaveExtensionMappings(string datLineId, List<ExtensionTransformMapping> mappings)
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        using var del = conn.CreateCommand();
+        del.CommandText = "DELETE FROM dat_line_extension_transforms WHERE dat_line_id = $id";
+        del.Parameters.AddWithValue("$id", datLineId);
+        del.ExecuteNonQuery();
+
+        foreach (var m in mappings)
+        {
+            using var ins = conn.CreateCommand();
+            ins.CommandText = """
+                INSERT INTO dat_line_extension_transforms(dat_line_id, file_extension, transform_id, is_discard)
+                VALUES($datLineId, $ext, $xformId, $discard)
+                """;
+            ins.Parameters.AddWithValue("$datLineId", m.DatLineId);
+            ins.Parameters.AddWithValue("$ext",       m.FileExtension);
+            ins.Parameters.AddWithValue("$xformId",   m.TransformId.Length > 0 ? m.TransformId : (object)DBNull.Value);
+            ins.Parameters.AddWithValue("$discard",   m.IsDiscard ? 1 : 0);
+            ins.ExecuteNonQuery();
+        }
+
+        tx.Commit();
     }
 
     // ── Stats ─────────────────────────────────────────────────────────────────
@@ -793,6 +999,62 @@ public sealed class CatalogService
         UpdatedAt             = DateTime.Parse(r.GetString(9)),
     };
 
+    // ── Dashboard aggregates ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the number of volume_artifacts rows with status = 'present_in_final'.
+    /// Used as a fast single-query count of physically stored artifacts for the dashboard.
+    /// </summary>
+    public int CountStoredArtifacts()
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM volume_artifacts WHERE status = 'present_in_final'";
+        var result = cmd.ExecuteScalar();
+        return result is long l ? (int)l : Convert.ToInt32(result);
+    }
+
+    /// <summary>
+    /// Returns the total number of artifacts assigned to each volume, keyed by volume id.
+    /// Counts all rows in volume_artifacts regardless of status.
+    /// </summary>
+    public Dictionary<string, int> GetArtifactCountsByVolume()
+    {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT volume_id, COUNT(*)
+            FROM volume_artifacts
+            GROUP BY volume_id
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            result[r.GetString(0)] = (int)r.GetInt64(1);
+        return result;
+    }
+
+    /// <summary>
+    /// Returns the number of volumes currently located on each disk, keyed by disk id.
+    /// Only counts locations where is_current = 1.
+    /// </summary>
+    public Dictionary<string, int> GetVolumeCountsByDisk()
+    {
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT disk_id, COUNT(DISTINCT volume_id)
+            FROM volume_locations
+            WHERE is_current = 1
+            GROUP BY disk_id
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            result[r.GetString(0)] = (int)r.GetInt64(1);
+        return result;
+    }
+
     // ── Volumes ───────────────────────────────────────────────────────────────
 
     public List<VolumeRecord> GetVolumes()
@@ -801,7 +1063,7 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, label, platform_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at
+            SELECT id, label, platform_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at, health
             FROM volumes
             ORDER BY label
             """;
@@ -818,7 +1080,7 @@ public sealed class CatalogService
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
             SELECT v.id, v.label, v.platform_id, v.dat_line_id, v.status,
-                   v.planned_size_bytes, v.actual_size_bytes, v.created_at, v.verified_at
+                   v.planned_size_bytes, v.actual_size_bytes, v.created_at, v.verified_at, v.health
             FROM volumes v
             JOIN volume_locations vl ON vl.volume_id = v.id
             WHERE vl.disk_id = $diskId AND vl.is_current = 1
@@ -836,14 +1098,15 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO volumes(id, label, platform_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at)
-            VALUES($id, $label, $platId, $dlId, $status, $planned, $actual, $created, $verified)
+            INSERT INTO volumes(id, label, platform_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at, health)
+            VALUES($id, $label, $platId, $dlId, $status, $planned, $actual, $created, $verified, $health)
             ON CONFLICT(id) DO UPDATE SET
                 label              = excluded.label,
                 status             = excluded.status,
                 planned_size_bytes = excluded.planned_size_bytes,
                 actual_size_bytes  = excluded.actual_size_bytes,
-                verified_at        = excluded.verified_at
+                verified_at        = excluded.verified_at,
+                health             = excluded.health
             """;
         cmd.Parameters.AddWithValue("$id",       v.Id);
         cmd.Parameters.AddWithValue("$label",    v.Label);
@@ -854,6 +1117,21 @@ public sealed class CatalogService
         cmd.Parameters.AddWithValue("$actual",   v.ActualSizeBytes);
         cmd.Parameters.AddWithValue("$created",  v.CreatedAt.ToString("o"));
         cmd.Parameters.AddWithValue("$verified", v.VerifiedAt.HasValue ? v.VerifiedAt.Value.ToString("o") : DBNull.Value);
+        cmd.Parameters.AddWithValue("$health",   v.Health);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Updates only the health column for the given volume.
+    /// Allowed values: "ok" | "crit". Does not touch volume.status.
+    /// </summary>
+    public void UpdateVolumeHealth(string volumeId, string health)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "UPDATE volumes SET health = $health WHERE id = $id";
+        cmd.Parameters.AddWithValue("$health", health);
+        cmd.Parameters.AddWithValue("$id",     volumeId);
         cmd.ExecuteNonQuery();
     }
 
@@ -1105,7 +1383,7 @@ public sealed class CatalogService
         cmd.CommandText = $"""
             SELECT DISTINCT
                 v.id, v.label, v.platform_id, v.dat_line_id, v.status,
-                v.planned_size_bytes, v.actual_size_bytes, v.created_at, v.verified_at,
+                v.planned_size_bytes, v.actual_size_bytes, v.created_at, v.verified_at, v.health,
                 vl.disk_id, COALESCE(vl.location_type, 'unknown')
             FROM volume_artifacts va
             JOIN volumes v ON v.id = va.volume_id
@@ -1120,8 +1398,8 @@ public sealed class CatalogService
         while (r.Read())
         {
             var vol    = ReadVolume(r);
-            var diskId = r.IsDBNull(9)  ? null : r.GetString(9);
-            var loc    = r.GetString(10);
+            var diskId = r.IsDBNull(10) ? null : r.GetString(10);
+            var loc    = r.GetString(11);
             result.Add((vol, diskId, loc));
         }
         return result;
@@ -1138,6 +1416,7 @@ public sealed class CatalogService
         ActualSizeBytes  = r.GetInt64(6),
         CreatedAt        = DateTime.Parse(r.GetString(7)),
         VerifiedAt       = r.IsDBNull(8) ? null : DateTime.Parse(r.GetString(8)),
+        Health           = r.IsDBNull(9) ? "ok" : r.GetString(9),
     };
 
     // ── Connection ────────────────────────────────────────────────────────────

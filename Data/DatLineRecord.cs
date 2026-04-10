@@ -14,4 +14,8 @@ public sealed class DatLineRecord
     public string   DataStorePath      { get; set; } = "";   // relative: data/systems/<pid>/<id>.db
     public int      ReleaseCount       { get; set; }
     public DateTime ImportedAtUtc      { get; set; } = DateTime.UtcNow;
+    /// <summary>"none" | "file_extension" | "release_folder"</summary>
+    public string   TransformStrategyType { get; set; } = "none";
+    /// <summary>FK to transforms.transform_id. Set when TransformStrategyType is "release_folder".</summary>
+    public string   FolderTransformId     { get; set; } = "";
 }
