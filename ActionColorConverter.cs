@@ -15,13 +15,14 @@ public sealed class ActionColorConverter : IValueConverter
         var action = value as string ?? "";
         var hex = action switch
         {
-            "copy"   => "#64B5F6",
-            "source" => "#81C784",
-            "delete" => "#9E9E9E",
-            "skip"   => "#FFB74D",
-            "hash"   => "#B39DDB",
-            "verify" => "#CE93D8",
-            _        => action.EndsWith("-failed", StringComparison.Ordinal) ? "#E57373" : "#FFB74D",
+            "copy"      => "#64B5F6",
+            "source"    => "#81C784",
+            "delete"    => "#9E9E9E",
+            "skip"      => "#FFB74D",
+            "hash"      => "#B39DDB",
+            "verify"    => "#CE93D8",
+            "transform" => "#26C6DA",
+            _           => action.EndsWith("-failed", StringComparison.Ordinal) ? "#E57373" : "#FFB74D",
         };
         return new SolidColorBrush(Color.Parse(hex));
     }

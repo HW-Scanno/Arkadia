@@ -34,6 +34,12 @@ public sealed class LibraryEntry
     /// <summary>Absolute path to the DAT-line SQLite DB that owns this release.</summary>
     public string DbPath { get; init; } = "";
 
+    /// <summary>Catalog DAT line ID — used to load extension mappings for transform display.</summary>
+    public string DatLineId { get; init; } = "";
+
+    /// <summary>Transform strategy for this DAT line: "none", "file_extension", or "release_folder".</summary>
+    public string TransformStrategyType { get; init; } = "none";
+
     /// <summary>
     /// Set when the release was first introduced by a DAT update.
     /// NULL for releases created during initial import or that predate this feature.

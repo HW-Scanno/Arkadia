@@ -85,12 +85,10 @@ public partial class MainWindow : Window
     private Dictionary<string, string> _hardwareTypeMap   = [];
     private Dictionary<string, string> _strategyNameMap   = [];
 
-    private string? _systemsThemeDir;
-    private Border? _selectedCardBorder;   // currently highlighted card border
-    private SystemPlatform? _selectedPlatform;
-
-    private static readonly Avalonia.Media.IBrush CardNormalBorder   = new SolidColorBrush(Color.Parse("#242433"));
-    private static readonly Avalonia.Media.IBrush CardSelectedBorder = new SolidColorBrush(Color.Parse("#7B68EE"));
+    private string?        _systemsThemeDir;
+    private SystemPlatform? _selectedPlatform;   // kept for OnEditPlatform compat
+    private string?        _selectedPlatformId;
+    private DatLineInfo?   _selectedDatLine;
 
     private void InitSystems()
     {
@@ -107,20 +105,33 @@ public partial class MainWindow : Window
         catch { /* theme dir stays null — images simply won't load */ }
 
         RefreshSystems();
+        if (_systemsPlatforms.Count > 0)
+            SelectPlatform(_systemsPlatforms[0].Id);
     }
 
     private void RefreshSystemsKeepSelection(string? platformId)
     {
+        var keepDatId      = _selectedDatLine?.CatalogId;
+        var targetPlatform = platformId ?? _selectedPlatformId;
         RefreshSystems();
-        if (platformId is null) return;
-        var p = _systemsPlatforms.FirstOrDefault(x => x.Id == platformId);
-        if (p is null) return;
-        var idx  = _systemsPlatforms.IndexOf(p);
-        var card = idx >= 0
-            ? SystemsCardPanel.Children.OfType<Border>().ElementAtOrDefault(idx)
-            : null;
-        SelectCard(card, p);
-        SystemsList.SelectedItem = p;
+
+        if (targetPlatform is not null)
+        {
+            var p = _systemsPlatforms.FirstOrDefault(x => x.Id == targetPlatform);
+            if (p is not null)
+            {
+                SelectPlatform(p.Id);
+                // Try to restore DAT selection
+                if (keepDatId is not null)
+                {
+                    var d = BuildDatLineInfos(p.Id).FirstOrDefault(x => x.CatalogId == keepDatId);
+                    if (d is not null) SelectDatLine(d, p.Id);
+                }
+                return;
+            }
+        }
+        if (_systemsPlatforms.Count > 0)
+            SelectPlatform(_systemsPlatforms[0].Id);
     }
 
     private void RefreshSystems()
@@ -158,47 +169,325 @@ public partial class MainWindow : Window
                     TotalTitles  = total,
                     Present      = present,
                     Outdated     = outdated,
-                    Missing      = 0,
+                    Missing      = Math.Max(0, total - present - outdated),
                     Lost         = 0,
                 };
             })
             .ToList();
 
-        BuildSystemsCards();
-        SystemsList.ItemsSource = _systemsPlatforms;
+        BuildTree();
+        UpdateActionBar();
+    }
 
-        if (_systemsPlatforms.Count > 0)
+    private void SelectPlatform(string platformId)
+    {
+        _selectedPlatformId = platformId;
+        _selectedPlatform   = _systemsPlatforms.FirstOrDefault(x => x.Id == platformId);
+        _selectedDatLine    = null;
+        BuildTree();
+        UpdateDetailPane(_selectedPlatform, null);
+        UpdateActionBar();
+    }
+
+    private void SelectDatLine(DatLineInfo d, string platformId)
+    {
+        _selectedPlatformId = platformId;
+        _selectedPlatform   = _systemsPlatforms.FirstOrDefault(x => x.Id == platformId);
+        _selectedDatLine    = d;
+        BuildTree();
+        UpdateDetailPane(_selectedPlatform, d);
+        UpdateActionBar();
+    }
+
+    private void UpdateActionBar()
+    {
+        var hasPlatform = _selectedPlatformId is not null;
+        var hasDat      = _selectedDatLine is not null;
+        var datHasStore = hasDat && _selectedDatLine!.DataStorePath.Length > 0;
+
+        SysActEditPlatform.IsEnabled  = hasPlatform;
+        SysActConfigureDat.IsEnabled  = datHasStore;
+        SysActUpdateDat.IsEnabled     = hasDat;
+        SysActVerifyDat.IsEnabled     = datHasStore;
+        SysActDeleteDat.IsEnabled     = hasDat;
+        SysActIngestFiles.IsEnabled   = datHasStore;
+    }
+
+    private void BuildTree()
+    {
+        SystemsTreePanel.Children.Clear();
+
+        if (_systemsPlatforms.Count == 0)
         {
-            SystemsList.SelectedIndex = 0;
-            SelectCard(SystemsCardPanel.Children.OfType<Border>().FirstOrDefault(),
-                       _systemsPlatforms[0]);
+            SystemsTreePanel.Children.Add(new TextBlock
+            {
+                Text         = "No platforms. Click 'Create Platform' to add one.",
+                FontSize     = 12,
+                Foreground   = new SolidColorBrush(Color.Parse("#555566")),
+                Margin       = new Avalonia.Thickness(4, 4, 4, 0),
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            });
+            return;
+        }
+
+        var groups      = _systemsPlatforms
+            .GroupBy(p => p.HardwareType.Length > 0 ? p.HardwareType : "Other")
+            .OrderBy(g => g.Key)
+            .ToList();
+        var showHeaders = groups.Count > 1;
+
+        foreach (var group in groups)
+        {
+            if (showHeaders)
+                SystemsTreePanel.Children.Add(MakeGroupHeader(group.Key));
+
+            foreach (var p in group.OrderBy(p => p.Name))
+            {
+                var isSelectedPlatform = p.Id == _selectedPlatformId;
+                SystemsTreePanel.Children.Add(MakePlatformNode(p, isSelectedPlatform));
+
+                if (isSelectedPlatform)
+                {
+                    var dats = BuildDatLineInfos(p.Id);
+                    foreach (var d in dats)
+                    {
+                        var isSelectedDat = _selectedDatLine?.CatalogId is not null &&
+                                            _selectedDatLine.CatalogId == d.CatalogId;
+                        SystemsTreePanel.Children.Add(MakeDatRow(d, p.Id, isSelectedDat));
+                    }
+                }
+            }
+        }
+    }
+
+    private Border MakePlatformNode(SystemPlatform p, bool isSelected)
+    {
+        var bgColor   = isSelected ? Color.Parse("#1E1E32") : Color.Parse("#111118");
+        var bdrColor  = isSelected ? Color.Parse("#5555AA") : Color.Parse("#1E1E2E");
+        var nameColor = isSelected ? Color.Parse("#E8E8FF") : Color.Parse("#CCCCDD");
+
+        var leftBar = new Border
+        {
+            Width        = 3,
+            Background   = new SolidColorBrush(isSelected ? Color.Parse("#7B68EE") : Color.Parse("#2A2A3E")),
+            CornerRadius = new Avalonia.CornerRadius(2, 0, 0, 2),
+        };
+
+        var titleMain = p.Manufacturer.Length > 0 ? $"{p.Manufacturer} {p.Name}" : p.Name;
+        var hwColor   = isSelected ? Color.Parse("#8888CC") : Color.Parse("#555566");
+
+        var nameBlock = new TextBlock
+        {
+            TextWrapping      = Avalonia.Media.TextWrapping.NoWrap,
+            TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        nameBlock.Inlines!.Add(new Avalonia.Controls.Documents.Run(titleMain)
+        {
+            FontSize   = 13,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(nameColor),
+        });
+        if (p.HardwareType.Length > 0)
+            nameBlock.Inlines.Add(new Avalonia.Controls.Documents.Run($" ({p.HardwareType})")
+            {
+                FontSize   = 11,
+                Foreground = new SolidColorBrush(hwColor),
+            });
+
+        var coverageBlock = new TextBlock
+        {
+            Text              = p.Coverage,
+            FontSize          = 11,
+            Foreground        = new SolidColorBrush(Color.Parse("#6B68EE")),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin            = new Avalonia.Thickness(8, 0, 0, 0),
+        };
+
+        var datCountBlock = new TextBlock
+        {
+            Text              = $"{p.DatLines} DAT{(p.DatLines == 1 ? "" : "s")}",
+            FontSize          = 11,
+            Foreground        = new SolidColorBrush(Color.Parse("#555566")),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin            = new Avalonia.Thickness(10, 0, 0, 0),
+        };
+
+        var textRow = new Grid { Margin = new Avalonia.Thickness(10, 0, 10, 0) };
+        textRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+        textRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        textRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        Grid.SetColumn(nameBlock,     0);
+        Grid.SetColumn(coverageBlock, 1);
+        Grid.SetColumn(datCountBlock, 2);
+        textRow.Children.Add(nameBlock);
+        textRow.Children.Add(coverageBlock);
+        textRow.Children.Add(datCountBlock);
+
+        var logoImg = LoadSystemImage(p.Id, "logo")
+                   ?? (_systemsThemeDir is not null ? SystemImageLoader.Load(_systemsThemeDir, p.Id) : null);
+
+        var innerRow = new Grid();
+        innerRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto)); // accent bar
+        if (logoImg is not null)
+            innerRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto)); // logo
+        innerRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));  // text
+
+        Grid.SetColumn(leftBar, 0);
+        innerRow.Children.Add(leftBar);
+
+        if (logoImg is not null)
+        {
+            var logoCtrl = new Image
+            {
+                Source            = logoImg,
+                MaxHeight         = 22,
+                MaxWidth          = 56,
+                Stretch           = Avalonia.Media.Stretch.Uniform,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Margin            = new Avalonia.Thickness(8, 0, 6, 0),
+            };
+            Grid.SetColumn(logoCtrl, 1);
+            Grid.SetColumn(textRow,  2);
+            innerRow.Children.Add(logoCtrl);
         }
         else
         {
-            _selectedPlatform = null;
-            UpdateSystemsDetail(null);
+            Grid.SetColumn(textRow, 1);
         }
+        innerRow.Children.Add(textRow);
+
+        var node = new Border
+        {
+            Background      = new SolidColorBrush(bgColor),
+            BorderBrush     = new SolidColorBrush(bdrColor),
+            BorderThickness = new Avalonia.Thickness(1),
+            CornerRadius    = new Avalonia.CornerRadius(6),
+            Height          = 48,
+            Cursor          = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+            Child           = innerRow,
+        };
+
+        var platformId = p.Id;
+        node.PointerPressed += (_, _) => SelectPlatform(platformId);
+
+        return node;
     }
 
-    private void BuildSystemsCards()
+    private static Grid MakeGroupHeader(string label)
     {
-        SystemsCardPanel.Children.Clear();
-        foreach (var p in _systemsPlatforms)
-            SystemsCardPanel.Children.Add(MakeSystemCard(p));
+        var lineColor = new SolidColorBrush(Color.Parse("#2A2A3E"));
+        var textColor = new SolidColorBrush(Color.Parse("#44445A"));
+
+        var leftLine = new Border
+        {
+            Height            = 1,
+            Background        = lineColor,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        var labelBlock = new TextBlock
+        {
+            Text              = label.ToUpperInvariant(),
+            FontSize          = 9,
+            FontWeight        = FontWeight.SemiBold,
+            Foreground        = textColor,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin            = new Avalonia.Thickness(8, 0),
+        };
+        var rightLine = new Border
+        {
+            Height            = 1,
+            Background        = lineColor,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+
+        var header = new Grid { Margin = new Avalonia.Thickness(0, 14, 0, 8) };
+        header.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+        header.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        header.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+        Grid.SetColumn(leftLine,   0);
+        Grid.SetColumn(labelBlock, 1);
+        Grid.SetColumn(rightLine,  2);
+        header.Children.Add(leftLine);
+        header.Children.Add(labelBlock);
+        header.Children.Add(rightLine);
+        return header;
     }
 
-    private void SelectCard(Border? card, SystemPlatform p)
+    private Border MakeDatRow(DatLineInfo d, string platformId, bool isSelected)
     {
-        // Deselect previous
-        if (_selectedCardBorder is not null)
-            _selectedCardBorder.BorderBrush = CardNormalBorder;
+        var bgColor  = isSelected ? Color.Parse("#1A1A2E") : Color.Parse("#0D0D18");
+        var bdrColor = isSelected ? Color.Parse("#44448A") : Color.Parse("#181826");
 
-        _selectedCardBorder = card;
-        if (_selectedCardBorder is not null)
-            _selectedCardBorder.BorderBrush = CardSelectedBorder;
+        // Line 1 — name
+        var nameBlock = new TextBlock
+        {
+            Text         = d.Name,
+            FontSize     = 12,
+            FontWeight   = isSelected ? FontWeight.SemiBold : FontWeight.Normal,
+            Foreground   = new SolidColorBrush(Color.Parse(isSelected ? "#D8D8F0" : "#AAAACC")),
+            TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            TextWrapping = Avalonia.Media.TextWrapping.NoWrap,
+        };
 
-        _selectedPlatform = p;
-        UpdateSystemsDetail(p);
+        // Line 2 — releases · strategy · mappings
+        var stratLabel = d.TransformStrategyType switch
+        {
+            "file_extension" => "Per file extension",
+            "release_folder" => "Per release folder",
+            _                => null,
+        };
+        int mappingCount = 0;
+        if (d.TransformStrategyType == "file_extension" && d.CatalogId is not null)
+            mappingCount = _catalog.LoadExtensionMappings(d.CatalogId).Count;
+
+        var subParts = new List<string> { $"{d.Releases:N0} releases" };
+        if (stratLabel is not null)
+        {
+            subParts.Add(stratLabel);
+            if (mappingCount > 0)
+                subParts.Add($"{mappingCount} mapping{(mappingCount == 1 ? "" : "s")}");
+        }
+
+        var subBlock = new TextBlock
+        {
+            Text         = string.Join(" · ", subParts),
+            FontSize     = 10,
+            Foreground   = new SolidColorBrush(Color.Parse("#555566")),
+            TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            TextWrapping = Avalonia.Media.TextWrapping.NoWrap,
+            Margin       = new Avalonia.Thickness(0, 2, 0, 0),
+        };
+
+        var content = new StackPanel { Margin = new Avalonia.Thickness(28, 8, 10, 8) };
+        content.Children.Add(nameBlock);
+        content.Children.Add(subBlock);
+
+        var row = new Border
+        {
+            Background      = new SolidColorBrush(bgColor),
+            BorderBrush     = new SolidColorBrush(bdrColor),
+            BorderThickness = new Avalonia.Thickness(1),
+            CornerRadius    = new Avalonia.CornerRadius(4),
+            Margin          = new Avalonia.Thickness(16, 0, 0, 0),
+            Cursor          = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+            Child           = content,
+        };
+
+        var datInfo = d;
+        var pId     = platformId;
+        row.PointerPressed += (_, _) => SelectDatLine(datInfo, pId);
+
+        return row;
+    }
+
+    private Bitmap? LoadDatAuthorityImage(string authority)
+    {
+        if (authority.Length == 0) return null;
+        var key  = authority.ToLower().Replace(" ", "").Replace("-", "");
+        var path = Path.Combine(_dataDir, "datimages", $"{key}.png");
+        if (!File.Exists(path)) return null;
+        try { return new Bitmap(path); } catch { return null; }
     }
 
     private Bitmap? LoadSystemImage(string platformId, string suffix)
@@ -209,176 +498,398 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private Border MakeSystemCard(SystemPlatform p)
+    private void UpdateDetailPane(SystemPlatform? p, DatLineInfo? d)
     {
-        var img = LoadSystemImage(p.Id, "logo")
+        SystemsDetailPanel.Children.Clear();
+
+        if (p is null)
+        {
+            SystemsDetailEmptyMsg.IsVisible = true;
+            return;
+        }
+
+        SystemsDetailEmptyMsg.IsVisible = false;
+
+        if (d is not null)
+            BuildDatDetailContent(d);
+        else
+            BuildPlatformDetailContent(p);
+    }
+
+    private void BuildPlatformDetailContent(SystemPlatform p)
+    {
+        var dim    = new SolidColorBrush(Color.Parse("#555566"));
+        var text   = new SolidColorBrush(Color.Parse("#CCCCDD"));
+        var accent = new SolidColorBrush(Color.Parse("#7B68EE"));
+        var panel  = SystemsDetailPanel;
+
+        // Platform image
+        var img = LoadSystemImage(p.Id, "details")
+               ?? LoadSystemImage(p.Id, "logo")
                ?? (_systemsThemeDir is not null ? SystemImageLoader.Load(_systemsThemeDir, p.Id) : null);
+        if (img is not null)
+            panel.Children.Add(new Image
+            {
+                Source              = img,
+                Width               = 300,
+                Height              = 300,
+                Stretch             = Avalonia.Media.Stretch.Uniform,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                Margin              = new Avalonia.Thickness(0, 0, 0, 16),
+            });
 
-        var imageControl = new Image
+        // Platform name
+        panel.Children.Add(new TextBlock
         {
-            MaxHeight  = 60,
-            MaxWidth   = 160,
-            Stretch    = Avalonia.Media.Stretch.Uniform,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
-            Margin     = new Avalonia.Thickness(0, 0, 0, 10),
-            Source     = img,
-            IsVisible  = img is not null,
-        };
-
-        var namePlaceholder = new TextBlock
-        {
-            Text       = p.Name,
-            FontSize   = 13,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = new SolidColorBrush(Color.Parse("#F0F0F0")),
+            Text         = p.Name,
+            FontSize     = 16,
+            FontWeight   = FontWeight.SemiBold,
+            Foreground   = new SolidColorBrush(Color.Parse("#E8E8F8")),
+            Margin       = new Avalonia.Thickness(0, 0, 0, 2),
             TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-            Margin     = new Avalonia.Thickness(0, 0, 0, 8),
-            IsVisible  = img is null, // show text fallback only when no image
-        };
+        });
 
-        var nameAlways = new TextBlock
+        // Manufacturer + hardware type subtitle
+        var subtitle = p.Manufacturer.Length > 0
+            ? (p.HardwareType.Length > 0 ? $"{p.Manufacturer}  ·  {p.HardwareType}" : p.Manufacturer)
+            : p.HardwareType;
+        if (subtitle.Length > 0)
+            panel.Children.Add(new TextBlock
+            {
+                Text         = subtitle,
+                FontSize     = 11,
+                Foreground   = dim,
+                Margin       = new Avalonia.Thickness(0, 0, 0, 14),
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            });
+        else
+            panel.Children.Add(new Border { Height = 14 });
+
+        // Hardware spec rows
+        var record = _catalog.GetPlatform(p.Id);
+        var hasHw = record is not null && (
+            !string.IsNullOrEmpty(record.Cpu)               ||
+            !string.IsNullOrEmpty(record.Memory)            ||
+            !string.IsNullOrEmpty(record.Graphics)          ||
+            !string.IsNullOrEmpty(record.Sound)             ||
+            !string.IsNullOrEmpty(record.DisplayResolution) ||
+            !string.IsNullOrEmpty(record.AspectRatio));
+
+        if (hasHw)
         {
-            Text       = p.Name,
-            FontSize   = 12,
-            FontWeight = FontWeight.SemiBold,
-            Foreground = new SolidColorBrush(Color.Parse("#F0F0F0")),
-            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-            Margin     = new Avalonia.Thickness(0, img is not null ? 4 : 0, 0, 6),
-        };
+            void AddHwRow(string label, string? value)
+            {
+                if (string.IsNullOrEmpty(value)) return;
+                var g = new Grid { Margin = new Avalonia.Thickness(0, 2) };
+                g.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(100)));
+                g.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+                var k = new TextBlock { Text = label, FontSize = 11, Foreground = dim };
+                var v = new TextBlock { Text = value, FontSize = 11, Foreground = text,
+                                        TextWrapping = Avalonia.Media.TextWrapping.Wrap };
+                Grid.SetColumn(k, 0); Grid.SetColumn(v, 1);
+                g.Children.Add(k); g.Children.Add(v);
+                panel.Children.Add(g);
+            }
+            AddHwRow("CPU",        record!.Cpu);
+            AddHwRow("Memory",     record.Memory);
+            AddHwRow("Graphics",   record.Graphics);
+            AddHwRow("Sound",      record.Sound);
+            AddHwRow("Resolution", record.DisplayResolution);
+            AddHwRow("Aspect",     record.AspectRatio);
+        }
 
-        var secondary = new SolidColorBrush(Color.Parse("#888899"));
-        var accent    = new SolidColorBrush(Color.Parse("#7B68EE"));
+        // Divider
+        panel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Color.Parse("#1E1E3A")),
+            Margin     = new Avalonia.Thickness(0, 10, 0, 10),
+        });
 
-        var content = new StackPanel { Spacing = 0 };
-        content.Children.Add(imageControl);
-        content.Children.Add(namePlaceholder);
-        content.Children.Add(nameAlways);
-
+        // Stats grid
         var statsGrid = new Grid();
         statsGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
         statsGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
 
-        void AddStat(string key, string val, bool isAccent = false)
+        void AddStat(string label, string value, bool isAccent = false)
         {
             var row = statsGrid.RowDefinitions.Count;
             statsGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-
-            var k = new TextBlock { Text = key, FontSize = 11, Foreground = secondary, Margin = new Avalonia.Thickness(0, 2) };
-            var v = new TextBlock { Text = val, FontSize = 11, FontWeight = FontWeight.Medium,
-                                    Foreground = isAccent ? accent : secondary,
+            var k = new TextBlock { Text = label, FontSize = 12, Foreground = dim,
+                                    Margin = new Avalonia.Thickness(0, 3) };
+            var v = new TextBlock { Text = value, FontSize = 12,
+                                    Foreground   = isAccent ? accent : text,
+                                    FontWeight   = FontWeight.Medium,
                                     HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-                                    Margin = new Avalonia.Thickness(0, 2) };
+                                    Margin = new Avalonia.Thickness(0, 3) };
             Grid.SetRow(k, row); Grid.SetColumn(k, 0);
             Grid.SetRow(v, row); Grid.SetColumn(v, 1);
-            statsGrid.Children.Add(k);
-            statsGrid.Children.Add(v);
+            statsGrid.Children.Add(k); statsGrid.Children.Add(v);
         }
 
-        AddStat("Titles",   $"{p.TotalTitles:N0}");
-        AddStat("Present",  $"{p.Present:N0}");
-        AddStat("Coverage", p.Coverage, isAccent: true);
+        AddStat("DAT Lines", $"{p.DatLines:N0}");
+        AddStat("Titles",    $"{p.TotalTitles:N0}");
+        AddStat("Present",   $"{p.Present:N0}");
+        if (p.Outdated > 0) AddStat("Outdated", $"{p.Outdated:N0}");
+        AddStat("Missing",   $"{p.Missing:N0}");
+        if (p.Lost > 0)     AddStat("Lost",     $"{p.Lost:N0}");
+        AddStat("Coverage",  p.Coverage, isAccent: true);
 
-        content.Children.Add(statsGrid);
-
-        var card = new Border
-        {
-            Background      = new SolidColorBrush(Color.Parse("#1A1A24")),
-            BorderBrush     = CardNormalBorder,
-            BorderThickness = new Avalonia.Thickness(1),
-            CornerRadius    = new Avalonia.CornerRadius(8),
-            Padding         = new Avalonia.Thickness(16, 14),
-            Margin          = new Avalonia.Thickness(0, 0, 12, 12),
-            Width           = 208,
-            Cursor          = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
-            Child           = content,
-        };
-
-        // Capture p for the closure
-        var platform = p;
-        card.PointerPressed += (_, _) =>
-        {
-            SelectCard(card, platform);
-            // Keep list selection in sync
-            SystemsList.SelectedItem = platform;
-        };
-
-        return card;
+        panel.Children.Add(statsGrid);
     }
 
-    private void OnSystemsViewToggle(object? sender, RoutedEventArgs e)
+    private void BuildDatDetailContent(DatLineInfo d)
     {
-        if (sender is not Button clicked) return;
-        var isCard = clicked == SystemsCardToggle;
-        SystemsCardView.IsVisible  =  isCard;
-        SystemsListView.IsVisible  = !isCard;
-        SystemsCardToggle.Classes.Set("active",  isCard);
-        SystemsListToggle.Classes.Set("active", !isCard);
-    }
+        var dim   = new SolidColorBrush(Color.Parse("#555566"));
+        var text  = new SolidColorBrush(Color.Parse("#E0E0F0"));
+        var panel = SystemsDetailPanel;
 
-    private void OnSystemsListSelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
-    {
-        var p = SystemsList.SelectedItem as SystemPlatform;
-        if (p is null || p == _selectedPlatform) return;
-
-        // Sync card highlight to list selection
-        var idx  = _systemsPlatforms.IndexOf(p);
-        var card = idx >= 0
-            ? SystemsCardPanel.Children.OfType<Border>().ElementAtOrDefault(idx)
-            : null;
-        SelectCard(card, p);
-    }
-
-    private void UpdateSystemsDetail(SystemPlatform? p)
-    {
-        if (p is null)
+        // Compute status counts from store
+        int present        = 0;
+        int reconciliation = 0;  // = 'lost' releases only
+        if (d.DataStorePath.Length > 0)
         {
-            SystemsDetailEmpty.IsVisible   = true;
-            SystemsDetailContent.IsVisible = false;
-            return;
+            var absPath = Path.Combine(_dataDir, d.DataStorePath);
+            if (File.Exists(absPath))
+            {
+                var counts     = new DatLineStore(absPath).GetAllStatusCounts();
+                present        = counts.Present;
+                reconciliation = counts.Lost;
+            }
+        }
+        var coverage = d.Releases > 0
+            ? $"{(double)present / d.Releases:P1}"
+            : "—";
+
+        // ── Header ───────────────────────────────────────────────────────────
+
+        // Authority logo
+        var authorityImg = LoadDatAuthorityImage(d.Authority);
+        if (authorityImg is not null)
+            panel.Children.Add(new Image
+            {
+                Source              = authorityImg,
+                Width               = 260,
+                Height              = 260,
+                Stretch             = Avalonia.Media.Stretch.Uniform,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                Margin              = new Avalonia.Thickness(0, 0, 0, 12),
+            });
+
+        // DAT name
+        panel.Children.Add(new TextBlock
+        {
+            Text         = d.Name,
+            FontSize     = 14,
+            FontWeight   = FontWeight.SemiBold,
+            Foreground   = new SolidColorBrush(Color.Parse("#E8E8F8")),
+            Margin       = new Avalonia.Thickness(0, 0, 0, 4),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+        });
+
+        // Updated date + release count subtitle
+        var headerSub = new List<string>();
+        if (d.LastImport.Length > 0) headerSub.Add($"Updated {d.LastImport}");
+        headerSub.Add($"{d.Releases:N0} releases");
+        panel.Children.Add(new TextBlock
+        {
+            Text       = string.Join("  ·  ", headerSub),
+            FontSize   = 11,
+            Foreground = dim,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 16),
+        });
+
+        // ── Status block ─────────────────────────────────────────────────────
+
+        void AddStatusRow(string label, string value)
+        {
+            var g = new Grid { Margin = new Avalonia.Thickness(0, 5) };
+            g.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+            g.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+            g.Children.Add(new TextBlock
+            {
+                Text              = label,
+                FontSize          = 11,
+                Foreground        = dim,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            });
+            var val = new TextBlock
+            {
+                Text              = value,
+                FontSize          = 14,
+                FontWeight        = FontWeight.SemiBold,
+                Foreground        = text,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            Grid.SetColumn(val, 1);
+            g.Children.Add(val);
+            panel.Children.Add(g);
         }
 
-        SystemsDetailName.Text         = p.Name;
-        SystemsDetailId.Text           = p.Id;
-        SystemsDetailManufacturer.Text = p.Manufacturer;
-        SystemsDetailHardwareType.Text      = p.HardwareType.Length > 0 ? p.HardwareType : "—";
-        SystemsDetailHardwareTypeRow.IsVisible = true;
-        SystemsDetailDatLines.Text              = p.DatLines.ToString();
-        SystemsDetailTotal.Text                 = $"{p.TotalTitles:N0}";
-        SystemsDetailPresent.Text               = $"{p.Present:N0}";
-        SystemsDetailOutdated.Text              = $"{p.Outdated:N0}";
-        SystemsDetailOutdatedRow.IsVisible      = p.Outdated > 0;
-        SystemsDetailMissing.Text               = $"{p.Missing:N0}";
-        SystemsDetailLost.Text                  = $"{p.Lost:N0}";
-        SystemsDetailCoverage.Text              = p.Coverage;
+        AddStatusRow("Present",        $"{present:N0}");
+        AddStatusRow("Incomplete",     $"{d.Outdated:N0}");
+        AddStatusRow("Reconciliation", $"{reconciliation:N0}");
+        AddStatusRow("Coverage",       coverage);
 
-        SystemsDetailImage.Source    = LoadSystemImage(p.Id, "details")
-                                    ?? LoadSystemImage(p.Id, "logo")
-                                    ?? (_systemsThemeDir is not null ? SystemImageLoader.Load(_systemsThemeDir, p.Id) : null);
-        SystemsDetailImage.IsVisible = SystemsDetailImage.Source is not null;
+        // ── Transform strategy summary ────────────────────────────────────────
+        panel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Color.Parse("#1E1E3A")),
+            Margin     = new Avalonia.Thickness(0, 12, 0, 10),
+        });
 
-        // Hardware Details section
-        var record = _catalog.GetPlatform(p.Id);
-        SetHwRow(SystemsHwCpuRow,        SystemsHwCpu,        record?.Cpu);
-        SetHwRow(SystemsHwMemoryRow,     SystemsHwMemory,     record?.Memory);
-        SetHwRow(SystemsHwGraphicsRow,   SystemsHwGraphics,   record?.Graphics);
-        SetHwRow(SystemsHwSoundRow,      SystemsHwSound,      record?.Sound);
-        SetHwRow(SystemsHwResolutionRow, SystemsHwResolution, record?.DisplayResolution);
-        SetHwRow(SystemsHwAspectRow,     SystemsHwAspect,     record?.AspectRatio);
-        SystemsHardwareDetailsSection.IsVisible =
-            !string.IsNullOrEmpty(record?.Cpu)               ||
-            !string.IsNullOrEmpty(record?.Memory)            ||
-            !string.IsNullOrEmpty(record?.Graphics)          ||
-            !string.IsNullOrEmpty(record?.Sound)             ||
-            !string.IsNullOrEmpty(record?.DisplayResolution) ||
-            !string.IsNullOrEmpty(record?.AspectRatio);
+        panel.Children.Add(new TextBlock
+        {
+            Text       = "TRANSFORM STRATEGY",
+            FontSize   = 9,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = dim,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 6),
+        });
 
-        // DAT lines — static seed first, then any persisted catalog entries
-        SystemsDatLinesList.Children.Clear();
-        foreach (var d in BuildDatLineInfos(p.Id))
-            SystemsDatLinesList.Children.Add(MakeDatLineRow(d));
+        if (d.TransformStrategyType == "file_extension" && d.CatalogId is not null)
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text       = "Per file extension",
+                FontSize   = 12,
+                FontWeight = FontWeight.Medium,
+                Foreground = text,
+                Margin     = new Avalonia.Thickness(0, 0, 0, 8),
+            });
 
-        SystemsDetailEmpty.IsVisible   = false;
-        SystemsDetailContent.IsVisible = true;
+            var allTransforms = _catalog.LoadTransforms()
+                .ToDictionary(t => t.Id, t => t.Name);
+            var mappings = _catalog.LoadExtensionMappings(d.CatalogId)
+                .OrderBy(m => m.FileExtension)
+                .ToList();
+
+            const int maxShow = 5;
+            foreach (var m in mappings.Take(maxShow))
+            {
+                var transformName = m.IsDiscard ? "Discard"
+                    : (allTransforms.TryGetValue(m.TransformId, out var tn) ? tn : m.TransformId);
+
+                var mappingRow = new Grid { Margin = new Avalonia.Thickness(0, 2) };
+                mappingRow.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(70)));
+                mappingRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+                mappingRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+
+                var extBlock = new TextBlock
+                {
+                    Text      = m.FileExtension,
+                    FontSize  = 11,
+                    Foreground = new SolidColorBrush(Color.Parse("#8888BB")),
+                    FontFamily = new Avalonia.Media.FontFamily("Consolas, monospace"),
+                };
+                var arrowBlock = new TextBlock
+                {
+                    Text       = "→",
+                    FontSize   = 11,
+                    Foreground = dim,
+                    Margin     = new Avalonia.Thickness(6, 0),
+                };
+                var nameBlock2 = new TextBlock
+                {
+                    Text         = transformName,
+                    FontSize     = 11,
+                    Foreground   = m.IsDiscard
+                        ? new SolidColorBrush(Color.Parse("#EF5350"))
+                        : text,
+                    TextWrapping = Avalonia.Media.TextWrapping.NoWrap,
+                    TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+                };
+                Grid.SetColumn(extBlock,   0);
+                Grid.SetColumn(arrowBlock, 1);
+                Grid.SetColumn(nameBlock2, 2);
+                mappingRow.Children.Add(extBlock);
+                mappingRow.Children.Add(arrowBlock);
+                mappingRow.Children.Add(nameBlock2);
+                panel.Children.Add(mappingRow);
+            }
+
+            if (mappings.Count > maxShow)
+                panel.Children.Add(new TextBlock
+                {
+                    Text       = $"+{mappings.Count - maxShow} more mapping{(mappings.Count - maxShow == 1 ? "" : "s")}",
+                    FontSize   = 10,
+                    Foreground = dim,
+                    Margin     = new Avalonia.Thickness(0, 4, 0, 0),
+                });
+
+            if (mappings.Count == 0)
+                panel.Children.Add(new TextBlock
+                {
+                    Text       = "No mappings configured",
+                    FontSize   = 11,
+                    Foreground = dim,
+                });
+        }
+        else if (d.TransformStrategyType == "release_folder")
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text       = "Per release folder",
+                FontSize   = 12,
+                FontWeight = FontWeight.Medium,
+                Foreground = text,
+                Margin     = new Avalonia.Thickness(0, 0, 0, 6),
+            });
+
+            if (d.FolderTransformId.Length > 0)
+            {
+                var allTransforms = _catalog.LoadTransforms()
+                    .ToDictionary(t => t.Id, t => t.Name);
+                var folderName = allTransforms.TryGetValue(d.FolderTransformId, out var fn) ? fn : d.FolderTransformId;
+
+                var folderRow = new Grid { Margin = new Avalonia.Thickness(0, 2) };
+                folderRow.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(70)));
+                folderRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+                folderRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+                var folderLabel = new TextBlock
+                {
+                    Text      = "Folder",
+                    FontSize  = 11,
+                    Foreground = new SolidColorBrush(Color.Parse("#8888BB")),
+                };
+                var arrow2 = new TextBlock
+                {
+                    Text = "→", FontSize = 11, Foreground = dim,
+                    Margin = new Avalonia.Thickness(6, 0),
+                };
+                var folderNameBlock = new TextBlock
+                {
+                    Text         = folderName,
+                    FontSize     = 11,
+                    Foreground   = text,
+                    TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+                };
+                Grid.SetColumn(folderLabel,     0);
+                Grid.SetColumn(arrow2,          1);
+                Grid.SetColumn(folderNameBlock, 2);
+                folderRow.Children.Add(folderLabel);
+                folderRow.Children.Add(arrow2);
+                folderRow.Children.Add(folderNameBlock);
+                panel.Children.Add(folderRow);
+            }
+            else
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = "No folder transform assigned", FontSize = 11, Foreground = dim,
+                });
+            }
+        }
+        else
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text       = "Not configured",
+                FontSize   = 11,
+                Foreground = dim,
+            });
+        }
     }
 
     private List<DatLineInfo> BuildDatLineInfos(string platformId)
@@ -409,465 +920,42 @@ public partial class MainWindow : Window
             })
             .ToList();
 
-    private Control MakeDatLineRow(DatLineInfo d)
+    // ── Action bar event handlers ─────────────────────────────────────────────
+
+    private async void OnSysConfigureDat(object? sender, RoutedEventArgs e)
     {
-        var secondary = new SolidColorBrush(Color.Parse("#888899"));
-
-        // Line 1 — DAT line label
-        var nameBlock = new TextBlock
-        {
-            Text         = d.Name,
-            FontSize     = 12,
-            FontWeight   = FontWeight.SemiBold,
-            Foreground   = new SolidColorBrush(Color.Parse("#D0D0E0")),
-            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-        };
-
-        // Line 2 — release count (+ outdated if any)
-        var countsText = d.Outdated > 0
-            ? $"{d.Releases:N0} releases · {d.Outdated:N0} outdated"
-            : $"{d.Releases:N0} releases";
-        var countsBlock = new TextBlock
-        {
-            Text         = countsText,
-            FontSize     = 11,
-            Foreground   = secondary,
-            Margin       = new Avalonia.Thickness(0, 3, 0, 0),
-            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-        };
-
-        // Line 3 — last import date
-        var importBlock = new TextBlock
-        {
-            Text       = $"Last import {d.LastImport}",
-            FontSize   = 11,
-            Foreground = secondary,
-            Margin     = new Avalonia.Thickness(0, 2, 0, 0),
-        };
-
-        var row = new StackPanel
-        {
-            Spacing  = 0,
-            Margin   = new Avalonia.Thickness(0, 0, 0, 10),
-            Children = { nameBlock, countsBlock, importBlock },
-        };
-
-        // Line 4 — storage strategy (optional)
-        if (d.StorageStrategy.Length > 0)
-        {
-            row.Children.Add(new TextBlock
-            {
-                Text       = $"Storage: {d.StorageStrategy}",
-                FontSize   = 11,
-                Foreground = secondary,
-                Margin     = new Avalonia.Thickness(0, 2, 0, 0),
-            });
-        }
-
-        // Line 5 — actions
-        var actionsPanel = new StackPanel
-        {
-            Orientation = Avalonia.Layout.Orientation.Horizontal,
-            Spacing     = 14,
-            Margin      = new Avalonia.Thickness(0, 7, 0, 0),
-        };
-
-        if (d.LibraryPlatform is not null && d.LibraryDatLine is not null)
-        {
-            var libPlatform = d.LibraryPlatform;
-            var libDatLine  = d.LibraryDatLine;
-            var link        = new TextBlock { Text = "Open in Library →" };
-            link.Classes.Add("text-action");
-            link.Classes.Add("accent");
-            link.PointerPressed += (_, _) => NavigateToLibrary(libPlatform, libDatLine);
-            actionsPanel.Children.Add(link);
-        }
-
-        if (d.CatalogId is not null && d.CatalogPlatformId is not null)
-        {
-            var catalogId         = d.CatalogId;
-            var catalogPlatformId = d.CatalogPlatformId;
-            var datLineInfo       = d;
-
-            var ingestLink = new TextBlock { Text = "Ingest Files" };
-            ingestLink.Classes.Add("text-action");
-            ingestLink.Classes.Add("accent");
-            ingestLink.PointerPressed += (_, _) => OnIngestDatLine(datLineInfo);
-            actionsPanel.Children.Add(ingestLink);
-
-            var updateLink = new TextBlock { Text = "Update DAT" };
-            updateLink.Classes.Add("text-action");
-            updateLink.Classes.Add("accent");
-            updateLink.PointerPressed += async (_, _) => await OnUpdateDatLine(datLineInfo);
-            actionsPanel.Children.Add(updateLink);
-
-            var verifyLink = new TextBlock { Text = "Verify" };
-            verifyLink.Classes.Add("text-action");
-            verifyLink.Classes.Add("accent");
-            verifyLink.PointerPressed += async (_, _) => await OnVerifyDatLine(datLineInfo);
-            actionsPanel.Children.Add(verifyLink);
-
-            var deleteLink = new TextBlock { Text = "Delete" };
-            deleteLink.Classes.Add("text-action");
-            deleteLink.Classes.Add("danger");
-            deleteLink.PointerPressed += async (_, _) => await OnDeleteDatLine(catalogId, catalogPlatformId, datLineInfo);
-            actionsPanel.Children.Add(deleteLink);
-        }
-
-        if (actionsPanel.Children.Count > 0)
-            row.Children.Add(actionsPanel);
-
-        // Transform strategy section — only for catalog-backed lines with a data store
-        if (d.CatalogId is not null && d.DataStorePath.Length > 0)
-        {
-            var strategyContentPanel = new StackPanel
-            {
-                IsVisible = false,
-                Spacing   = 0,
-                Margin    = new Avalonia.Thickness(0, 10, 0, 0),
-            };
-            var strategyLoaded = false;
-
-            var strategyLink = new TextBlock { Text = "Transform Strategy" };
-            strategyLink.Classes.Add("text-action");
-            strategyLink.Margin = new Avalonia.Thickness(0, 6, 0, 0);
-            strategyLink.PointerPressed += (_, _) =>
-            {
-                if (!strategyLoaded)
-                {
-                    PopulateTransformStrategyPanel(d, strategyContentPanel);
-                    strategyLoaded = true;
-                }
-                strategyContentPanel.IsVisible = !strategyContentPanel.IsVisible;
-            };
-
-            row.Children.Add(strategyLink);
-            row.Children.Add(strategyContentPanel);
-        }
-
-        return row;
+        if (_selectedDatLine is null || _selectedDatLine.DataStorePath.Length == 0) return;
+        var d          = _selectedDatLine;
+        var platformId = _selectedPlatformId;
+        var dialog     = new ConfigureDatLineDialog(d, _catalog, _dataDir);
+        var saved      = await dialog.ShowDialog<bool>(this);
+        if (saved) RefreshSystemsKeepSelection(platformId);
     }
 
-    private void PopulateTransformStrategyPanel(DatLineInfo d, StackPanel container)
+    private void OnSysUpdateDat(object? sender, RoutedEventArgs e)
     {
-        var allTransforms = _catalog.LoadTransforms();
-        var fileXforms    = allTransforms.Where(t => t.IsFileStrategy).ToList();
-        var folderXforms  = allTransforms.Where(t => t.IsFolderStrategy).ToList();
+        if (_selectedDatLine is null) return;
+        _ = OnUpdateDatLine(_selectedDatLine);
+    }
 
-        var existingMappings = d.CatalogId is not null
-            ? _catalog.LoadExtensionMappings(d.CatalogId)
-            : new List<ExtensionTransformMapping>();
-        var mappingLookup = existingMappings.ToDictionary(m => m.FileExtension, StringComparer.OrdinalIgnoreCase);
+    private void OnSysVerifyDat(object? sender, RoutedEventArgs e)
+    {
+        if (_selectedDatLine is null) return;
+        _ = OnVerifyDatLine(_selectedDatLine);
+    }
 
-        // Compute extension counts from the DAT line's release files
-        var extCounts = new List<(string Ext, int Count)>();
-        if (d.DataStorePath.Length > 0)
-        {
-            var absPath = Path.Combine(_dataDir, d.DataStorePath);
-            if (File.Exists(absPath))
-            {
-                var extDict  = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                var allFiles = new DatLineStore(absPath).LoadAllReleaseFiles();
-                foreach (var files in allFiles.Values)
-                    foreach (var f in files)
-                    {
-                        var ext = Path.GetExtension(f.RomName).ToLowerInvariant();
-                        if (ext.Length == 0) ext = "(no ext)";
-                        extDict[ext] = extDict.GetValueOrDefault(ext) + 1;
-                    }
-                extCounts = extDict.OrderByDescending(kv => kv.Value)
-                                   .ThenBy(kv => kv.Key)
-                                   .Select(kv => (kv.Key, kv.Value))
-                                   .ToList();
-            }
-        }
+    private async void OnSysDeleteDat(object? sender, RoutedEventArgs e)
+    {
+        if (_selectedDatLine is null) return;
+        var d = _selectedDatLine;
+        if (d.CatalogId is null || d.CatalogPlatformId is null) return;
+        await OnDeleteDatLine(d.CatalogId, d.CatalogPlatformId, d);
+    }
 
-        var dim     = new SolidColorBrush(Avalonia.Media.Color.Parse("#555566"));
-        var text    = new SolidColorBrush(Avalonia.Media.Color.Parse("#CCCCDD"));
-        var accent  = new SolidColorBrush(Avalonia.Media.Color.Parse("#7B68EE"));
-        var warn    = new SolidColorBrush(Avalonia.Media.Color.Parse("#E8A000"));
-        var success = new SolidColorBrush(Avalonia.Media.Color.Parse("#4CAF50"));
-
-        // ── Section header ─────────────────────────────────────────────────────
-        container.Children.Add(new TextBlock
-        {
-            Text       = "TRANSFORM STRATEGY",
-            FontSize   = 9,
-            FontWeight = Avalonia.Media.FontWeight.SemiBold,
-            Foreground = dim,
-            Margin     = new Avalonia.Thickness(0, 0, 0, 8),
-        });
-
-        // ── Strategy selector ──────────────────────────────────────────────────
-        container.Children.Add(new TextBlock
-        {
-            Text       = "Strategy",
-            FontSize   = 10,
-            FontWeight = Avalonia.Media.FontWeight.SemiBold,
-            Foreground = dim,
-            Margin     = new Avalonia.Thickness(0, 0, 0, 4),
-        });
-
-        var stratLabels = new[] { "None", "Per file extension", "Per release folder" };
-        var stratValues = new[] { "none", "file_extension", "release_folder" };
-        var stratBox = new ComboBox
-        {
-            ItemsSource   = stratLabels,
-            SelectedIndex = Math.Max(0, Array.IndexOf(stratValues, d.TransformStrategyType)),
-            Background    = new SolidColorBrush(Avalonia.Media.Color.Parse("#0D0D1A")),
-            Foreground    = text,
-            BorderBrush   = new SolidColorBrush(Avalonia.Media.Color.Parse("#2A2A3C")),
-            BorderThickness = new Avalonia.Thickness(1),
-            FontSize      = 12,
-            Margin        = new Avalonia.Thickness(0, 0, 0, 12),
-        };
-        container.Children.Add(stratBox);
-
-        // ── File extension sub-panel ───────────────────────────────────────────
-        var fileExtPanel = new StackPanel
-        {
-            Spacing   = 0,
-            IsVisible = d.TransformStrategyType == "file_extension",
-        };
-        container.Children.Add(fileExtPanel);
-
-        // Action options: index 0 = Discard, then file_strategy transforms
-        var actionLabels  = new List<string> { "Discard" };
-        actionLabels.AddRange(fileXforms.Select(t => t.Name));
-        var extActionBoxes = new Dictionary<string, ComboBox>(StringComparer.OrdinalIgnoreCase);
-
-        void BuildExtensionTable()
-        {
-            fileExtPanel.Children.Clear();
-            extActionBoxes.Clear();
-
-            if (extCounts.Count == 0)
-            {
-                fileExtPanel.Children.Add(new TextBlock
-                {
-                    Text       = "No file extensions detected. Import the DAT first.",
-                    FontSize   = 11,
-                    Foreground = dim,
-                    Margin     = new Avalonia.Thickness(0, 0, 0, 8),
-                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-                });
-                return;
-            }
-
-            // Header row
-            var header = new Grid
-            {
-                ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("*,52,200"),
-                Margin = new Avalonia.Thickness(0, 0, 0, 4),
-            };
-            var hExt   = new TextBlock { Text = "Extension", FontSize = 9, FontWeight = Avalonia.Media.FontWeight.SemiBold, Foreground = dim };
-            var hCount = new TextBlock { Text = "Count",     FontSize = 9, FontWeight = Avalonia.Media.FontWeight.SemiBold, Foreground = dim, TextAlignment = Avalonia.Media.TextAlignment.Right };
-            var hAct   = new TextBlock { Text = "Action",    FontSize = 9, FontWeight = Avalonia.Media.FontWeight.SemiBold, Foreground = dim, Margin = new Avalonia.Thickness(8, 0, 0, 0) };
-            Avalonia.Controls.Grid.SetColumn(hExt,   0);
-            Avalonia.Controls.Grid.SetColumn(hCount, 1);
-            Avalonia.Controls.Grid.SetColumn(hAct,   2);
-            header.Children.Add(hExt);
-            header.Children.Add(hCount);
-            header.Children.Add(hAct);
-            fileExtPanel.Children.Add(header);
-
-            foreach (var (ext, count) in extCounts)
-            {
-                var actionBox = new ComboBox
-                {
-                    ItemsSource     = actionLabels,
-                    SelectedIndex   = 0,
-                    Background      = new SolidColorBrush(Avalonia.Media.Color.Parse("#0D0D1A")),
-                    Foreground      = text,
-                    BorderBrush     = new SolidColorBrush(Avalonia.Media.Color.Parse("#2A2A3C")),
-                    BorderThickness = new Avalonia.Thickness(1),
-                    FontSize        = 11,
-                    Margin          = new Avalonia.Thickness(8, 0, 0, 0),
-                };
-
-                // Pre-select from saved mapping
-                if (mappingLookup.TryGetValue(ext, out var mapping))
-                {
-                    if (!mapping.IsDiscard && mapping.TransformId.Length > 0)
-                    {
-                        var xIdx = fileXforms.FindIndex(t => t.Id == mapping.TransformId);
-                        if (xIdx >= 0) actionBox.SelectedIndex = xIdx + 1;
-                    }
-                    // else IsDiscard = true → index 0 (already set)
-                }
-
-                extActionBoxes[ext] = actionBox;
-
-                var row = new Grid
-                {
-                    ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("*,52,200"),
-                    Margin = new Avalonia.Thickness(0, 2, 0, 0),
-                };
-                var extLabel   = new TextBlock { Text = ext,            FontSize = 11, Foreground = text,  VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
-                var countLabel = new TextBlock { Text = count.ToString("N0"), FontSize = 11, Foreground = dim, TextAlignment = Avalonia.Media.TextAlignment.Right, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
-                Avalonia.Controls.Grid.SetColumn(extLabel,   0);
-                Avalonia.Controls.Grid.SetColumn(countLabel, 1);
-                Avalonia.Controls.Grid.SetColumn(actionBox,  2);
-                row.Children.Add(extLabel);
-                row.Children.Add(countLabel);
-                row.Children.Add(actionBox);
-                fileExtPanel.Children.Add(row);
-            }
-        }
-
-        // >10 extension guidance or direct table
-        if (extCounts.Count > 10)
-        {
-            var guidancePanel = new StackPanel { Spacing = 6 };
-            guidancePanel.Children.Add(new TextBlock
-            {
-                Text         = $"Many different file extensions were detected for this DAT line.",
-                FontSize     = 11,
-                Foreground   = warn,
-                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-            });
-            guidancePanel.Children.Add(new TextBlock
-            {
-                Text         = "This usually indicates that 'Per release folder' is more appropriate.",
-                FontSize     = 11,
-                Foreground   = text,
-                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-            });
-            guidancePanel.Children.Add(new TextBlock
-            {
-                Text       = $"Total unique extensions: {extCounts.Count}",
-                FontSize   = 11,
-                Foreground = dim,
-                Margin     = new Avalonia.Thickness(0, 4, 0, 0),
-            });
-            guidancePanel.Children.Add(new TextBlock
-            {
-                Text       = "Top 5 by count:",
-                FontSize   = 10,
-                FontWeight = Avalonia.Media.FontWeight.SemiBold,
-                Foreground = dim,
-            });
-            foreach (var (ext, cnt) in extCounts.Take(5))
-                guidancePanel.Children.Add(new TextBlock
-                {
-                    Text       = $"  {ext}  ·  {cnt:N0}",
-                    FontSize   = 11,
-                    Foreground = text,
-                    FontFamily = new Avalonia.Media.FontFamily("Consolas, monospace"),
-                });
-
-            var guidanceBtnRow = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 10, Margin = new Avalonia.Thickness(0, 8, 0, 0) };
-
-            var useFolderBtn = new Button { Content = "Use Per release folder", FontSize = 11 };
-            useFolderBtn.Click += (_, _) =>
-            {
-                stratBox.SelectedIndex = 2;  // "Per release folder"
-            };
-
-            var showAnywayBtn = new Button { Content = "Show extension mapping anyway", FontSize = 11 };
-            var tableWrapper  = new StackPanel { IsVisible = false, Margin = new Avalonia.Thickness(0, 8, 0, 0) };
-            showAnywayBtn.Click += (_, _) =>
-            {
-                guidancePanel.IsVisible = false;
-                BuildExtensionTable();
-                tableWrapper.Children.Add(fileExtPanel);
-                tableWrapper.IsVisible = true;
-                showAnywayBtn.IsVisible = false;
-            };
-
-            guidanceBtnRow.Children.Add(useFolderBtn);
-            guidanceBtnRow.Children.Add(showAnywayBtn);
-            guidancePanel.Children.Add(guidanceBtnRow);
-
-            fileExtPanel.Children.Add(guidancePanel);
-            fileExtPanel.Children.Add(tableWrapper);
-        }
-        else
-        {
-            BuildExtensionTable();
-        }
-
-        // ── Release folder sub-panel ───────────────────────────────────────────
-        var folderPanel = new StackPanel
-        {
-            Spacing   = 0,
-            IsVisible = d.TransformStrategyType == "release_folder",
-        };
-        container.Children.Add(folderPanel);
-
-        folderPanel.Children.Add(new TextBlock
-        {
-            Text       = "Release folder transform",
-            FontSize   = 10,
-            FontWeight = Avalonia.Media.FontWeight.SemiBold,
-            Foreground = dim,
-            Margin     = new Avalonia.Thickness(0, 0, 0, 4),
-        });
-
-        var folderLabels = folderXforms.Select(t => t.Name).ToList();
-        var folderBox = new ComboBox
-        {
-            ItemsSource     = folderLabels.Count > 0 ? folderLabels : (System.Collections.IEnumerable)new[] { "(no folder transforms defined)" },
-            Background      = new SolidColorBrush(Avalonia.Media.Color.Parse("#0D0D1A")),
-            Foreground      = text,
-            BorderBrush     = new SolidColorBrush(Avalonia.Media.Color.Parse("#2A2A3C")),
-            BorderThickness = new Avalonia.Thickness(1),
-            FontSize        = 12,
-            Margin          = new Avalonia.Thickness(0, 0, 0, 0),
-        };
-        if (folderLabels.Count > 0)
-        {
-            var selIdx = folderXforms.FindIndex(t => t.Id == d.FolderTransformId);
-            folderBox.SelectedIndex = selIdx >= 0 ? selIdx : 0;
-        }
-        folderPanel.Children.Add(folderBox);
-
-        // ── Strategy change handler ────────────────────────────────────────────
-        stratBox.SelectionChanged += (_, _) =>
-        {
-            var idx = stratBox.SelectedIndex;
-            var val = idx >= 0 && idx < stratValues.Length ? stratValues[idx] : "none";
-            fileExtPanel.IsVisible = val == "file_extension";
-            folderPanel.IsVisible  = val == "release_folder";
-        };
-
-        // ── Save button ────────────────────────────────────────────────────────
-        var saveBlock = new TextBlock { Text = "Save Strategy" };
-        saveBlock.Classes.Add("text-action");
-        saveBlock.Classes.Add("accent");
-        saveBlock.Margin = new Avalonia.Thickness(0, 10, 0, 0);
-        saveBlock.PointerPressed += (_, _) =>
-        {
-            if (d.CatalogId is null) return;
-
-            var idx      = stratBox.SelectedIndex;
-            var stratVal = idx >= 0 && idx < stratValues.Length ? stratValues[idx] : "none";
-
-            string? folderTransformId = null;
-            if (stratVal == "release_folder" && folderLabels.Count > 0 && folderBox.SelectedIndex >= 0)
-                folderTransformId = folderXforms[folderBox.SelectedIndex].Id;
-
-            _catalog.SaveDatLineTransformStrategy(d.CatalogId, stratVal, folderTransformId);
-
-            if (stratVal == "file_extension" && extActionBoxes.Count > 0)
-            {
-                var mappings = extActionBoxes.Select(kv =>
-                {
-                    var selIdx     = kv.Value.SelectedIndex;
-                    var isDiscard  = selIdx <= 0;
-                    var xformId    = isDiscard ? "" : fileXforms[selIdx - 1].Id;
-                    return new ExtensionTransformMapping
-                    {
-                        DatLineId     = d.CatalogId,
-                        FileExtension = kv.Key,
-                        IsDiscard     = isDiscard,
-                        TransformId   = xformId,
-                    };
-                }).ToList();
-                _catalog.SaveExtensionMappings(d.CatalogId, mappings);
-            }
-        };
-        container.Children.Add(saveBlock);
+    private void OnSysIngestFiles(object? sender, RoutedEventArgs e)
+    {
+        if (_selectedDatLine is null) return;
+        OnIngestDatLine(_selectedDatLine);
     }
 
     private void NavigateToLibrary(string platform, string datLine)
@@ -2497,6 +2585,58 @@ public partial class MainWindow : Window
         catch { /* non-fatal */ }
     }
 
+    // ── Copy-to-clipboard helpers ─────────────────────────────────────────────
+
+    private System.Timers.Timer? _toastTimer;
+
+    private void CopyAndToast(string clipboardText)
+    {
+        if (clipboardText.Length == 0 || clipboardText == "—") return;
+        // Show toast immediately on UI thread.
+        _toastTimer?.Stop();
+        _toastTimer?.Dispose();
+        var display = clipboardText.Length > 52 ? clipboardText[..52] + "…" : clipboardText;
+        CopyToastText.Text        = $"Copied: {display}";
+        CopyToastBorder.IsVisible = true;
+        _toastTimer = new System.Timers.Timer(2000) { AutoReset = false };
+        _toastTimer.Elapsed += (_, _) =>
+            Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                () => CopyToastBorder.IsVisible = false);
+        _toastTimer.Start();
+        // Write to clipboard asynchronously.
+        _ = Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(async () =>
+        {
+            var cb = TopLevel.GetTopLevel(this)?.Clipboard;
+            if (cb != null) await cb.SetTextAsync(clipboardText);
+        });
+    }
+
+    /// <summary>
+    /// Wires hover highlight and left-click copy on <paramref name="tb"/>.
+    /// No-op when <paramref name="onCopy"/> is null or <paramref name="clipboardValue"/> is absent.
+    /// </summary>
+    private static void MakeCopyable(
+        TextBlock tb, string clipboardValue, SolidColorBrush normalColor, Action<string>? onCopy)
+    {
+        if (onCopy is null || clipboardValue.Length == 0 || clipboardValue == "—") return;
+        tb.Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand);
+        var hover = BrightenBrush(normalColor);
+        tb.PointerEntered += (_, _) => tb.Foreground = hover;
+        tb.PointerExited  += (_, _) => tb.Foreground = normalColor;
+        tb.PointerPressed += (_, e) =>
+        {
+            if (e.GetCurrentPoint(null).Properties.IsLeftButtonPressed)
+                onCopy(clipboardValue);
+        };
+    }
+
+    private static SolidColorBrush BrightenBrush(SolidColorBrush b)
+    {
+        var c = b.Color;
+        static byte Up(byte x) => (byte)Math.Min(255, x + 40);
+        return new SolidColorBrush(new Color(c.A, Up(c.R), Up(c.G), Up(c.B)));
+    }
+
     // ── Shared helpers ────────────────────────────────────────────────────────
 
     /// <summary>Streams the file and returns its SHA1 hex string (lowercase).</summary>
@@ -2504,6 +2644,43 @@ public partial class MainWindow : Window
     {
         using var fs = File.OpenRead(path);
         return Convert.ToHexString(SHA1.HashData(fs)).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// Streams the file once and returns (SHA1, MD5, CRC32) hex strings (all lowercase).
+    /// CRC32 uses the standard ISO 3309 / IEEE 802.3 polynomial — the same used by ZIP, Ethernet,
+    /// and ROM preservation DATs (No-Intro, Redump, MAME).
+    /// </summary>
+    private static (string Sha1, string Md5, string Crc32) ComputeSourceHashes(string path)
+    {
+        using var fs   = File.OpenRead(path);
+        using var sha1 = System.Security.Cryptography.SHA1.Create();
+        using var md5a = System.Security.Cryptography.MD5.Create();
+
+        uint crc = 0xFFFFFFFF;
+        var  buf = new byte[81920];
+        int  read;
+
+        while ((read = fs.Read(buf, 0, buf.Length)) > 0)
+        {
+            sha1.TransformBlock(buf, 0, read, null, 0);
+            md5a.TransformBlock(buf, 0, read, null, 0);
+            for (int i = 0; i < read; i++)
+            {
+                crc ^= buf[i];
+                for (int j = 0; j < 8; j++)
+                    crc = (crc >> 1) ^ (0xEDB88320u & (uint)(-(int)(crc & 1u)));
+            }
+        }
+        sha1.TransformFinalBlock([], 0, 0);
+        md5a.TransformFinalBlock([], 0, 0);
+        crc ^= 0xFFFFFFFF;
+
+        return (
+            Convert.ToHexString(sha1.Hash!).ToLowerInvariant(),
+            Convert.ToHexString(md5a.Hash!).ToLowerInvariant(),
+            crc.ToString("x8")
+        );
     }
 
     /// <summary>
@@ -3324,18 +3501,20 @@ public partial class MainWindow : Window
                     filesByRelId.TryGetValue(r.Id, out var romFiles);
                     return new LibraryEntry
                     {
-                        Name            = r.Name,
-                        Platform        = platformName,
-                        Status          = Capitalize(r.Status),
-                        Region          = r.Region,
-                        Languages       = r.Languages.ToUpperInvariant(),
-                        Format          = r.Format,
-                        Size            = r.Size,
-                        Tier            = r.Tier,
-                        RomFiles        = romFiles ?? [],
-                        ReleaseId       = r.Id,
-                        DbPath          = absPath,
-                        IntroducedAtUtc = r.IntroducedAtUtc,
+                        Name                  = r.Name,
+                        Platform              = platformName,
+                        Status                = Capitalize(r.Status),
+                        Region                = r.Region,
+                        Languages             = r.Languages.ToUpperInvariant(),
+                        Format                = r.Format,
+                        Size                  = r.Size,
+                        Tier                  = r.Tier,
+                        RomFiles              = romFiles ?? [],
+                        ReleaseId             = r.Id,
+                        DbPath                = absPath,
+                        DatLineId             = dl.Id,
+                        TransformStrategyType = dl.TransformStrategyType,
+                        IntroducedAtUtc       = r.IntroducedAtUtc,
                     };
                 })
                 .ToList();
@@ -3479,32 +3658,98 @@ public partial class MainWindow : Window
         DetailFormat.Text           = entry.Format;
         DetailSize.Text             = entry.Size;
 
-        // CONTENT FILES
-        DetailDatFiles.Children.Clear();
+        // SOURCE FILES + DERIVED FILES
+        DetailSourceFiles.Children.Clear();
+        DetailDerivedFiles.Children.Clear();
+
         if (entry.RomFiles.Count > 0)
         {
-            // Open the store once for source/derived lookups (null-safe: store absent = all dashes)
             DatLineStore? fileStore = entry.DbPath.Length > 0 && File.Exists(entry.DbPath)
                 ? new DatLineStore(entry.DbPath) : null;
 
+            var transformNames = _catalog.LoadTransforms().ToDictionary(t => t.Id, t => t.Name);
+            var extTransforms  = new Dictionary<string, (bool IsDiscard, string Name)>(StringComparer.OrdinalIgnoreCase);
+            if (entry.TransformStrategyType == "file_extension" && entry.DatLineId.Length > 0)
+            {
+                foreach (var m in _catalog.LoadExtensionMappings(entry.DatLineId))
+                {
+                    var name = m.IsDiscard ? "Discard"
+                        : (transformNames.TryGetValue(m.TransformId, out var n) ? n : m.TransformId);
+                    extTransforms[m.FileExtension] = (m.IsDiscard, name);
+                }
+            }
+
+            // Collect (file, source, derived) for all ROM files
+            var triples = new List<(Data.ReleaseFileRecord F, Data.SourceArtifactRecord? Src, Data.DerivedArtifactRecord? Dst)>();
             foreach (var f in entry.RomFiles)
             {
-                // Derive content_identity_key using same logic as ingest (DAT-declared identity)
-                var ck = f.Sha1.Length > 0 ? $"sha1:{f.Sha1}"
-                       : f.Md5.Length  > 0 ? $"md5:{f.Md5}"
-                       : "";
+                var ck  = f.Sha1.Length > 0 ? $"sha1:{f.Sha1}"
+                        : f.Md5.Length  > 0 ? $"md5:{f.Md5}"
+                        : "";
                 var src = ck.Length > 0 ? fileStore?.GetSourceByContentKey(ck)  : null;
                 var dst = ck.Length > 0 ? fileStore?.GetDerivedByContentKey(ck) : null;
-                DetailDatFiles.Children.Add(MakeRomFileRow(f, src, dst));
+                triples.Add((f, src, dst));
             }
+
+            // SOURCE FILES — first 5 rows, then a "view all" link
+            const int MaxSourceDisplay = 5;
+            foreach (var (f, src, _) in triples.Take(MaxSourceDisplay))
+                DetailSourceFiles.Children.Add(MakeSourceFileRow(f, src, extTransforms, CopyAndToast));
+
+            if (triples.Count > MaxSourceDisplay)
+            {
+                var allLink = new TextBlock
+                {
+                    Text      = $"View complete files list ({triples.Count} files)",
+                    FontSize  = 11,
+                    Foreground = new SolidColorBrush(Color.Parse("#7B68EE")),
+                    Cursor    = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+                    Margin    = new Avalonia.Thickness(0, 4, 0, 0),
+                };
+                allLink.PointerPressed += (_, _) => ShowAllSourceFiles(entry.Name, triples, extTransforms);
+                DetailSourceFiles.Children.Add(allLink);
+            }
+
+            // Release-level source verification totals used by derived section
+            int srcTotal    = triples.Count;
+            int srcVerified = triples.Count(t => IsSourceVerified(t.F, t.Src));
+
+            // DERIVED FILES — unique by derived FileName
+            var seenDerived = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (f, src, dst) in triples)
+            {
+                if (dst is null) continue;
+                if (!seenDerived.Add(dst.FileName)) continue;
+                bool thisSrcOk      = IsSourceVerified(f, src);
+                bool hasDerivedHash = dst.HashedDerivedSha1.Length > 0;
+                bool derivedOk      = thisSrcOk && hasDerivedHash;
+                var  xformName      = transformNames.TryGetValue(dst.StorageStrategyId, out var xn) ? xn : dst.StorageStrategyId;
+                DetailDerivedFiles.Children.Add(MakeDerivedFileRow(dst, xformName, srcVerified, srcTotal, derivedOk, CopyAndToast));
+            }
+
+            if (DetailDerivedFiles.Children.Count == 0)
+                DetailDerivedFiles.Children.Add(new TextBlock
+                {
+                    Text       = "No derived artifacts on record",
+                    FontSize   = 12,
+                    Foreground = new SolidColorBrush(Color.Parse("#555566")),
+                });
         }
         else
-            DetailDatFiles.Children.Add(new TextBlock
+        {
+            DetailSourceFiles.Children.Add(new TextBlock
             {
-                Text       = "No content files on record",
+                Text       = "No source files on record",
                 FontSize   = 12,
                 Foreground = new SolidColorBrush(Color.Parse("#555566")),
             });
+            DetailDerivedFiles.Children.Add(new TextBlock
+            {
+                Text       = "No derived artifacts on record",
+                FontSize   = 12,
+                Foreground = new SolidColorBrush(Color.Parse("#555566")),
+            });
+        }
 
         // PREVIOUSLY SEEN IN — only for non-present releases with at least one overlap
         DetailOverlapList.Children.Clear();
@@ -3671,10 +3916,319 @@ public partial class MainWindow : Window
         return result;
     }
 
+    private static bool IsSourceVerified(Data.ReleaseFileRecord f, Data.SourceArtifactRecord? src)
+    {
+        if (src is null) return false;
+        // All DAT hashes that are present must match; if none are present, cannot verify.
+        bool anyDat = false;
+        if (f.Sha1.Length > 0) { anyDat = true; if (!string.Equals(src.HashedSourceSha1,         f.Sha1, StringComparison.OrdinalIgnoreCase)) return false; }
+        if (f.Md5.Length  > 0) { anyDat = true; if (!string.Equals(src.HashedSourceMd5  ?? "",   f.Md5,  StringComparison.OrdinalIgnoreCase)) return false; }
+        if (f.Crc.Length  > 0) { anyDat = true; if (!string.Equals(src.HashedSourceCrc32 ?? "",  f.Crc,  StringComparison.OrdinalIgnoreCase)) return false; }
+        return anyDat;
+    }
+
+    private static Control MakeSourceFileRow(
+        Data.ReleaseFileRecord     f,
+        Data.SourceArtifactRecord? source,
+        Dictionary<string, (bool IsDiscard, string Name)>? extTransforms = null,
+        Action<string>? onCopy = null)
+    {
+        var primary   = new SolidColorBrush(Color.Parse("#D0D0E0"));
+        var secondary = new SolidColorBrush(Color.Parse("#888899"));
+        var accent    = new SolidColorBrush(Color.Parse("#5588AA"));
+        var dim       = new SolidColorBrush(Color.Parse("#444455"));
+        var green     = new SolidColorBrush(Color.Parse("#66BB6A"));
+        var red       = new SolidColorBrush(Color.Parse("#EF5350"));
+        var gray      = new SolidColorBrush(Color.Parse("#555566"));
+        var mono      = new FontFamily("Consolas,Courier New,monospace");
+
+        bool datOk = f.Crc.Length > 0 || f.Md5.Length > 0 || f.Sha1.Length > 0;
+
+        // SOURCE: all present DAT hashes must match; no DAT hash = indeterminate.
+        string srcSymbol; SolidColorBrush srcColor;
+        if (source is null || !datOk)
+        {
+            srcSymbol = "—"; srcColor = gray;
+        }
+        else
+        {
+            srcSymbol = IsSourceVerified(f, source) ? "✔" : "✖";
+            srcColor  = srcSymbol == "✔" ? green : red;
+        }
+
+        var panel = new StackPanel { Spacing = 2 };
+
+        // File name — copyable
+        var fileNameTb = new TextBlock
+        {
+            Text       = f.RomName.Length > 0 ? f.RomName : "(unnamed)",
+            FontSize   = 12,
+            FontWeight = FontWeight.Medium,
+            Foreground = primary,
+        };
+        MakeCopyable(fileNameTb, f.RomName, primary, onCopy);
+        panel.Children.Add(fileNameTb);
+
+        var statusRow = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing     = 14,
+            Margin      = new Avalonia.Thickness(0, 3, 0, 4),
+        };
+
+        void AddItem(string label, string symbol, SolidColorBrush symbolColor)
+        {
+            var grp = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 5 };
+            grp.Children.Add(new TextBlock
+            {
+                Text              = label,
+                FontSize          = 10,
+                FontWeight        = FontWeight.SemiBold,
+                Foreground        = gray,
+                LetterSpacing     = 0.6,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            });
+            grp.Children.Add(new TextBlock
+            {
+                Text              = symbol,
+                FontSize          = 13,
+                FontWeight        = FontWeight.Bold,
+                Foreground        = symbolColor,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            });
+            statusRow.Children.Add(grp);
+        }
+
+        AddItem("DAT",    datOk ? "✔" : "✖", datOk ? green : red);
+        AddItem("SOURCE", srcSymbol,          srcColor);
+
+        if (extTransforms is { Count: > 0 })
+        {
+            var ext = Path.GetExtension(f.RomName).ToLowerInvariant();
+            if (ext.Length == 0) ext = "(no ext)";
+            if (extTransforms.TryGetValue(ext, out var xform))
+            {
+                statusRow.Children.Add(new TextBlock
+                {
+                    Text              = "→",
+                    FontSize          = 11,
+                    Foreground        = dim,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                });
+                var xformColor = xform.IsDiscard
+                    ? new SolidColorBrush(Color.Parse("#EF5350"))
+                    : new SolidColorBrush(Color.Parse("#7B68EE"));
+                var xformGrp = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 5 };
+                xformGrp.Children.Add(new TextBlock
+                {
+                    Text              = "TRANSFORM",
+                    FontSize          = 10,
+                    FontWeight        = FontWeight.SemiBold,
+                    Foreground        = gray,
+                    LetterSpacing     = 0.6,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                });
+                var xformValTb = new TextBlock
+                {
+                    Text              = xform.Name,
+                    FontSize          = 11,
+                    FontWeight        = FontWeight.SemiBold,
+                    Foreground        = xformColor,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                };
+                MakeCopyable(xformValTb, xform.Name, xformColor, onCopy);
+                xformGrp.Children.Add(xformValTb);
+                statusRow.Children.Add(xformGrp);
+            }
+        }
+
+        panel.Children.Add(statusRow);
+
+        // 2-column metadata grid: label (80px fixed) | value; display and clipboard may differ.
+        Grid MetaRowSrc(string label, string displayVal, string clipVal, SolidColorBrush valueFg, FontFamily? valueFf = null)
+        {
+            var g   = new Grid { ColumnDefinitions = new ColumnDefinitions("80,*") };
+            var lbl = new TextBlock { Text = label,      FontSize = 11, Foreground = secondary };
+            var val = new TextBlock { Text = displayVal, FontSize = 11, Foreground = valueFg, FontFamily = valueFf ?? FontFamily.Default };
+            MakeCopyable(val, clipVal, valueFg, onCopy);
+            Grid.SetColumn(lbl, 0);
+            Grid.SetColumn(val, 1);
+            g.Children.Add(lbl);
+            g.Children.Add(val);
+            return g;
+        }
+
+        var datCrc   = f.Crc.Length  > 0 ? f.Crc  : "—";
+        var datMd5   = f.Md5.Length  > 0 ? f.Md5  : "—";
+        var datSha1  = f.Sha1.Length > 0 ? f.Sha1 : "—";
+        var srcCrc32 = source?.HashedSourceCrc32 is { Length: > 0 } c ? c : "—";
+        var srcMd5   = source?.HashedSourceMd5   is { Length: > 0 } m ? m : "—";
+        var srcSha1  = source?.HashedSourceSha1  is { Length: > 0 } s ? s : "—";
+
+        // Bytes: display with thousands separators; clipboard = raw digits.
+        string bytesDisplay, bytesClip;
+        if (long.TryParse(f.Size, out var sizeVal)) { bytesDisplay = sizeVal.ToString("N0"); bytesClip = sizeVal.ToString(); }
+        else { bytesDisplay = f.Size.Length > 0 ? f.Size : "—"; bytesClip = bytesDisplay; }
+
+        var meta = new StackPanel { Spacing = 1, Margin = new Avalonia.Thickness(0, 2, 0, 0) };
+        var srcBytesRow = MetaRowSrc("Bytes", bytesDisplay, bytesClip, secondary);
+        srcBytesRow.Margin = new Avalonia.Thickness(0, 0, 0, 2);
+        meta.Children.Add(srcBytesRow);
+        meta.Children.Add(MetaRowSrc("DAT CRC32", datCrc,  datCrc,  f.Crc.Length  > 0 ? secondary : dim, f.Crc.Length  > 0 ? mono : null));
+        meta.Children.Add(MetaRowSrc("DAT MD5",   datMd5,  datMd5,  f.Md5.Length  > 0 ? secondary : dim, f.Md5.Length  > 0 ? mono : null));
+        meta.Children.Add(MetaRowSrc("DAT SHA1",  datSha1, datSha1, f.Sha1.Length > 0 ? secondary : dim, f.Sha1.Length > 0 ? mono : null));
+        meta.Children.Add(MetaRowSrc("SRC CRC32", srcCrc32, srcCrc32, srcCrc32 != "—" ? accent : dim, srcCrc32 != "—" ? mono : null));
+        meta.Children.Add(MetaRowSrc("SRC MD5",   srcMd5,   srcMd5,   srcMd5   != "—" ? accent : dim, srcMd5   != "—" ? mono : null));
+        meta.Children.Add(MetaRowSrc("SRC SHA1",  srcSha1,  srcSha1,  srcSha1  != "—" ? accent : dim, srcSha1  != "—" ? mono : null));
+        panel.Children.Add(meta);
+
+        return panel;
+    }
+
+    private static Control MakeDerivedFileRow(
+        Data.DerivedArtifactRecord derived,
+        string transformName,
+        int    sourcesVerified,
+        int    sourcesTotal,
+        bool   derivedOk,
+        Action<string>? onCopy = null)
+    {
+        var primary   = new SolidColorBrush(Color.Parse("#D0D0E0"));
+        var secondary = new SolidColorBrush(Color.Parse("#888899"));
+        var accent    = new SolidColorBrush(Color.Parse("#5588AA"));
+        var dim       = new SolidColorBrush(Color.Parse("#444455"));
+        var green     = new SolidColorBrush(Color.Parse("#66BB6A"));
+        var red       = new SolidColorBrush(Color.Parse("#EF5350"));
+        var gray      = new SolidColorBrush(Color.Parse("#555566"));
+        var purple    = new SolidColorBrush(Color.Parse("#7B68EE"));
+        var mono      = new FontFamily("Consolas,Courier New,monospace");
+
+        var panel = new StackPanel { Spacing = 2 };
+
+        // File name — copyable
+        var fileNameTb = new TextBlock
+        {
+            Text       = derived.FileName.Length > 0 ? derived.FileName : "(unnamed)",
+            FontSize   = 12,
+            FontWeight = FontWeight.Medium,
+            Foreground = primary,
+        };
+        MakeCopyable(fileNameTb, derived.FileName, primary, onCopy);
+        panel.Children.Add(fileNameTb);
+
+        // Status line: DERIVED ✔/✖   TRANSFORM <name>   SOURCES X/Y verified
+        var statusRow = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            Spacing     = 14,
+            Margin      = new Avalonia.Thickness(0, 3, 0, 4),
+        };
+
+        // Returns the value TextBlock so callers can wire copy if desired.
+        TextBlock StatusItem(string label, string value, SolidColorBrush valueColor, bool valueBold = false)
+        {
+            var grp = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 5 };
+            grp.Children.Add(new TextBlock
+            {
+                Text              = label,
+                FontSize          = 10,
+                FontWeight        = FontWeight.SemiBold,
+                Foreground        = gray,
+                LetterSpacing     = 0.6,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            });
+            var valTb = new TextBlock
+            {
+                Text              = value,
+                FontSize          = valueBold ? 13 : 11,
+                FontWeight        = FontWeight.SemiBold,
+                Foreground        = valueColor,
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            grp.Children.Add(valTb);
+            statusRow.Children.Add(grp);
+            return valTb;
+        }
+
+        var srcCountColor = sourcesVerified == sourcesTotal ? green
+                          : sourcesVerified == 0            ? red
+                          :                                   secondary;
+
+        StatusItem("DERIVED",   derivedOk ? "✔" : "✖",                      derivedOk ? green : red, valueBold: true);
+        var xformTb = StatusItem("TRANSFORM", transformName,                 purple);
+        StatusItem("SOURCES",   $"{sourcesVerified}/{sourcesTotal} verified", srcCountColor);
+        MakeCopyable(xformTb, transformName, purple, onCopy);
+
+        panel.Children.Add(statusRow);
+
+        // 2-column metadata grid: label (80px fixed) | value; display and clipboard may differ.
+        Grid MetaRowDer(string label, string displayVal, string clipVal, SolidColorBrush valueFg, FontFamily? valueFf = null)
+        {
+            var g   = new Grid { ColumnDefinitions = new ColumnDefinitions("80,*") };
+            var lbl = new TextBlock { Text = label,      FontSize = 11, Foreground = secondary };
+            var val = new TextBlock { Text = displayVal, FontSize = 11, Foreground = valueFg, FontFamily = valueFf ?? FontFamily.Default };
+            MakeCopyable(val, clipVal, valueFg, onCopy);
+            Grid.SetColumn(lbl, 0);
+            Grid.SetColumn(val, 1);
+            g.Children.Add(lbl);
+            g.Children.Add(val);
+            return g;
+        }
+
+        var derCrc32 = derived.HashedDerivedCrc32 is { Length: > 0 } c ? c : "—";
+        var derMd5   = derived.HashedDerivedMd5   is { Length: > 0 } m ? m : "—";
+        var derSha1  = derived.HashedDerivedSha1  is { Length: > 0 } s ? s : "—";
+
+        // Bytes: display with thousands separators; clipboard = raw digits.
+        var derBytesDisplay = derived.DerivedSizeBytes.ToString("N0");
+        var derBytesClip    = derived.DerivedSizeBytes.ToString();
+
+        var meta = new StackPanel { Spacing = 1, Margin = new Avalonia.Thickness(0, 2, 0, 0) };
+        var derBytesRow = MetaRowDer("Bytes", derBytesDisplay, derBytesClip, secondary);
+        derBytesRow.Margin = new Avalonia.Thickness(0, 0, 0, 2);
+        meta.Children.Add(derBytesRow);
+        meta.Children.Add(MetaRowDer("DER CRC32", derCrc32, derCrc32, derCrc32 != "—" ? accent : dim, derCrc32 != "—" ? mono : null));
+        meta.Children.Add(MetaRowDer("DER MD5",   derMd5,   derMd5,   derMd5   != "—" ? accent : dim, derMd5   != "—" ? mono : null));
+        meta.Children.Add(MetaRowDer("DER SHA1",  derSha1,  derSha1,  derSha1  != "—" ? accent : dim, derSha1  != "—" ? mono : null));
+        panel.Children.Add(meta);
+
+        return panel;
+    }
+
+    private void ShowAllSourceFiles(
+        string releaseName,
+        List<(Data.ReleaseFileRecord F, Data.SourceArtifactRecord? Src, Data.DerivedArtifactRecord? Dst)> triples,
+        Dictionary<string, (bool IsDiscard, string Name)> extTransforms)
+    {
+        var list = new StackPanel { Spacing = 10, Margin = new Avalonia.Thickness(20, 16) };
+        foreach (var (f, src, _) in triples)
+            list.Children.Add(MakeSourceFileRow(f, src, extTransforms, CopyAndToast));
+
+        var scroll = new ScrollViewer
+        {
+            Content = list,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            VerticalScrollBarVisibility   = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+        };
+
+        var win = new Window
+        {
+            Title                 = $"Source Files — {releaseName}",
+            Width                 = 720,
+            Height                = 600,
+            Background            = new SolidColorBrush(Color.Parse("#0F0F14")),
+            FontFamily            = new FontFamily("Inter,Segoe UI,sans-serif"),
+            Content               = scroll,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+        };
+        win.ShowDialog(this);
+    }
+
     private static Control MakeRomFileRow(
         Data.ReleaseFileRecord      f,
         Data.SourceArtifactRecord?  source,
-        Data.DerivedArtifactRecord? derived)
+        Data.DerivedArtifactRecord? derived,
+        Dictionary<string, (bool IsDiscard, string Name)>? extTransforms = null)
     {
         var primary   = new SolidColorBrush(Color.Parse("#D0D0E0"));
         var secondary = new SolidColorBrush(Color.Parse("#888899"));
@@ -3695,42 +4249,40 @@ public partial class MainWindow : Window
             };
 
         // ── Status computation ────────────────────────────────────────────────
-        // Prefer SHA1 for comparison; fall back to MD5.
-        bool   useSha1  = f.Sha1.Length > 0;
-        string datHash  = useSha1 ? f.Sha1 : f.Md5;   // empty = no DAT hash
+        bool anyDatHash = f.Sha1.Length > 0 || f.Md5.Length > 0 || f.Crc.Length > 0;
 
-        // SOURCE: ✔ match  |  ✖ mismatch  |  — absent
+        // SOURCE: all present DAT hashes must match; no DAT hash = indeterminate.
         string srcSymbol; SolidColorBrush srcColor;
-        if (source is null || datHash.Length == 0)
+        if (source is null || !anyDatHash)
         {
             srcSymbol = "—"; srcColor = gray;
         }
         else
         {
-            var srcCmp = useSha1
-                ? source.HashedSourceSha1
-                : (source.HashedSourceMd5 ?? "");
-            bool srcMatch = string.Equals(srcCmp, datHash, StringComparison.OrdinalIgnoreCase);
-            srcSymbol = srcMatch ? "✔" : "✖";
-            srcColor  = srcMatch ? green : red;
+            srcSymbol = IsSourceVerified(f, source) ? "✔" : "✖";
+            srcColor  = srcSymbol == "✔" ? green : red;
         }
 
-        // DERIVED: ✔ match  |  ✖ mismatch-or-absent (critical)
+        // DERIVED: pipeline-based — valid when source matched + derived artifact exists.
+        // Never compare derived hash against DAT hash (e.g. CHD ≠ BIN/CUE hash by design).
         string dstSymbol; SolidColorBrush dstColor;
-        if (derived is null || datHash.Length == 0)
+        if (srcSymbol == "—")
         {
-            // absent = critical ✖; no DAT hash = can't verify, show ✖ if absent, — if can't compare
-            dstSymbol = derived is null ? "✖" : "—";
-            dstColor  = derived is null ? red  : gray;
+            // Source unknown — can't determine pipeline validity.
+            dstSymbol = "—";
+            dstColor  = gray;
+        }
+        else if (srcSymbol == "✔" && derived is not null)
+        {
+            // Source matched DAT + derived artifact exists → pipeline complete.
+            dstSymbol = "✔";
+            dstColor  = green;
         }
         else
         {
-            var dstCmp = useSha1
-                ? derived.HashedDerivedSha1
-                : (derived.HashedDerivedMd5 ?? "");
-            bool dstMatch = string.Equals(dstCmp, datHash, StringComparison.OrdinalIgnoreCase);
-            dstSymbol = dstMatch ? "✔" : "✖";
-            dstColor  = dstMatch ? green : red;
+            // Source failed or derived artifact absent → pipeline incomplete.
+            dstSymbol = "✖";
+            dstColor  = red;
         }
 
         // ── Build panel ───────────────────────────────────────────────────────
@@ -3776,6 +4328,50 @@ public partial class MainWindow : Window
         }
         AddStatusItem("DAT",     "✔",       green);
         AddStatusItem("SOURCE",  srcSymbol, srcColor);
+
+        // TRANSFORM step — resolved from file extension via strategy mapping
+        if (extTransforms is { Count: > 0 })
+        {
+            var ext = Path.GetExtension(f.RomName).ToLowerInvariant();
+            if (ext.Length == 0) ext = "(no ext)";
+
+            if (extTransforms.TryGetValue(ext, out var xform))
+            {
+                // Separator arrow
+                statusRow.Children.Add(new TextBlock
+                {
+                    Text              = "→",
+                    FontSize          = 11,
+                    Foreground        = dim,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                });
+
+                var xformColor = xform.IsDiscard
+                    ? new SolidColorBrush(Color.Parse("#EF5350"))
+                    : new SolidColorBrush(Color.Parse("#7B68EE"));
+
+                var xformGrp = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 5 };
+                xformGrp.Children.Add(new TextBlock
+                {
+                    Text              = "TRANSFORM",
+                    FontSize          = 10,
+                    FontWeight        = FontWeight.SemiBold,
+                    Foreground        = gray,
+                    LetterSpacing     = 0.6,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                });
+                xformGrp.Children.Add(new TextBlock
+                {
+                    Text              = xform.Name,
+                    FontSize          = 11,
+                    FontWeight        = FontWeight.SemiBold,
+                    Foreground        = xformColor,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                });
+                statusRow.Children.Add(xformGrp);
+            }
+        }
+
         AddStatusItem("DERIVED", dstSymbol, dstColor);
         panel.Children.Add(statusRow);
 
@@ -5370,6 +5966,10 @@ public partial class MainWindow : Window
                 TransformRecord effectiveXform;
                 ToolRecord?     effectiveTool;
                 string          effectiveStratId;
+                // isDiscarded = true means the file's source hashes ARE computed and saved,
+                // but no derived artifact is produced (the file is covered by another file's transform).
+                bool   isDiscarded   = false;
+                string discardReason = "";
 
                 if (datLineStrategyType == "file_extension")
                 {
@@ -5387,26 +5987,30 @@ public partial class MainWindow : Window
 
                     if (mapping.IsDiscard)
                     {
-                        var discardOp = new IngestionOperation(f.RomName, "discarded-by-strategy",
-                            $"Extension {fileExt} is set to Discard");
-                        result.Operations.Add(discardOp);
-                        progress.Report(new IngestionProgress { NewOperation = discardOp });
-                        continue;
+                        // Flag for discard — do NOT continue yet; source hashes are still computed
+                        // and persisted so SOURCE ✔ can be evaluated in the Library detail pane.
+                        isDiscarded      = true;
+                        discardReason    = $"Extension {fileExt} is set to Discard";
+                        effectiveXform   = new TransformRecord();   // unused for discard path
+                        effectiveTool    = null;
+                        effectiveStratId = "none";
                     }
-
-                    var mappedXform = allTransforms.FirstOrDefault(t => t.Id == mapping.TransformId);
-                    if (mappedXform == null)
+                    else
                     {
-                        var skipOp = new IngestionOperation(f.RomName, "skipped-transform-missing",
-                            $"Mapped transform '{mapping.TransformId}' not found for extension {fileExt}");
-                        result.Operations.Add(skipOp);
-                        progress.Report(new IngestionProgress { NewOperation = skipOp });
-                        continue;
-                    }
+                        var mappedXform = allTransforms.FirstOrDefault(t => t.Id == mapping.TransformId);
+                        if (mappedXform == null)
+                        {
+                            var skipOp = new IngestionOperation(f.RomName, "skipped-transform-missing",
+                                $"Mapped transform '{mapping.TransformId}' not found for extension {fileExt}");
+                            result.Operations.Add(skipOp);
+                            progress.Report(new IngestionProgress { NewOperation = skipOp });
+                            continue;
+                        }
 
-                    effectiveXform   = mappedXform;
-                    effectiveTool    = allTools.FirstOrDefault(t => t.Id == mappedXform.ToolId);
-                    effectiveStratId = mappedXform.Id == "no_compression" ? "none" : mappedXform.Id;
+                        effectiveXform   = mappedXform;
+                        effectiveTool    = allTools.FirstOrDefault(t => t.Id == mappedXform.ToolId);
+                        effectiveStratId = mappedXform.Id == "no_compression" ? "none" : mappedXform.Id;
+                    }
                 }
                 else
                 {
@@ -5445,12 +6049,11 @@ public partial class MainWindow : Window
                         CreatedAtUtc       = now,
                     });
 
-                    // ── 2. Hash source file physically and verify against DAT ──
-                    var hashedSha1 = ComputeFileSha1(sourceFilePath);
+                    // ── 2. Hash source file physically (SHA1 + MD5 + CRC32 in one pass) ──
+                    var (hashedSha1, hashedMd5, hashedCrc32) = ComputeSourceHashes(sourceFilePath);
 
                     // Verify: if DAT has SHA1, hashed must match.
-                    // If DAT has only MD5, hashed SHA1 is recorded as physical proof but
-                    // does not replace the logical MD5-based identity.
+                    // If DAT has only MD5/CRC32, SHA1 is still recorded as physical proof.
                     if (f.Sha1.Length > 0 &&
                         !string.Equals(hashedSha1, f.Sha1, StringComparison.OrdinalIgnoreCase))
                     {
@@ -5469,13 +6072,22 @@ public partial class MainWindow : Window
                         ContentIdentityKey = ck,
                         SourceSizeBytes    = fileSize,
                         HashedSourceSha1   = hashedSha1,
-                        HashedSourceMd5    = null,   // compute on demand in future milestones
-                        HashedSourceCrc32  = null,
+                        HashedSourceMd5    = hashedMd5,
+                        HashedSourceCrc32  = hashedCrc32,
                         VerifiedAtUtc      = now,
                     });
 
                     // Resolve actual source artifact id (INSERT OR IGNORE means existing id wins)
                     srcArtifactId = store.GetSourceArtifactIdByContentKey(ck) ?? srcArtifactId;
+
+                    // Discarded files: source provenance is now recorded; skip transform entirely.
+                    if (isDiscarded)
+                    {
+                        var discardOp = new IngestionOperation(f.RomName, "discarded-by-strategy", discardReason);
+                        result.Operations.Add(discardOp);
+                        progress.Report(new IngestionProgress { NewOperation = discardOp });
+                        continue;
+                    }
 
                     // ── 4. Transform: produce derived archive file ────────────
                     var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId, safeFolder);
@@ -5493,10 +6105,18 @@ public partial class MainWindow : Window
                             throw new InvalidOperationException($"Transform failed: {xformError}");
                     }
 
-                    // ── 5. Hash derived file independently ────────────────────
-                    // Even for no_compression these are treated as independently observed
-                    // physical hashes of the stored derived file.
-                    var hashedDerivedSha1 = ComputeFileSha1(destPath);
+                    // Log transform step (skip no_compression — that's a plain copy, already captured)
+                    if (effectiveXform.Id != "no_compression")
+                    {
+                        var xformOp = new IngestionOperation(f.RomName, "transform", $"{effectiveXform.Name} → {destName}");
+                        result.Operations.Add(xformOp);
+                        progress.Report(new IngestionProgress { NewOperation = xformOp });
+                    }
+
+                    // ── 5. Hash derived file independently (single pass: SHA1 + MD5 + CRC32) ─
+                    // Physical hashes of the stored derived file; never compared to DAT hashes.
+                    var (hashedDerivedSha1, hashedDerivedMd5, hashedDerivedCrc32) =
+                        ComputeSourceHashes(destPath);
 
                     // ── 6. Persist/upsert derived artifact ────────────────────
                     store.IngestDerivedArtifact(
@@ -5506,7 +6126,9 @@ public partial class MainWindow : Window
                         fileName:           destName,
                         relativePath:       relPath,
                         derivedSizeBytes:   new FileInfo(destPath).Length,
-                        hashedDerivedSha1:  hashedDerivedSha1);
+                        hashedDerivedSha1:  hashedDerivedSha1,
+                        hashedDerivedMd5:   hashedDerivedMd5,
+                        hashedDerivedCrc32: hashedDerivedCrc32);
 
                     // ── 7. Link release → content identity ────────────────────
                     store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord

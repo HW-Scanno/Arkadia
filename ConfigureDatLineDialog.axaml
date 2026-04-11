@@ -1,0 +1,62 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.ConfigureDatLineDialog"
+        Width="600"
+        SizeToContent="Height"
+        MaxHeight="680"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.primary">
+            <Setter Property="Background"   Value="#2A2A4A"/>
+            <Setter Property="Foreground"   Value="#CCCCEE"/>
+            <Setter Property="Padding"      Value="20,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"   Value="#1A1A2C"/>
+            <Setter Property="Foreground"   Value="#888899"/>
+            <Setter Property="Padding"      Value="20,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- Header -->
+        <Border Grid.Row="0" Padding="24,18,24,14"
+                BorderBrush="#181826" BorderThickness="0,0,0,1">
+            <StackPanel Spacing="3">
+                <TextBlock x:Name="DialogTitle"
+                           FontSize="14" FontWeight="SemiBold"
+                           Foreground="#E8E8F0"/>
+                <TextBlock x:Name="DialogSubtitle"
+                           FontSize="11" Foreground="#555566"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Scrollable content (built entirely in code-behind) -->
+        <ScrollViewer Grid.Row="1" MaxHeight="500"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="ContentPanel" Margin="24,16,24,16" Spacing="0"/>
+        </ScrollViewer>
+
+        <!-- Footer -->
+        <Border Grid.Row="2" Padding="24,10,24,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                <Button Classes="secondary" Content="Cancel" Click="OnClose"/>
+                <Button Classes="primary"   Content="Save"   Click="OnSave"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

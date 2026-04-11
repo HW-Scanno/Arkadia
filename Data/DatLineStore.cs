@@ -981,13 +981,15 @@ public sealed class DatLineStore
     /// Returns the derived artifact id (existing or newly inserted).
     /// </summary>
     public string IngestDerivedArtifact(
-        string contentIdentityKey,
-        string sourceArtifactId,
-        string storageStrategyId,
-        string fileName,
-        string relativePath,
-        long   derivedSizeBytes,
-        string hashedDerivedSha1)
+        string  contentIdentityKey,
+        string  sourceArtifactId,
+        string  storageStrategyId,
+        string  fileName,
+        string  relativePath,
+        long    derivedSizeBytes,
+        string  hashedDerivedSha1,
+        string? hashedDerivedMd5   = null,
+        string? hashedDerivedCrc32 = null)
     {
         var now       = DateTime.UtcNow;
         var candidateId = Guid.NewGuid().ToString("N");
@@ -998,15 +1000,19 @@ public sealed class DatLineStore
             INSERT INTO derived_artifacts(
                 id, storage_strategy_id, source_artifact_id, content_identity_key,
                 file_name, relative_path, derived_size_bytes,
-                hashed_derived_sha1, status, created_at_utc, verified_at_utc)
+                hashed_derived_sha1, hashed_derived_md5, hashed_derived_crc32,
+                status, created_at_utc, verified_at_utc)
             VALUES($id, $stratId, $srcArtId, $ck,
                    $fileName, $relPath, $size,
-                   $drvSha1, 'present', $created, $created)
+                   $drvSha1, $drvMd5, $drvCrc32,
+                   'present', $created, $created)
             ON CONFLICT(content_identity_key, storage_strategy_id) DO UPDATE SET
-                source_artifact_id  = excluded.source_artifact_id,
-                hashed_derived_sha1 = excluded.hashed_derived_sha1,
-                status              = 'present',
-                verified_at_utc     = excluded.verified_at_utc
+                source_artifact_id   = excluded.source_artifact_id,
+                hashed_derived_sha1  = excluded.hashed_derived_sha1,
+                hashed_derived_md5   = excluded.hashed_derived_md5,
+                hashed_derived_crc32 = excluded.hashed_derived_crc32,
+                status               = 'present',
+                verified_at_utc      = excluded.verified_at_utc
             """;
         cmd.Parameters.AddWithValue("$id",       candidateId);
         cmd.Parameters.AddWithValue("$stratId",  storageStrategyId);
@@ -1016,6 +1022,8 @@ public sealed class DatLineStore
         cmd.Parameters.AddWithValue("$relPath",  relativePath);
         cmd.Parameters.AddWithValue("$size",     derivedSizeBytes);
         cmd.Parameters.AddWithValue("$drvSha1",  hashedDerivedSha1);
+        cmd.Parameters.AddWithValue("$drvMd5",   (object?)hashedDerivedMd5   ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$drvCrc32", (object?)hashedDerivedCrc32 ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$created",  now.ToString("o"));
         cmd.ExecuteNonQuery();
 

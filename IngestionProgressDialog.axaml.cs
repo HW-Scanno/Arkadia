@@ -55,15 +55,16 @@ public partial class IngestionProgressDialog : Window
     private bool PassesFilter(IngestionOperation op)
     {
         var action = op.Action;
-        if (action == "hash"   && FilterHash.IsChecked   == true) return true;
-        if (action == "copy"   && FilterCopy.IsChecked   == true) return true;
-        if (action == "delete" && FilterDelete.IsChecked == true) return true;
-        if (action == "source" && FilterSource.IsChecked == true) return true;
-        if (action == "skip"   && FilterSkip.IsChecked   == true) return true;
+        if (action == "hash"      && FilterHash.IsChecked      == true) return true;
+        if (action == "copy"      && FilterCopy.IsChecked      == true) return true;
+        if (action == "delete"    && FilterDelete.IsChecked    == true) return true;
+        if (action == "source"    && FilterSource.IsChecked    == true) return true;
+        if (action == "transform" && FilterTransform.IsChecked == true) return true;
+        if (action == "skip"      && FilterSkip.IsChecked      == true) return true;
         if (action.EndsWith("-failed") && FilterFailed.IsChecked == true) return true;
-        // catch-all (e.g. unrecognized actions) — bucket with Skip
+        // catch-all (e.g. discarded-by-strategy, unrecognized actions) — bucket with Skip
         if (action != "hash" && action != "copy" && action != "delete"
-            && action != "source" && !action.EndsWith("-failed")
+            && action != "source" && action != "transform" && !action.EndsWith("-failed")
             && FilterSkip.IsChecked == true) return true;
         return false;
     }

@@ -172,6 +172,16 @@
         <Style Selector="Button.view-toggle:pressed /template/ ContentPresenter">
             <Setter Property="Background" Value="#181826"/>
         </Style>
+        <Style Selector="Button.view-toggle.danger">
+            <Setter Property="BorderBrush" Value="#6B2020"/>
+            <Setter Property="Foreground"  Value="#EF5350"/>
+        </Style>
+        <Style Selector="Button.view-toggle.danger:pointerover">
+            <Setter Property="BorderBrush" Value="#EF5350"/>
+        </Style>
+        <Style Selector="Button.view-toggle.danger:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#2A0A0A"/>
+        </Style>
 
         <!-- ══════════════════════════════════════════════════════════
              Text action links (Update DAT, Delete, Open in Library, etc.)
@@ -500,222 +510,71 @@
             </ScrollViewer>
 
             <!-- ── Systems view ── -->
+            <!-- ── Systems view ── -->
             <Grid x:Name="ViewSystems"
                   Grid.Row="1"
                   IsVisible="False"
                   RowDefinitions="Auto,*">
 
-                <!-- Toolbar: view toggle -->
+                <!-- Unified action bar -->
                 <Border Grid.Row="0"
-                        Padding="20,10"
+                        Padding="16,9"
                         Background="{DynamicResource ArkSurface}"
                         BorderBrush="{DynamicResource ArkSurfaceAlt}"
                         BorderThickness="0,0,0,1">
-                    <DockPanel>
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
-                            <Button x:Name="SystemsCreatePlatform"
-                                    Classes="view-toggle" Content="Create Platform" Click="OnCreatePlatform"/>
-                            <Button x:Name="SystemsEditPlatform"
-                                    Classes="view-toggle" Content="Edit Platform" Click="OnEditPlatform"/>
-                            <Button x:Name="SystemsImportDat"
-                                    Classes="view-toggle" Content="Import DAT" Click="OnImportDat"/>
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <Button x:Name="SystemsCardToggle" Classes="view-toggle active"
-                                    Content="Card" Click="OnSystemsViewToggle"/>
-                            <Button x:Name="SystemsListToggle" Classes="view-toggle"
-                                    Content="List" Click="OnSystemsViewToggle"/>
-                        </StackPanel>
-                    </DockPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Button x:Name="SysActCreatePlatform" Classes="view-toggle"
+                                Content="Create Platform" Click="OnCreatePlatform"/>
+                        <Button x:Name="SysActEditPlatform"   Classes="view-toggle"
+                                Content="Edit Platform"   Click="OnEditPlatform"/>
+                        <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
+                                Margin="10,2" VerticalAlignment="Stretch"/>
+                        <Button x:Name="SysActImportDat"    Classes="view-toggle"
+                                Content="Import DAT"    Click="OnImportDat"/>
+                        <Button x:Name="SysActConfigureDat" Classes="view-toggle"
+                                Content="Configure DAT" Click="OnSysConfigureDat"/>
+                        <Button x:Name="SysActUpdateDat"    Classes="view-toggle"
+                                Content="Update DAT"    Click="OnSysUpdateDat"/>
+                        <Button x:Name="SysActVerifyDat"    Classes="view-toggle"
+                                Content="Verify DAT"    Click="OnSysVerifyDat"/>
+                        <Button x:Name="SysActDeleteDat"    Classes="view-toggle danger"
+                                Content="Delete DAT"    Click="OnSysDeleteDat"/>
+                        <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
+                                Margin="10,2" VerticalAlignment="Stretch"/>
+                        <Button x:Name="SysActIngestFiles" Classes="view-toggle"
+                                Content="Ingest Files"  Click="OnSysIngestFiles"/>
+                    </StackPanel>
                 </Border>
 
-                <!-- Content + shared detail panel -->
-                <!-- Detail panel width: 500px. Keep in sync with all other *,1,500 splits in this file. -->
-                <Grid Grid.Row="1" ColumnDefinitions="*,1,500">
+                <!-- Center tree + detail pane -->
+                <Grid Grid.Row="1" ColumnDefinitions="*,1,370">
 
-                    <!-- Col 0: card view OR list view (toggled) -->
-
-                    <!-- Card view -->
-                    <ScrollViewer x:Name="SystemsCardView"
-                                  Grid.Column="0"
+                    <!-- Col 0: hierarchical Platform → DAT tree (built in code-behind) -->
+                    <ScrollViewer Grid.Column="0"
                                   HorizontalScrollBarVisibility="Disabled"
                                   VerticalScrollBarVisibility="Auto">
-                        <WrapPanel x:Name="SystemsCardPanel"
-                                   Margin="24,20,24,24"/>
+                        <StackPanel x:Name="SystemsTreePanel"
+                                    Margin="20,14,20,20" Spacing="6"/>
                     </ScrollViewer>
-
-                    <!-- List view -->
-                    <Grid x:Name="SystemsListView"
-                          Grid.Column="0"
-                          IsVisible="False"
-                          RowDefinitions="Auto,*">
-                        <Border Grid.Row="0"
-                                Padding="24,10"
-                                BorderBrush="{DynamicResource ArkSurfaceAlt}"
-                                BorderThickness="0,0,0,1">
-                            <Grid ColumnDefinitions="*,120,80,80,90">
-                                <TextBlock Grid.Column="0" Classes="col-header" Text="PLATFORM"      Margin="0,0,16,0"/>
-                                <TextBlock Grid.Column="1" Classes="col-header" Text="MANUFACTURER"  Margin="8,0,0,0"/>
-                                <TextBlock Grid.Column="2" Classes="col-header" Text="TITLES"   HorizontalAlignment="Right" Margin="0,0,8,0"/>
-                                <TextBlock Grid.Column="3" Classes="col-header" Text="PRESENT"  HorizontalAlignment="Right" Margin="0,0,8,0"/>
-                                <TextBlock Grid.Column="4" Classes="col-header" Text="COVERAGE" HorizontalAlignment="Right" Margin="0,0,8,0"/>
-                            </Grid>
-                        </Border>
-                        <ListBox x:Name="SystemsList"
-                                 Grid.Row="1"
-                                 Background="Transparent"
-                                 BorderThickness="0"
-                                 Padding="0"
-                                 ItemsSource="{x:Null}"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 SelectionChanged="OnSystemsListSelectionChanged">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate x:DataType="sys:SystemPlatform">
-                                    <Grid ColumnDefinitions="*,120,80,80,90" Margin="24,0,24,0">
-                                        <TextBlock Grid.Column="0" Text="{Binding Name}"
-                                                   FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
-                                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                                                   Margin="0,0,16,0"/>
-                                        <TextBlock Grid.Column="1" Text="{Binding Manufacturer}"
-                                                   FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"
-                                                   TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
-                                                   Margin="8,0,0,0"/>
-                                        <TextBlock Grid.Column="2" Text="{Binding TotalTitles}"
-                                                   FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"
-                                                   HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                        <TextBlock Grid.Column="3" Text="{Binding Present}"
-                                                   FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"
-                                                   HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                        <TextBlock Grid.Column="4" Text="{Binding Coverage}"
-                                                   FontSize="12" FontWeight="SemiBold"
-                                                   Foreground="{DynamicResource ArkAccent}"
-                                                   HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    </Grid>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-                    </Grid><!-- /SystemsListView -->
 
                     <!-- Col 1: vertical divider -->
                     <Border Grid.Column="1" Background="{DynamicResource ArkSurfaceAlt}"/>
 
-                    <!-- Col 2: shared detail panel -->
+                    <!-- Col 2: contextual read-only detail pane, 420px, built in code-behind -->
                     <Grid Grid.Column="2" Background="{DynamicResource ArkSurface}">
-                        <TextBlock x:Name="SystemsDetailEmpty"
-                                   Text="Select a platform&#x0a;to view details"
+                        <TextBlock x:Name="SystemsDetailEmptyMsg"
+                                   Text="Select a platform to view details"
                                    TextAlignment="Center" TextWrapping="Wrap"
                                    FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                                       VerticalScrollBarVisibility="Auto">
-                            <StackPanel x:Name="SystemsDetailContent"
-                                        IsVisible="False"
-                                        Margin="24,22,24,22" Spacing="0">
-                                <TextBlock Classes="widget-title" Text="PLATFORM"/>
-                                <Image x:Name="SystemsDetailImage"
-                                       HorizontalAlignment="Stretch"
-                                       MaxHeight="200"
-                                       Stretch="Uniform"
-                                       RenderOptions.BitmapInterpolationMode="HighQuality"
-                                       Margin="0,0,0,16"/>
-                                <TextBlock x:Name="SystemsDetailName"
-                                           FontSize="15" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource ArkTextPrimary}"
-                                           TextWrapping="Wrap" Margin="0,0,0,18"/>
-                                <Border Classes="card-divider" Margin="0,0,0,12"/>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Platform ID"  Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailId"
-                                               FontSize="11" FontFamily="Consolas,Courier New,monospace"
-                                               Foreground="{DynamicResource ArkTextSecondary}" Margin="0"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Manufacturer" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailManufacturer" Classes="card-val" Margin="0"/>
-                                </Grid>
-                                <Grid x:Name="SystemsDetailHardwareTypeRow" ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Hardware" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailHardwareType" Classes="card-val" Margin="0"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,72" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="DAT Lines"    Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailDatLines"    Classes="card-val" Margin="0"
-                                               HorizontalAlignment="Center" TextAlignment="Center"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,72" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Total Titles" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailTotal"       Classes="card-val" Margin="0"
-                                               HorizontalAlignment="Center" TextAlignment="Center"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,72" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Present"      Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailPresent"     Classes="card-val" Margin="0"
-                                               HorizontalAlignment="Center" TextAlignment="Center"/>
-                                </Grid>
-                                <Grid x:Name="SystemsDetailOutdatedRow" ColumnDefinitions="*,72" Margin="0,0,0,8" IsVisible="False">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Outdated"     Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailOutdated"    Classes="card-val" Margin="0"
-                                               Foreground="#888899"
-                                               HorizontalAlignment="Center" TextAlignment="Center"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,72" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Missing"      Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailMissing"     Classes="card-val" Margin="0"
-                                               HorizontalAlignment="Center" TextAlignment="Center"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,72" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Lost"         Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailLost"        Classes="card-val" Margin="0"
-                                               HorizontalAlignment="Center" TextAlignment="Center"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,72">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Coverage"     Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="SystemsDetailCoverage"
-                                               FontSize="12" FontWeight="SemiBold"
-                                               Foreground="{DynamicResource ArkAccent}" Margin="0"
-                                               HorizontalAlignment="Center" TextAlignment="Center"/>
-                                </Grid>
-
-                                <!-- Hardware Details section (visible only when fields are populated) -->
-                                <StackPanel x:Name="SystemsHardwareDetailsSection" IsVisible="False">
-                                    <Border Classes="card-divider" Margin="0,16,0,14"/>
-                                    <TextBlock Classes="widget-title" Text="HARDWARE DETAILS" Margin="0,0,0,10"/>
-                                    <Grid x:Name="SystemsHwCpuRow"      ColumnDefinitions="*,Auto" Margin="0,0,0,6" IsVisible="False">
-                                        <TextBlock Grid.Column="0" Classes="card-key" Text="CPU"    Margin="0"/>
-                                        <TextBlock Grid.Column="1" x:Name="SystemsHwCpu"    Classes="card-val" Margin="0" TextWrapping="Wrap" MaxWidth="130" TextAlignment="Right"/>
-                                    </Grid>
-                                    <Grid x:Name="SystemsHwMemoryRow"   ColumnDefinitions="*,Auto" Margin="0,0,0,6" IsVisible="False">
-                                        <TextBlock Grid.Column="0" Classes="card-key" Text="Memory" Margin="0"/>
-                                        <TextBlock Grid.Column="1" x:Name="SystemsHwMemory" Classes="card-val" Margin="0" TextWrapping="Wrap" MaxWidth="130" TextAlignment="Right"/>
-                                    </Grid>
-                                    <Grid x:Name="SystemsHwGraphicsRow" ColumnDefinitions="*,Auto" Margin="0,0,0,6" IsVisible="False">
-                                        <TextBlock Grid.Column="0" Classes="card-key" Text="Graphics" Margin="0"/>
-                                        <TextBlock Grid.Column="1" x:Name="SystemsHwGraphics" Classes="card-val" Margin="0" TextWrapping="Wrap" MaxWidth="130" TextAlignment="Right"/>
-                                    </Grid>
-                                    <Grid x:Name="SystemsHwSoundRow"    ColumnDefinitions="*,Auto" Margin="0,0,0,6" IsVisible="False">
-                                        <TextBlock Grid.Column="0" Classes="card-key" Text="Sound"  Margin="0"/>
-                                        <TextBlock Grid.Column="1" x:Name="SystemsHwSound"   Classes="card-val" Margin="0" TextWrapping="Wrap" MaxWidth="130" TextAlignment="Right"/>
-                                    </Grid>
-                                    <Grid x:Name="SystemsHwResolutionRow" ColumnDefinitions="*,Auto" Margin="0,0,0,6" IsVisible="False">
-                                        <TextBlock Grid.Column="0" Classes="card-key" Text="Resolution" Margin="0"/>
-                                        <TextBlock Grid.Column="1" x:Name="SystemsHwResolution" Classes="card-val" Margin="0" TextWrapping="Wrap" MaxWidth="130" TextAlignment="Right"/>
-                                    </Grid>
-                                    <Grid x:Name="SystemsHwAspectRow"   ColumnDefinitions="*,Auto" Margin="0,0,0,6" IsVisible="False">
-                                        <TextBlock Grid.Column="0" Classes="card-key" Text="Aspect Ratio" Margin="0"/>
-                                        <TextBlock Grid.Column="1" x:Name="SystemsHwAspect"  Classes="card-val" Margin="0" TextWrapping="Wrap" MaxWidth="130" TextAlignment="Right"/>
-                                    </Grid>
-                                </StackPanel>
-
-                                <!-- DAT Lines section -->
-                                <Border Classes="card-divider" Margin="0,16,0,14"/>
-                                <TextBlock Classes="widget-title" Text="DAT LINES" Margin="0,0,0,10"/>
-                                <StackPanel x:Name="SystemsDatLinesList" Spacing="6"/>
-
-                            </StackPanel>
+                            <StackPanel x:Name="SystemsDetailPanel"
+                                        Margin="16,16,16,16" Spacing="0"/>
                         </ScrollViewer>
-                    </Grid><!-- /detail panel -->
+                    </Grid><!-- /detail pane -->
 
-                </Grid><!-- /content+detail -->
+                </Grid><!-- /center+detail -->
 
             </Grid><!-- /ViewSystems -->
 
@@ -782,7 +641,7 @@
                                 Padding="24,10"
                                 BorderBrush="{DynamicResource ArkSurfaceAlt}"
                                 BorderThickness="0,0,0,1">
-                            <Grid ColumnDefinitions="68,40,*,56,96">
+                            <Grid ColumnDefinitions="68,40,*,56,146">
                                 <TextBlock Grid.Column="0" Classes="col-header" Text="STATUS"
                                            HorizontalAlignment="Center"/>
                                 <TextBlock Grid.Column="1" Classes="col-header" Text="TIER"
@@ -804,7 +663,7 @@
                                  SelectionChanged="OnLibrarySelectionChanged">
                             <ListBox.ItemTemplate>
                                 <DataTemplate x:DataType="lib:LibraryEntry">
-                                    <Grid ColumnDefinitions="68,40,*,56,96" Margin="24,0,24,0">
+                                    <Grid ColumnDefinitions="68,40,*,56,146" Margin="24,0,24,0">
                                         <TextBlock Grid.Column="0"
                                                    Text="{Binding Status}"
                                                    FontSize="12"
@@ -943,10 +802,15 @@
                                     <TextBlock Grid.Column="1" x:Name="DetailSize"     Classes="card-val" Margin="0"/>
                                 </Grid>
 
-                                <!-- CONTENT FILES section -->
+                                <!-- SOURCE FILES section -->
                                 <Border Classes="card-divider" Margin="0,16,0,14"/>
-                                <TextBlock Classes="widget-title" Text="CONTENT FILES" Margin="0,0,0,10"/>
-                                <StackPanel x:Name="DetailDatFiles" Spacing="10"/>
+                                <TextBlock Classes="widget-title" Text="SOURCE FILES" Margin="0,0,0,10"/>
+                                <StackPanel x:Name="DetailSourceFiles" Spacing="10"/>
+
+                                <!-- DERIVED FILES section -->
+                                <Border Classes="card-divider" Margin="0,16,0,14"/>
+                                <TextBlock Classes="widget-title" Text="DERIVED FILES" Margin="0,0,0,10"/>
+                                <StackPanel x:Name="DetailDerivedFiles" Spacing="10"/>
 
                                 <!-- PREVIOUSLY SEEN IN section -->
                                 <Border x:Name="DetailOverlapDivider" Classes="card-divider" Margin="0,16,0,14" IsVisible="False"/>
@@ -970,6 +834,22 @@
 
                             </StackPanel>
                         </ScrollViewer>
+
+                        <!-- Copy toast — floats at bottom of detail panel -->
+                        <Border x:Name="CopyToastBorder"
+                                IsVisible="False"
+                                VerticalAlignment="Bottom"
+                                HorizontalAlignment="Stretch"
+                                Background="#12121C"
+                                BorderBrush="#2A2A44"
+                                BorderThickness="0,1,0,0"
+                                Padding="16,7"
+                                ZIndex="20">
+                            <TextBlock x:Name="CopyToastText"
+                                       FontSize="11"
+                                       Foreground="#7A7A99"
+                                       TextTrimming="CharacterEllipsis"/>
+                        </Border>
 
                     </Grid><!-- /detail panel -->
 
