@@ -235,6 +235,29 @@
             <Setter Property="Background" Value="#232347"/>
         </Style>
 
+        <!-- VolumesList — zero horizontal theme padding so data grid aligns with header -->
+        <Style Selector="ListBox#VolumesList ListBoxItem">
+            <Setter Property="Padding"         Value="0,8"/>
+            <Setter Property="Margin"          Value="0"/>
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="ListBox#VolumesList ListBoxItem /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding"    Value="0"/>
+            <Setter Property="Margin"     Value="0"/>
+        </Style>
+        <Style Selector="ListBox#VolumesList ListBoxItem:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ArkSurfaceAlt}"/>
+        </Style>
+        <Style Selector="ListBox#VolumesList ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="#1E1E3A"/>
+        </Style>
+        <Style Selector="ListBox#VolumesList ListBoxItem:selected:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#232347"/>
+        </Style>
+
     </Window.Styles>
 
     <!-- MainRoot opacity is animated on show; Window stays fully opaque to avoid DWM flicker -->
@@ -1267,7 +1290,7 @@
                 </Border>
 
                 <!-- List + detail -->
-                <Grid Grid.Row="1" ColumnDefinitions="*,1,500">
+                <Grid Grid.Row="1" ColumnDefinitions="*,1,370">
 
                     <!-- Table -->
                     <Grid Grid.Column="0" RowDefinitions="Auto,*">
@@ -1455,213 +1478,128 @@
 
                 <!-- Toolbar -->
                 <Border Grid.Row="0"
-                        Padding="20,10"
+                        Padding="16,9"
                         Background="{DynamicResource ArkSurface}"
                         BorderBrush="{DynamicResource ArkSurfaceAlt}"
                         BorderThickness="0,0,0,1">
-                    <DockPanel>
-                        <Button DockPanel.Dock="Left"
-                                Content="Create Volume"
-                                Classes="view-toggle"
-                                Margin="0,0,8,0"
-                                Click="OnCreateVolume"/>
-                        <TextBlock x:Name="VolumesCountText"
-                                   DockPanel.Dock="Right"
-                                   VerticalAlignment="Center"
-                                   FontSize="11"
-                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                   Margin="16,0,0,0"/>
-                        <TextBox x:Name="VolumesSearchBox"
-                                 Watermark="Search volumes…"
-                                 FontSize="13"
-                                 TextChanged="OnVolumesSearchChanged"/>
-                    </DockPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Button x:Name="VolActCreateVolume"  Classes="view-toggle"
+                                Content="Create Volume"  Click="OnCreateVolume"/>
+                        <Button x:Name="VolActVerifyVolume"  Classes="view-toggle" IsEnabled="False"
+                                Content="Verify Volume"  Click="OnVerifyVolume"/>
+                        <Button x:Name="VolActRepair"        Classes="view-toggle" IsEnabled="False"
+                                Content="Repair Volume"  Click="OnRepairVolume"/>
+                        <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
+                                Margin="10,2" VerticalAlignment="Stretch"/>
+                        <Button x:Name="VolActMake"      Classes="view-toggle" IsEnabled="False"
+                                Content="Make"      Click="OnMakeVolume"/>
+                        <Button x:Name="VolActMove"      Classes="view-toggle" IsEnabled="False"
+                                Content="Move"      Click="OnMoveVolume"/>
+                        <Button x:Name="VolActResize"    Classes="view-toggle" IsEnabled="False"
+                                Content="Resize"    Click="OnResizeVolume"/>
+                        <Button x:Name="VolActAppend"    Classes="view-toggle" IsEnabled="False"
+                                Content="Append"    Click="OnAppendVolume"/>
+                        <Button x:Name="VolActReabsorb"  Classes="view-toggle" IsEnabled="False"
+                                Content="Reabsorb"  Click="OnReabsorbVolume"/>
+                        <Button x:Name="VolActMarkLost"  Classes="view-toggle" IsEnabled="False"
+                                Content="Mark Lost" Click="OnMarkVolumeLost"/>
+                        <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
+                                Margin="10,2" VerticalAlignment="Stretch"/>
+                        <Button x:Name="VolActArtifacts" Classes="view-toggle" IsEnabled="False"
+                                Content="Artifacts…" Click="OnVolumeArtifactsDetails"/>
+                    </StackPanel>
                 </Border>
 
-                <!-- List + detail -->
-                <Grid Grid.Row="1" ColumnDefinitions="*,1,500">
+                <!-- Full-width table -->
+                <Grid Grid.Row="1" RowDefinitions="Auto,*">
 
-                    <!-- Table -->
-                    <Grid Grid.Column="0" RowDefinitions="Auto,*">
+                    <Border Grid.Row="0"
+                            Padding="20,8"
+                            BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                            BorderThickness="0,0,0,1">
+                        <Grid ColumnDefinitions="52,0.75*,80,140,90,90,0.5*,3*">
+                            <TextBlock Grid.Column="0" Classes="col-header" Text="STATUS"    HorizontalAlignment="Center"/>
+                            <TextBlock Grid.Column="1" Classes="col-header" Text="LABEL"/>
+                            <TextBlock Grid.Column="2" Classes="col-header" Text="ARTIFACTS" HorizontalAlignment="Center" Margin="8,0,0,0"/>
+                            <TextBlock Grid.Column="3" Classes="col-header" Text="DAT LINE" Margin="12,0,0,0"/>
+                            <TextBlock Grid.Column="4" Classes="col-header" Text="PLANNED"   HorizontalAlignment="Right"/>
+                            <TextBlock Grid.Column="5" Classes="col-header" Text="ACTUAL"    HorizontalAlignment="Right"/>
+                            <TextBlock Grid.Column="6" Classes="col-header" Text="LOCATION" Margin="12,0,0,0"/>
+                            <TextBlock Grid.Column="7" Classes="col-header" Text="FILL"      Margin="8,0,0,0"/>
+                        </Grid>
+                    </Border>
 
-                        <Border Grid.Row="0"
-                                Padding="20,8"
-                                BorderBrush="{DynamicResource ArkSurfaceAlt}"
-                                BorderThickness="0,0,0,1">
-                            <Grid ColumnDefinitions="52,*,120,90,90,*,80">
-                                <TextBlock Grid.Column="0" Classes="col-header" Text="STATUS" HorizontalAlignment="Center"/>
-                                <TextBlock Grid.Column="1" Classes="col-header" Text="LABEL"/>
-                                <TextBlock Grid.Column="2" Classes="col-header" Text="DAT LINE"/>
-                                <TextBlock Grid.Column="3" Classes="col-header" Text="PLANNED" HorizontalAlignment="Right"/>
-                                <TextBlock Grid.Column="4" Classes="col-header" Text="ACTUAL" HorizontalAlignment="Right"/>
-                                <TextBlock Grid.Column="5" Classes="col-header" Text="LOCATION"/>
-                                <TextBlock Grid.Column="6" Classes="col-header" Text="FILL" HorizontalAlignment="Center"/>
-                            </Grid>
-                        </Border>
-
-                        <ListBox x:Name="VolumesList"
-                                 Grid.Row="1"
-                                 Background="Transparent"
-                                 BorderThickness="0"
-                                 Padding="0"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 SelectionChanged="OnVolumeSelectionChanged">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate x:DataType="vols:VolumeEntry">
-                                    <Grid ColumnDefinitions="52,*,120,90,90,*,80" Margin="20,0">
-                                        <TextBlock Grid.Column="0"
-                                                   Text="{Binding StatusLabel}"
-                                                   FontSize="11" FontWeight="SemiBold"
-                                                   Foreground="{Binding StatusBrush}"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding Label}"
-                                                   FontSize="13"
-                                                   Foreground="{DynamicResource ArkTextPrimary}"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="2"
-                                                   Text="{Binding DatLineId}"
-                                                   FontSize="11"
-                                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="3"
-                                                   Text="{Binding PlannedLabel}"
-                                                   FontSize="12"
-                                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                                   HorizontalAlignment="Right"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="4"
-                                                   Text="{Binding ActualLabel}"
-                                                   FontSize="12"
-                                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                                   HorizontalAlignment="Right"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="5"
-                                                   Text="{Binding CurrentLocation}"
-                                                   FontSize="12"
-                                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center"/>
-                                        <!-- Fill bar -->
-                                        <Border Grid.Column="6"
-                                                Height="8"
-                                                CornerRadius="1"
-                                                Background="{DynamicResource ArkSurfaceAlt}"
-                                                VerticalAlignment="Center"
-                                                Margin="8,0">
-                                            <Border HorizontalAlignment="Left"
-                                                    Height="8"
-                                                    CornerRadius="1"
-                                                    Background="#5C6BC0"
-                                                    Width="{Binding FillRatio, Converter={x:Static vols:VolumeFillBarConverter.Instance}}"/>
-                                        </Border>
-                                    </Grid>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
-
-                    </Grid><!-- /table column -->
-
-                    <Border Grid.Column="1" Background="{DynamicResource ArkSurfaceAlt}"/>
-
-                    <!-- Volume detail panel -->
-                    <Grid Grid.Column="2" Background="{DynamicResource ArkSurface}">
-
-                        <TextBlock x:Name="VolumeDetailEmpty"
-                                   Text="Select a volume&#x0a;to view details"
-                                   TextAlignment="Center"
-                                   TextWrapping="Wrap"
-                                   FontSize="12"
-                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"/>
-
-                        <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                                      VerticalScrollBarVisibility="Auto">
-                            <StackPanel x:Name="VolumeDetailContent"
-                                        IsVisible="False"
-                                        Margin="20,18,20,18"
-                                        Spacing="0">
-
-                                <TextBlock Classes="widget-title" Text="VOLUME DETAILS"/>
-
-                                <TextBlock x:Name="VolumeDetailLabel"
-                                           FontSize="15" FontWeight="SemiBold"
-                                           Foreground="{DynamicResource ArkTextPrimary}"
-                                           TextWrapping="Wrap"
-                                           Margin="0,0,0,14"/>
-
-                                <Border Classes="card-divider" Margin="0,0,0,10"/>
-
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Status" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailStatus" Classes="card-val" Margin="0"/>
+                    <ListBox x:Name="VolumesList"
+                             Grid.Row="1"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             Padding="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             SelectionChanged="OnVolumeSelectionChanged">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:DataType="vols:VolumeEntry">
+                                <Grid ColumnDefinitions="52,0.75*,80,140,90,90,0.5*,3*" Margin="20,0">
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding StatusLabel}"
+                                               FontSize="11" FontWeight="SemiBold"
+                                               Foreground="{Binding StatusBrush}"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding Label}"
+                                               FontSize="13"
+                                               Foreground="{DynamicResource ArkTextPrimary}"
+                                               TextTrimming="CharacterEllipsis"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding ArtifactCount}"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource ArkTextSecondary}"
+                                               HorizontalAlignment="Center"
+                                               Margin="8,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="3"
+                                               Text="{Binding DatLineId}"
+                                               FontSize="11"
+                                               Foreground="{DynamicResource ArkTextSecondary}"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="12,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="4"
+                                               Text="{Binding PlannedLabel}"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource ArkTextSecondary}"
+                                               HorizontalAlignment="Right"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="5"
+                                               Text="{Binding ActualLabel}"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource ArkTextSecondary}"
+                                               HorizontalAlignment="Right"
+                                               VerticalAlignment="Center"/>
+                                    <TextBlock Grid.Column="6"
+                                               Text="{Binding CurrentLocation}"
+                                               FontSize="12"
+                                               Foreground="{DynamicResource ArkTextSecondary}"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="12,0,0,0"
+                                               VerticalAlignment="Center"/>
+                                    <!-- Single-color fill bar: color interpolated per fill ratio -->
+                                    <ProgressBar Grid.Column="7"
+                                                 Minimum="0" Maximum="1"
+                                                 Value="{Binding FillRatio}"
+                                                 Foreground="{Binding FillRatio, Converter={x:Static vols:VolumeFillBarConverter.Instance}}"
+                                                 Height="6"
+                                                 VerticalAlignment="Center"
+                                                 Margin="8,0"
+                                                 CornerRadius="2"
+                                                 Background="#383850"/>
                                 </Grid>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Platform" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailPlatform" Classes="card-val" Margin="0"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="DAT Line" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailDatLine" Classes="card-val" Margin="0" TextWrapping="Wrap"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Planned" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailPlanned" Classes="card-val" Margin="0"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Actual" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailActual" Classes="card-val" Margin="0"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Location" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailLocation" Classes="card-val" Margin="0"/>
-                                </Grid>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Disk" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailDisk" Classes="card-val" Margin="0"/>
-                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
 
-                                <!-- Derived artifacts section -->
-                                <Border Classes="card-divider" Margin="0,14,0,10"/>
-                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,10">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Artifacts" Margin="0"/>
-                                    <TextBlock Grid.Column="1" x:Name="VolumeDetailArtifactCount"
-                                               Classes="card-val" Margin="0"/>
-                                </Grid>
-
-                                <Border Classes="card-divider" Margin="0,0,0,12"/>
-
-                                <WrapPanel Orientation="Horizontal">
-                                    <Button Content="Make Volume"
-                                            Classes="view-toggle"
-                                            Margin="0,0,8,8"
-                                            Click="OnMakeVolume"/>
-                                    <Button Content="Move Volume"
-                                            Classes="view-toggle"
-                                            Margin="0,0,8,8"
-                                            Click="OnMoveVolume"/>
-                                    <Button x:Name="VolumeDetailRepairBtn"
-                                            Content="Repair" IsEnabled="False"
-                                            Classes="view-toggle"
-                                            Margin="0,0,8,8"
-                                            Click="OnRepairVolume"/>
-                                    <Button x:Name="VolumeDetailArtifactsBtn"
-                                            Content="Artifacts…" IsEnabled="False"
-                                            Classes="view-toggle"
-                                            Margin="0,0,0,8"
-                                            Click="OnVolumeArtifactsDetails"/>
-                                </WrapPanel>
-
-                            </StackPanel>
-                        </ScrollViewer>
-
-                    </Grid><!-- /volume detail -->
-
-                </Grid><!-- /list+detail -->
+                </Grid><!-- /full-width table -->
 
             </Grid><!-- /ViewVolumes -->
 
@@ -1856,6 +1794,27 @@
                                     Classes="view-toggle"
                                     Click="OnReloadSettings"/>
                         </StackPanel>
+
+                        <!-- ── DIAGNOSTICS card ───────────────────────────────── -->
+                        <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                BorderThickness="1" CornerRadius="6" Padding="20,16">
+                            <StackPanel Spacing="0">
+
+                                <TextBlock Text="DIAGNOSTICS"
+                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                           Foreground="#555566" Margin="0,0,0,16"/>
+
+                                <StackPanel Spacing="4">
+                                    <Button Content="Validate Integrity"
+                                            Classes="view-toggle"
+                                            Click="OnValidateIntegrity"/>
+                                    <TextBlock Text="Checks invariants across volumes, artifacts, and releases. Read-only. Writes a report to logs/integrity/."
+                                               FontSize="11" Foreground="#555577"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+
+                            </StackPanel>
+                        </Border><!-- /Diagnostics card -->
 
                     </StackPanel>
                 </ScrollViewer>

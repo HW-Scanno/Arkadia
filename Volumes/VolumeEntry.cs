@@ -20,6 +20,7 @@ public sealed class VolumeEntry
     public required string  RawDatLineId     { get; init; }
     /// <summary>Absolute path to the DAT-line SQLite DB for this volume.</summary>
     public required string  DbPath           { get; init; }
+    public          int     ArtifactCount    { get; init; }
 
     public double FillRatio => PlannedSizeBytes > 0
         ? System.Math.Clamp((double)ActualSizeBytes / PlannedSizeBytes, 0, 1)
@@ -28,20 +29,18 @@ public sealed class VolumeEntry
     public string PlannedLabel => FormatBytes(PlannedSizeBytes);
     public string ActualLabel  => FormatBytes(ActualSizeBytes);
 
-    public IBrush StatusBrush => Status switch
-    {
-        "present" when Health == "crit" => new SolidColorBrush(Color.Parse("#EF5350")),
-        "present"                       => new SolidColorBrush(Color.Parse("#4CAF50")),
-        "lost"                          => new SolidColorBrush(Color.Parse("#EF5350")),
-        _                               => new SolidColorBrush(Color.Parse("#888899")),
-    };
+    public string StatusLabel =>
+        Status == "lost"                          ? "LOST"    :
+        CurrentLocation.StartsWith("disk:")       ? "ON DISK" :
+        CurrentLocation == "Local Archive"        ? "LOCAL"   :
+                                                    "WARNING";
 
-    public string StatusLabel => Status switch
+    public IBrush StatusBrush => StatusLabel switch
     {
-        "present" when Health == "crit" => "CRIT",
-        "present"                       => "OK",
-        "lost"                          => "LOST",
-        _                               => Status.ToUpperInvariant(),
+        "ON DISK" => new SolidColorBrush(Color.Parse("#4CAF50")),
+        "LOCAL"   => new SolidColorBrush(Color.Parse("#26C6DA")),
+        "LOST"    => new SolidColorBrush(Color.Parse("#EF5350")),
+        _         => new SolidColorBrush(Color.Parse("#FFB300")),  // WARNING
     };
 
     private static string FormatBytes(long b)

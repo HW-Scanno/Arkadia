@@ -1046,7 +1046,7 @@ public sealed class CatalogService
         cmd.CommandText = """
             SELECT disk_id, COUNT(DISTINCT volume_id)
             FROM volume_locations
-            WHERE is_current = 1
+            WHERE is_current = 1 AND disk_id IS NOT NULL
             GROUP BY disk_id
             """;
         using var r = cmd.ExecuteReader();
@@ -1131,6 +1131,20 @@ public sealed class CatalogService
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = "UPDATE volumes SET health = $health WHERE id = $id";
         cmd.Parameters.AddWithValue("$health", health);
+        cmd.Parameters.AddWithValue("$id",     volumeId);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Updates only the status column for the given volume.
+    /// Allowed values: "present" | "lost". Does not touch volume.health.
+    /// </summary>
+    public void UpdateVolumeStatus(string volumeId, string status)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "UPDATE volumes SET status = $status WHERE id = $id";
+        cmd.Parameters.AddWithValue("$status", status);
         cmd.Parameters.AddWithValue("$id",     volumeId);
         cmd.ExecuteNonQuery();
     }
@@ -1418,6 +1432,144 @@ public sealed class CatalogService
         VerifiedAt       = r.IsDBNull(8) ? null : DateTime.Parse(r.GetString(8)),
         Health           = r.IsDBNull(9) ? "ok" : r.GetString(9),
     };
+
+    /// <summary>
+    /// Returns the derived artifact IDs that are assigned exclusively to
+    /// <paramref name="volumeId"/> — i.e. not present on any other volume whose
+    /// status is not "lost". Results are grouped by dat_line_id so callers can
+    /// open the right per-DAT database for each group.
+    /// </summary>
+    public Dictionary<string, List<string>> GetDerivedArtifactsExclusiveToVolume(string volumeId)
+    {
+        var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT va.dat_line_id, va.derived_artifact_id
+            FROM volume_artifacts va
+            WHERE va.volume_id = $vid
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM volume_artifacts va2
+                  JOIN volumes v ON v.id = va2.volume_id
+                  WHERE va2.derived_artifact_id = va.derived_artifact_id
+                    AND va2.volume_id != $vid
+                    AND v.status != 'lost'
+              )
+            """;
+        cmd.Parameters.AddWithValue("$vid", volumeId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var dlId = r.GetString(0);
+            var daId = r.GetString(1);
+            if (!result.TryGetValue(dlId, out var list))
+                result[dlId] = list = [];
+            list.Add(daId);
+        }
+        return result;
+    }
+
+    // ── Integrity Validation ──────────────────────────────────────────────────
+
+    /// <summary>Returns every row in volume_artifacts across all volumes.</summary>
+    public List<VolumeArtifactRecord> GetAllVolumeArtifacts()
+    {
+        var list = new List<VolumeArtifactRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, volume_id, dat_line_id, derived_artifact_id, content_identity_key, status, added_at_utc
+            FROM volume_artifacts
+            ORDER BY volume_id, added_at_utc
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new VolumeArtifactRecord
+            {
+                Id                 = r.GetString(0),
+                VolumeId           = r.GetString(1),
+                DatLineId          = r.GetString(2),
+                DerivedArtifactId  = r.GetString(3),
+                ContentIdentityKey = r.GetString(4),
+                Status             = r.GetString(5),
+                AddedAtUtc         = DateTime.Parse(r.GetString(6)),
+            });
+        return list;
+    }
+
+    /// <summary>
+    /// Returns (volume_id, derived_artifact_id) pairs from volume_artifacts where
+    /// the volume_id does not exist in the volumes table. Used by integrity validation (Check 4a).
+    /// </summary>
+    public List<(string VolumeId, string DerivedArtifactId)> GetOrphanVolumeArtifactsByVolumeId()
+    {
+        var result = new List<(string, string)>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT va.volume_id, va.derived_artifact_id
+            FROM volume_artifacts va
+            LEFT JOIN volumes v ON v.id = va.volume_id
+            WHERE v.id IS NULL
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            result.Add((r.GetString(0), r.GetString(1)));
+        return result;
+    }
+
+    // ── Volume Deletion ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Removes only the specified derived artifact mappings from a volume's assignment table.
+    /// Used after a partial reabsorb to keep the catalog consistent with what physically
+    /// remains on the volume.
+    /// </summary>
+    public void RemoveVolumeArtifacts(string volumeId, IList<string> daIds)
+    {
+        if (daIds.Count == 0) return;
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM volume_artifacts WHERE volume_id = $vid AND derived_artifact_id = $did";
+        var pVid = cmd.Parameters.Add("$vid", Microsoft.Data.Sqlite.SqliteType.Text);
+        var pDid = cmd.Parameters.Add("$did", Microsoft.Data.Sqlite.SqliteType.Text);
+        pVid.Value = volumeId;
+        foreach (var daId in daIds)
+        {
+            pDid.Value = daId;
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    /// <summary>
+    /// Removes all data associated with a volume: volume_artifacts, volume_locations,
+    /// and the volume record itself, in a single atomic transaction.
+    /// </summary>
+    public void DeleteVolume(string volumeId)
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+        using var cmd  = conn.CreateCommand();
+
+        cmd.CommandText = "DELETE FROM volume_artifacts WHERE volume_id = $vid";
+        cmd.Parameters.AddWithValue("$vid", volumeId);
+        cmd.ExecuteNonQuery();
+
+        cmd.CommandText = "DELETE FROM volume_locations WHERE volume_id = $vid";
+        cmd.Parameters.Clear();
+        cmd.Parameters.AddWithValue("$vid", volumeId);
+        cmd.ExecuteNonQuery();
+
+        cmd.CommandText = "DELETE FROM volumes WHERE id = $vid";
+        cmd.Parameters.Clear();
+        cmd.Parameters.AddWithValue("$vid", volumeId);
+        cmd.ExecuteNonQuery();
+
+        tx.Commit();
+    }
 
     // ── Connection ────────────────────────────────────────────────────────────
 

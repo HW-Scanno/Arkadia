@@ -828,6 +828,19 @@ public sealed class DatLineStore
                         WHERE rcl.release_id = releases.id AND da.status != 'present'
                     ) = 0
                     THEN 'present'
+                    WHEN (
+                        SELECT COUNT(*)
+                        FROM release_content_links rcl
+                        JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                        WHERE rcl.release_id = releases.id AND da.status = 'lost'
+                    ) > 0
+                    AND (
+                        SELECT COUNT(*)
+                        FROM release_content_links rcl
+                        JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                        WHERE rcl.release_id = releases.id AND da.status = 'present'
+                    ) = 0
+                    THEN 'lost'
                     ELSE 'missing'
                 END
                 WHERE id IN ({rp})
@@ -1258,6 +1271,43 @@ public sealed class DatLineStore
 
         return result;
     }
+
+    // ── Integrity validation ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns every release whose status is "present" but has at least one linked
+    /// derived_artifact that is not "present". Used by integrity validation (Check 3).
+    /// </summary>
+    public sealed record ReleaseArtifactIssue(
+        string ReleaseId,
+        string ReleaseName,
+        string ArtifactFileName,
+        string ArtifactStatus);
+
+    public List<ReleaseArtifactIssue> GetPresentReleasesWithMissingArtifacts()
+    {
+        var result = new List<ReleaseArtifactIssue>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT r.id, r.name, da.file_name, da.status
+            FROM releases r
+            JOIN release_content_links rcl ON rcl.release_id = r.id
+            JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+            WHERE r.status = 'present' AND da.status != 'present'
+            ORDER BY r.name, da.file_name
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            result.Add(new ReleaseArtifactIssue(
+                r.GetString(0),
+                r.GetString(1),
+                r.GetString(2),
+                r.GetString(3)));
+        return result;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
 
     /// <summary>
     /// For each derived artifact ID, returns release name, file name, path, and size
