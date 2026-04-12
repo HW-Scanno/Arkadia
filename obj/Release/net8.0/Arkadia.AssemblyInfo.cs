@@ -14,7 +14,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Arkadia")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+e5f462464be9c3e38c9e62bd4ecb5099ec1b8ebb")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+19df78a9a5e4134c797c7045c121370b5c5c1d6c")]
 [assembly: System.Reflection.AssemblyProductAttribute("Arkadia")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Arkadia")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

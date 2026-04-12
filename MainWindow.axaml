@@ -558,8 +558,8 @@
                                 Content="Configure DAT" Click="OnSysConfigureDat"/>
                         <Button x:Name="SysActUpdateDat"    Classes="view-toggle"
                                 Content="Update DAT"    Click="OnSysUpdateDat"/>
-                        <Button x:Name="SysActVerifyDat"    Classes="view-toggle"
-                                Content="Verify DAT"    Click="OnSysVerifyDat"/>
+                        <Button x:Name="SysActVerifyAll"    Classes="view-toggle"
+                                Content="Verify ALL"    Click="OnSysVerifyAll"/>
                         <Button x:Name="SysActDeleteDat"    Classes="view-toggle danger"
                                 Content="Delete DAT"    Click="OnSysDeleteDat"/>
                         <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"

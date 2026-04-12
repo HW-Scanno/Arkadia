@@ -1448,6 +1448,64 @@ public sealed class DatLineStore
             sourceBytes, totalDerived, derivedByStrategy, extCounts, totalCount);
     }
 
+    // ── Verify ALL support ────────────────────────────────────────────────────
+
+    /// <summary>Returns (Id, Status) for every derived artifact in this DAT-line store.</summary>
+    public List<(string Id, string Status)> GetAllDerivedArtifactStatuses()
+    {
+        var result = new List<(string, string)>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, status FROM derived_artifacts";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            result.Add((r.GetString(0), r.GetString(1)));
+        return result;
+    }
+
+    /// <summary>Full verify info including RelativePath — used by Verify ALL for the Local Archive phase.</summary>
+    public sealed record LocalArchiveVerifyInfo(
+        string DerivedArtifactId,
+        string ReleaseName,
+        string FileName,
+        string RelativePath,
+        long   SizeBytes,
+        string Sha1);
+
+    public List<LocalArchiveVerifyInfo> GetLocalArchiveVerifyInfos(IReadOnlyList<string> daIds)
+    {
+        if (daIds.Count == 0) return [];
+        var placeholders = string.Join(",", Enumerable.Range(0, daIds.Count).Select(i => $"$d{i}"));
+        var result = new List<LocalArchiveVerifyInfo>(daIds.Count);
+        var seen   = new HashSet<string>(StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT da.id, r.name, da.file_name, da.relative_path, da.derived_size_bytes, da.hashed_derived_sha1
+            FROM derived_artifacts da
+            JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
+            JOIN releases              r   ON r.id = rcl.release_id
+            WHERE da.id IN ({placeholders})
+            ORDER BY r.name, da.file_name
+            """;
+        for (int i = 0; i < daIds.Count; i++)
+            cmd.Parameters.AddWithValue($"$d{i}", daIds[i]);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var daId = r.GetString(0);
+            if (!seen.Add(daId)) continue;
+            result.Add(new LocalArchiveVerifyInfo(
+                DerivedArtifactId: daId,
+                ReleaseName:       r.GetString(1),
+                FileName:          r.GetString(2),
+                RelativePath:      r.GetString(3),
+                SizeBytes:         r.GetInt64(4),
+                Sha1:              r.GetString(5)));
+        }
+        return result;
+    }
+
     private SqliteConnection Open()
     {
         var conn = new SqliteConnection(_connectionString);

@@ -208,7 +208,7 @@ public partial class MainWindow : Window
         SysActEditPlatform.IsEnabled  = hasPlatform;
         SysActConfigureDat.IsEnabled  = datHasStore;
         SysActUpdateDat.IsEnabled     = hasDat;
-        SysActVerifyDat.IsEnabled     = datHasStore;
+        SysActVerifyAll.IsEnabled     = datHasStore;
         SysActDeleteDat.IsEnabled     = hasDat;
         SysActIngestFiles.IsEnabled   = datHasStore;
     }
@@ -938,10 +938,10 @@ public partial class MainWindow : Window
         _ = OnUpdateDatLine(_selectedDatLine);
     }
 
-    private void OnSysVerifyDat(object? sender, RoutedEventArgs e)
+    private void OnSysVerifyAll(object? sender, RoutedEventArgs e)
     {
         if (_selectedDatLine is null) return;
-        _ = OnVerifyDatLine(_selectedDatLine);
+        _ = OnVerifyAllDatLine(_selectedDatLine);
     }
 
     private async void OnSysDeleteDat(object? sender, RoutedEventArgs e)
@@ -5911,8 +5911,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        // Column header
-        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("90,150,*,60"), Margin = new Avalonia.Thickness(0, 0, 0, 8) };
+        // Column header  — Open | Type | Timestamp | File
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions("55,110,150,*"), Margin = new Avalonia.Thickness(0, 0, 0, 8) };
         void AddHeader(int col, string text)
         {
             var tb = new TextBlock
@@ -5925,9 +5925,9 @@ public partial class MainWindow : Window
             Grid.SetColumn(tb, col);
             header.Children.Add(tb);
         }
-        AddHeader(0, "TYPE");
-        AddHeader(1, "TIMESTAMP");
-        AddHeader(2, "FILE");
+        AddHeader(1, "TYPE");
+        AddHeader(2, "TIMESTAMP");
+        AddHeader(3, "FILE");
         DashLatestLogsPanel.Children.Add(header);
 
         // Divider
@@ -5955,11 +5955,23 @@ public partial class MainWindow : Window
         {
             var row = new Grid
             {
-                ColumnDefinitions = new ColumnDefinitions("90,150,*,60"),
+                ColumnDefinitions = new ColumnDefinitions("55,110,150,*"),
                 Margin = new Avalonia.Thickness(0, 0, 0, 6),
             };
 
             var typeColor = typeColors.GetValueOrDefault(type, "#888899");
+
+            var openBtn = new Button
+            {
+                Content             = "Open",
+                Tag                 = fullPath,
+                Classes             = { "view-toggle" },
+                Padding             = new Avalonia.Thickness(8, 2),
+                FontSize            = 11,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            openBtn.Click += OnDashLogOpen;
 
             var typeBlock = new TextBlock
             {
@@ -5984,25 +5996,15 @@ public partial class MainWindow : Window
                 TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             };
-            var openBtn = new Button
-            {
-                Content     = "Open",
-                Tag         = fullPath,
-                Classes     = { "view-toggle" },
-                Padding     = new Avalonia.Thickness(8, 2),
-                FontSize    = 11,
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-            };
-            openBtn.Click += OnDashLogOpen;
 
-            Grid.SetColumn(typeBlock, 0);
-            Grid.SetColumn(timeBlock, 1);
-            Grid.SetColumn(nameBlock, 2);
-            Grid.SetColumn(openBtn,   3);
+            Grid.SetColumn(openBtn,   0);
+            Grid.SetColumn(typeBlock, 1);
+            Grid.SetColumn(timeBlock, 2);
+            Grid.SetColumn(nameBlock, 3);
+            row.Children.Add(openBtn);
             row.Children.Add(typeBlock);
             row.Children.Add(timeBlock);
             row.Children.Add(nameBlock);
-            row.Children.Add(openBtn);
             DashLatestLogsPanel.Children.Add(row);
         }
     }
@@ -6023,13 +6025,13 @@ public partial class MainWindow : Window
 
     // ── Navigation ────────────────────────────────────────────────────────────
 
-    // ── DAT operations ────────────────────────────────────────────────────────
+    // ── Verify ALL ────────────────────────────────────────────────────────────
 
-    private async System.Threading.Tasks.Task OnVerifyDatLine(Systems.DatLineInfo info)
+    private async System.Threading.Tasks.Task OnVerifyAllDatLine(Systems.DatLineInfo info)
     {
         if (info.CatalogId is null || info.DataStorePath.Length == 0)
         {
-            await new InfoDialog("Cannot Verify",
+            await new InfoDialog("Cannot Verify ALL",
                 "This DAT line has no data store path. Import the DAT line first.")
                 .ShowDialog(this);
             return;
@@ -6038,40 +6040,49 @@ public partial class MainWindow : Window
         var dbPath = Path.Combine(_dataDir, info.DataStorePath);
         if (!File.Exists(dbPath))
         {
-            await new InfoDialog("Cannot Verify",
+            await new InfoDialog("Cannot Verify ALL",
                 $"DAT line database not found at:\n{dbPath}")
                 .ShowDialog(this);
             return;
         }
 
-        // Collect all volumes for this DAT line
         var volumes = _catalog.GetVolumes()
             .Where(v => v.DatLineId == info.CatalogId)
             .ToList();
 
-        if (volumes.Count == 0)
-        {
-            await new InfoDialog("No Volumes",
-                $"No volumes are assigned to DAT line \"{info.Name}\".")
-                .ShowDialog(this);
-            return;
-        }
-
-        var platform    = info.CatalogPlatformId is not null
-                              ? _catalog.GetPlatform(info.CatalogPlatformId)
-                              : null;
+        var platform     = info.CatalogPlatformId is not null
+                               ? _catalog.GetPlatform(info.CatalogPlatformId) : null;
         var platformDesc = platform is not null
-                              ? $"{platform.Manufacturer} {platform.Name}".Trim()
-                              : (info.CatalogPlatformId ?? "Unknown Platform");
-        var dialog = new DatLineVerifyDialog(info.Name, platformDesc);
+                               ? $"{platform.Manufacturer} {platform.Name}".Trim()
+                               : (info.CatalogPlatformId ?? "Unknown Platform");
+
+        // ── Pre-flight confirmation ────────────────────────────────────────────
+        var preflight = new System.Text.StringBuilder();
+        preflight.AppendLine($"DAT Line:  {info.Name}");
+        preflight.AppendLine($"Platform:  {platformDesc}");
+        preflight.AppendLine($"Volumes:   {volumes.Count}");
+        preflight.AppendLine();
+        preflight.AppendLine("This operation will:");
+        preflight.AppendLine("  • Verify all artifacts in the Local Archive for this DAT line");
+        preflight.AppendLine("  • Verify all assigned volumes for this DAT line");
+        preflight.AppendLine("  • Update artifact, release, and volume health state incrementally");
+        preflight.AppendLine("  • Optionally quarantine mismatched/unexpected files into incoming-skip");
+        if (volumes.Any(v => v.Status == "lost"))
+            preflight.AppendLine("  • Attempt to restore LOST volumes if fully verified");
+        preflight.AppendLine();
+        preflight.AppendLine("Cancel at any time — completed work up to that point is preserved.");
+        preflight.Append("Proceed?");
+
+        var confirmed = await new ConfirmDialog("Verify ALL", preflight.ToString())
+            .ShowDialog<bool>(this);
+        if (!confirmed) return;
+
+        var dialog  = new DatLineVerifyDialog(info.Name, platformDesc);
         var dlgTask = dialog.ShowDialog(this);
 
         await System.Threading.Tasks.Task.Run(async () =>
         {
-            try
-            {
-                await RunDatLineVerify(dialog, info, dbPath, volumes);
-            }
+            try { await RunVerifyAllDatLine(dialog, info, dbPath, volumes); }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
@@ -6080,70 +6091,265 @@ public partial class MainWindow : Window
         });
 
         await dlgTask;
+
+        // Final UI refresh — incremental DB applies already happened during the operation.
+        RebuildLibraryDatasets();
+        RefreshVolumes();
+        RefreshAnalyticsIfBuilt();
+        RefreshDiskDetailIfSelected();
     }
 
-    private async System.Threading.Tasks.Task RunDatLineVerify(
-        DatLineVerifyDialog dialog,
-        Systems.DatLineInfo info,
-        string dbPath,
-        List<Data.VolumeRecord> volumes)
+    private async System.Threading.Tasks.Task RunVerifyAllDatLine(
+        DatLineVerifyDialog         dialog,
+        Systems.DatLineInfo         info,
+        string                      dbPath,
+        List<Data.VolumeRecord>     volumes)
     {
-        var appRoot       = AppContext.BaseDirectory;
-        var store         = new Data.DatLineStore(dbPath);
-        var allDisks      = _catalog.GetDisks().ToDictionary(d => d.Id, StringComparer.Ordinal);
-        var runtimeDisks  = Data.DiskDiscoveryService.DiscoverAll()
-            .Where(d => d.DiskId.Length > 0)
-            .ToDictionary(d => d.DiskId, StringComparer.Ordinal);
+        var appRoot  = AppContext.BaseDirectory;
+        var store    = new Data.DatLineStore(dbPath);
+        var log      = new System.Text.StringBuilder();
+        var startTs  = DateTime.UtcNow;
+        bool cancelled = false;
 
-        bool quarantineMismatch   = _catalog.GetBoolSetting("quarantine_mismatch_on_verify",   defaultValue: true);
+        bool quarantineMismatch   = _catalog.GetBoolSetting("quarantine_mismatch_on_verify",  defaultValue: true);
         bool quarantineUnexpected = _catalog.GetBoolSetting("quarantine_unexpected_on_verify", defaultValue: false);
-        var  quarantineBaseDir  = Path.Combine(
-            appRoot, "incoming-skip",
+        var quarantineBaseDir = Path.Combine(appRoot, "incoming-skip",
             SafeFileName(info.CatalogPlatformId ?? "unknown"),
             SafeFileName(info.Name));
 
-        int totalVols = volumes.Count, verifiedVols = 0, skippedVols = 0;
-        int totalExpected = 0, totalVerified = 0, totalMissing = 0, totalMismatch = 0,
-            totalUnexpected = 0, totalQuarantined = 0;
-        long verifiedBytes = 0;
-        int  quarantineFailures = 0;
-        int  unexpectedQuarantined = 0;
-        int  unexpectedQuarantineFailures = 0;
-        bool applyCancelled = false;
-
-        // Mismatches discovered during the read-only scan phase — consumed by apply phase below.
-        var mismatchFiles   = new List<(string AbsPath, string FileName, string DispPath, string HashDetail, string VolLabel, string DaId)>();
-        // Unexpected files discovered during scan — consumed by apply phase if quarantine is enabled.
-        var unexpectedFiles = new List<(string AbsPath, string FileName, string DispPath, string VolLabel)>();
-
-        // Artifact outcome lists — populated during the read-only scan, applied after confirmation.
-        var verifiedDaIds = new List<string>();
-        var missingDaIds  = new List<string>();
-
-        // Tracks which volume IDs and their health were actually scanned (not skipped/lost).
-        var scannedVolIds  = new HashSet<string>(StringComparer.Ordinal);
-        var volHealthLog   = new List<(string VolId, string Label, string Health)>();
-
-        var log = new System.Text.StringBuilder();
-        log.AppendLine($"DAT Line Verify — {info.Name}");
-        log.AppendLine($"Started:   {DateTime.UtcNow:o}");
-        log.AppendLine($"Volumes:   {totalVols}");
-        log.AppendLine();
-        log.AppendLine("── Per-Volume Scan ──────────────────────────────────────────");
+        log.AppendLine($"Verify ALL — {info.Name}");
+        log.AppendLine($"Started:     {startTs:o}");
+        log.AppendLine($"Volumes:     {volumes.Count}");
         log.AppendLine();
 
-        for (int vi = 0; vi < volumes.Count; vi++)
+        // ── PHASE 1: Build scope ───────────────────────────────────────────────
+        var allVolumeAssigned      = new HashSet<string>(StringComparer.Ordinal);
+        var volumeAssignmentsByVol = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var vol in volumes)
         {
-            var vol = volumes[vi];
+            var vas = _catalog.GetVolumeArtifacts(vol.Id);
+            var ids = vas.Where(va => va.Status != "lost")
+                         .Select(va => va.DerivedArtifactId)
+                         .ToList();
+            allVolumeAssigned.UnionWith(ids);
+            volumeAssignmentsByVol[vol.Id] = ids;
+        }
+
+        var allDaStatuses     = store.GetAllDerivedArtifactStatuses();
+        var localArchiveDaIds = allDaStatuses
+            .Where(x => x.Status != "lost" && !allVolumeAssigned.Contains(x.Id))
+            .Select(x => x.Id)
+            .ToList();
+
+        log.AppendLine($"── Phase 1: Scope ──────────────────────────────────────────────────────");
+        log.AppendLine($"  Total derived artifacts:    {allDaStatuses.Count}");
+        log.AppendLine($"  Volume-assigned (non-lost): {allVolumeAssigned.Count}");
+        log.AppendLine($"  Local archive targets:      {localArchiveDaIds.Count}");
+        log.AppendLine();
+
+        // ── PHASE 2: Verify Local Archive ─────────────────────────────────────
+        int archiveVerified = 0, archiveMissing = 0, archiveMismatch = 0, archiveUnexpected = 0;
+        long archiveVerifiedBytes = 0;
+
+        log.AppendLine($"── Phase 2: Local Archive ({localArchiveDaIds.Count} artifact(s)) ──────────────────");
+        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+            dialog.SetStatus($"Phase 2: Verifying Local Archive — {localArchiveDaIds.Count} artifact(s)…"));
+
+        if (localArchiveDaIds.Count > 0)
+        {
+            var archiveInfos      = store.GetLocalArchiveVerifyInfos(localArchiveDaIds);
+            var archiveChangedIds = new List<string>();
+
+            // Build expected relative path set for unexpected-file detection
+            var expectedRelPaths = new HashSet<string>(
+                archiveInfos.Select(ai =>
+                    ai.RelativePath.Replace('/', Path.DirectorySeparatorChar)),
+                StringComparer.OrdinalIgnoreCase);
+
+            // Derive archive base dir from the first artifact's relative path (segments 0-2)
+            string? archiveBaseDir = null;
+            if (archiveInfos.Count > 0)
+            {
+                var seg = archiveInfos[0].RelativePath.Split('/');
+                if (seg.Length >= 3)
+                    archiveBaseDir = Path.Combine(appRoot, seg[0], seg[1], seg[2]);
+            }
+
+            foreach (var ai in archiveInfos)
+            {
+                var absPath   = Path.Combine(appRoot,
+                    ai.RelativePath.Replace('/', Path.DirectorySeparatorChar));
+                var dispPath  = ai.RelativePath;
+                var sizeLabel = FormatBytes(ai.SizeBytes);
+
+                if (!File.Exists(absPath))
+                {
+                    archiveMissing++;
+                    log.AppendLine($"  MISSING   {dispPath}");
+                    store.BatchUpdateDerivedArtifactStatus(new[] { ai.DerivedArtifactId }, "missing");
+                    archiveChangedIds.Add(ai.DerivedArtifactId);
+                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        dialog.AppendRow("Local Archive", "MISSING", dispPath, ""));
+                    continue;
+                }
+
+                var actualSize = new FileInfo(absPath).Length;
+
+                if (ai.Sha1.Length > 0)
+                {
+                    var actualSha1 = ComputeFileSha1(absPath);
+                    if (string.Equals(actualSha1, ai.Sha1, StringComparison.OrdinalIgnoreCase))
+                    {
+                        archiveVerified++;
+                        archiveVerifiedBytes += actualSize;
+                        log.AppendLine($"  VERIFIED  {dispPath}  sha1={actualSha1}");
+                        store.BatchUpdateDerivedArtifactStatus(new[] { ai.DerivedArtifactId }, "present");
+                        archiveChangedIds.Add(ai.DerivedArtifactId);
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow("Local Archive", "VERIFIED", dispPath, sizeLabel));
+                    }
+                    else
+                    {
+                        archiveMismatch++;
+                        var hashDetail = $"exp:{ai.Sha1[..8]}… got:{actualSha1[..8]}…";
+                        log.AppendLine($"  MISMATCH  {dispPath}  expected={ai.Sha1}  actual={actualSha1}");
+                        if (quarantineMismatch)
+                        {
+                            bool moved = TryQuarantineFile(absPath, ai.FileName,
+                                quarantineBaseDir, out var moveErr);
+                            if (moved)
+                            {
+                                log.AppendLine($"  QUARANTINED  {dispPath}  → incoming-skip");
+                                store.BatchUpdateDerivedArtifactStatus(
+                                    new[] { ai.DerivedArtifactId }, "missing");
+                                archiveChangedIds.Add(ai.DerivedArtifactId);
+                                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                                    dialog.AppendRow("Local Archive", "QUARANTINED",
+                                        dispPath, "moved to incoming-skip"));
+                            }
+                            else
+                            {
+                                log.AppendLine($"  QUARANTINE-FAILED  {dispPath}  {moveErr}");
+                                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                                    dialog.AppendRow("Local Archive", "MISMATCH", dispPath, hashDetail));
+                            }
+                        }
+                        else
+                        {
+                            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                                dialog.AppendRow("Local Archive", "MISMATCH", dispPath, hashDetail));
+                        }
+                    }
+                }
+                else
+                {
+                    // No SHA1 recorded: existence + size check only
+                    bool sizeOk = ai.SizeBytes <= 0 || actualSize == ai.SizeBytes;
+                    if (sizeOk)
+                    {
+                        archiveVerified++;
+                        archiveVerifiedBytes += actualSize;
+                        log.AppendLine($"  VERIFIED  {dispPath}  (no sha1, size ok)");
+                        store.BatchUpdateDerivedArtifactStatus(
+                            new[] { ai.DerivedArtifactId }, "present");
+                        archiveChangedIds.Add(ai.DerivedArtifactId);
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow("Local Archive", "VERIFIED", dispPath,
+                                $"{sizeLabel} (no sha1)"));
+                    }
+                    else
+                    {
+                        archiveMismatch++;
+                        var detail = $"size:{actualSize}≠{ai.SizeBytes}";
+                        log.AppendLine($"  MISMATCH  {dispPath}  {detail}");
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow("Local Archive", "MISMATCH", dispPath, detail));
+                    }
+                }
+            }
+
+            // Batch release recalculation after archive phase
+            if (archiveChangedIds.Count > 0)
+                store.RecalculateReleaseStatusForArtifacts(archiveChangedIds);
+
+            // Unexpected files in the DAT-line's archive directory
+            if (archiveBaseDir is not null && Directory.Exists(archiveBaseDir))
+            {
+                foreach (var file in Directory.EnumerateFiles(
+                             archiveBaseDir, "*", SearchOption.AllDirectories))
+                {
+                    var relToAppRoot = Path.GetRelativePath(appRoot, file);
+                    if (!expectedRelPaths.Contains(relToAppRoot))
+                    {
+                        archiveUnexpected++;
+                        log.AppendLine($"  UNEXPECTED  {relToAppRoot}");
+                        if (quarantineUnexpected)
+                        {
+                            var uDir  = Path.Combine(appRoot, "incoming-skip", "unexpected");
+                            bool moved = TryQuarantineFile(file, Path.GetFileName(file),
+                                uDir, out var uErr);
+                            log.AppendLine(moved
+                                ? $"  QUARANTINED  {relToAppRoot}  → incoming-skip/unexpected"
+                                : $"  QUARANTINE-FAILED  {relToAppRoot}  {uErr}");
+                            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                                dialog.AppendRow("Local Archive",
+                                    moved ? "QUARANTINED" : "UNEXPECTED", relToAppRoot,
+                                    moved ? "moved to incoming-skip/unexpected" : ""));
+                        }
+                        else
+                        {
+                            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                                dialog.AppendRow("Local Archive", "UNEXPECTED", relToAppRoot, ""));
+                        }
+                    }
+                }
+            }
+
+            log.AppendLine($"  → verified={archiveVerified}  missing={archiveMissing}  " +
+                           $"mismatch={archiveMismatch}  unexpected={archiveUnexpected}  " +
+                           $"sha1-verified={FormatBytes(archiveVerifiedBytes)}");
+        }
+        else
+        {
+            log.AppendLine("  (no local archive artifacts for this DAT-line)");
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                dialog.AppendRow("Local Archive", "SKIPPED", "", "no local archive artifacts"));
+        }
+        log.AppendLine();
+
+        // ── PHASES 3+4: Verify volumes ─────────────────────────────────────────
+        int totalVols     = volumes.Count, verifiedVols = 0, skippedVols = 0, restoredVols = 0;
+        int totalExpected = 0, totalVerified = 0, totalMissing = 0, totalMismatch = 0, totalUnexpected = 0;
+
+        log.AppendLine($"── Phase 3: Volumes ({totalVols}) ──────────────────────────────────────────────");
+
+        if (volumes.Count == 0)
+        {
+            log.AppendLine("  (no volumes assigned to this DAT-line)");
+            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                dialog.AppendRow("Volumes", "SKIPPED", "", "no assigned volumes"));
+        }
+
+        var allDisks     = _catalog.GetDisks().ToDictionary(d => d.Id, StringComparer.Ordinal);
+        var runtimeDisks = Data.DiskDiscoveryService.DiscoverAll()
+            .Where(d => d.DiskId.Length > 0)
+            .ToDictionary(d => d.DiskId, StringComparer.Ordinal);
+
+        for (int vi = 0; vi < volumes.Count && !cancelled; vi++)
+        {
+            var vol      = volumes[vi];
             var volLabel = vol.Label;
+            bool wasLost = vol.Status == "lost";
 
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                 dialog.SetStatus(
-                    $"Volume {vi + 1}/{totalVols}: {volLabel}  |  " +
-                    $"Verified: {totalVerified}  Missing: {totalMissing}  " +
-                    $"Mismatch: {totalMismatch}  Unexpected: {totalUnexpected}"));
+                    $"Phase 3: Volume {vi + 1}/{totalVols}: {volLabel}" +
+                    $"  |  Verified: {totalVerified}  Missing: {totalMissing}  " +
+                    $"Mismatch: {totalMismatch}"));
 
-            // ── Resolve source path ──────────────────────────────────────────
+            log.AppendLine($"  [{volLabel}]{(wasLost ? " (was LOST)" : "")}");
+
+            // ── Resolve volume root ──────────────────────────────────────────
             string? srcRoot  = null;
             string  srcLabel = "";
 
@@ -6158,75 +6364,104 @@ public partial class MainWindow : Window
                 var loc = _catalog.GetCurrentLocation(vol.Id);
                 if (loc?.DiskId is not null)
                 {
-                    if (vol.Status == "lost")
-                    {
-                        // Skip: disk+volume are marked lost; no point resolving
-                        skippedVols++;
-                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                            dialog.AppendRow(volLabel, "SKIPPED", "", "DISK LOST"));
-                        log.AppendLine($"  [{volLabel}] SKIPPED — DISK LOST");
-                        continue;
-                    }
-
                     if (!runtimeDisks.TryGetValue(loc.DiskId, out var rt))
                     {
-                        skippedVols++;
-                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                            dialog.AppendRow(volLabel, "SKIPPED", "", "DISK NOT MOUNTED"));
-                        log.AppendLine($"  [{volLabel}] SKIPPED — DISK NOT MOUNTED");
-                        continue;
+                        var diskLabel = allDisks.TryGetValue(loc.DiskId, out var drC)
+                            ? drC.Label : loc.DiskId;
+                        bool retry = await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
+                            async () => await new ConfirmDialog("Disk Not Mounted",
+                                $"Volume \"{volLabel}\" is on disk \"{diskLabel}\" " +
+                                "which is not currently mounted.\n\n" +
+                                "Mount the disk and click OK to retry, or Cancel to stop " +
+                                "verifying remaining volumes.")
+                                .ShowDialog<bool>(this));
+
+                        if (!retry)
+                        {
+                            cancelled = true;
+                            log.AppendLine($"    CANCELLED by user — disk \"{diskLabel}\" not mounted");
+                            break;
+                        }
+
+                        runtimeDisks = Data.DiskDiscoveryService.DiscoverAll()
+                            .Where(d => d.DiskId.Length > 0)
+                            .ToDictionary(d => d.DiskId, StringComparer.Ordinal);
+                        runtimeDisks.TryGetValue(loc.DiskId, out rt);
                     }
 
-                    var diskRoot = Path.Combine(rt.Mountpoint, SafeFileName(volLabel));
-                    if (!Directory.Exists(diskRoot))
+                    if (rt is not null)
+                    {
+                        var diskRoot = Path.Combine(rt.Mountpoint, SafeFileName(volLabel));
+                        if (Directory.Exists(diskRoot))
+                        {
+                            srcRoot  = diskRoot;
+                            srcLabel = allDisks.TryGetValue(loc.DiskId, out var drD)
+                                ? $"disk:{drD.Label}" : "disk";
+                        }
+                        else
+                        {
+                            skippedVols++;
+                            log.AppendLine($"    SKIPPED — folder not found at {diskRoot}");
+                            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                                dialog.AppendRow(volLabel, "SKIPPED", "",
+                                    "FOLDER NOT FOUND ON DISK"));
+                            continue;
+                        }
+                    }
+                    else
                     {
                         skippedVols++;
+                        log.AppendLine($"    SKIPPED — disk not mounted after retry");
                         await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                            dialog.AppendRow(volLabel, "SKIPPED", "", "FOLDER NOT FOUND ON DISK"));
-                        log.AppendLine($"  [{volLabel}] SKIPPED — folder not found at {diskRoot}");
+                            dialog.AppendRow(volLabel, "SKIPPED", "", "DISK NOT MOUNTED"));
                         continue;
                     }
-
-                    srcRoot  = diskRoot;
-                    srcLabel = allDisks.TryGetValue(loc.DiskId, out var dr) ? $"disk:{dr.Label}" : "disk";
                 }
                 else
                 {
                     skippedVols++;
+                    var skipReason = wasLost ? "LOST — NO LOCATION" : "NO ACCESSIBLE SOURCE";
+                    log.AppendLine($"    SKIPPED — {skipReason.ToLowerInvariant()}");
                     await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                        dialog.AppendRow(volLabel, "SKIPPED", "", "NO ACCESSIBLE SOURCE"));
-                    log.AppendLine($"  [{volLabel}] SKIPPED — no accessible source");
+                        dialog.AppendRow(volLabel, "SKIPPED", "", skipReason));
                     continue;
                 }
             }
 
-            // ── Build expected file set ──────────────────────────────────────
-            var vaIds     = _catalog.GetVolumeArtifacts(vol.Id)
-                                    .Select(va => va.DerivedArtifactId).ToList();
-            var expected  = store.GetArtifactVerifyInfos(vaIds);
+            if (cancelled || srcRoot is null) break;
 
-            // Map relative path (within volume root) → verify info
-            // Physical path: srcRoot / SafeFileName(ReleaseName) / FileName
+            // ── Expected artifact set for this volume ────────────────────────
+            var vaIds    = volumeAssignmentsByVol.TryGetValue(vol.Id, out var ids)
+                ? ids : new List<string>();
+            var expected = store.GetArtifactVerifyInfos(vaIds);
+
+            if (expected.Count == 0)
+            {
+                skippedVols++;
+                log.AppendLine($"    SKIPPED — no active artifact assignments");
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    dialog.AppendRow(volLabel, "SKIPPED", "", "NO ARTIFACTS"));
+                continue;
+            }
+
+            log.AppendLine($"    source={srcLabel}  expected={expected.Count}");
+            totalExpected += expected.Count;
+
             var expectedByRelPath = new Dictionary<string, Data.ArtifactVerifyInfo>(
                 StringComparer.OrdinalIgnoreCase);
             foreach (var e in expected)
-            {
-                var rel = Path.Combine(SafeFileName(e.ReleaseName), e.FileName);
-                expectedByRelPath[rel] = e;
-            }
+                expectedByRelPath[Path.Combine(SafeFileName(e.ReleaseName), e.FileName)] = e;
 
-            // ── Enumerate actual files ───────────────────────────────────────
-            var actualFiles = Directory.EnumerateFiles(srcRoot, "*", SearchOption.AllDirectories)
-                .Select(f => f.Substring(srcRoot.Length).TrimStart(Path.DirectorySeparatorChar,
-                                                                    Path.AltDirectorySeparatorChar))
+            var actualFiles = Directory
+                .EnumerateFiles(srcRoot, "*", SearchOption.AllDirectories)
+                .Select(f => f.Substring(srcRoot.Length)
+                              .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            int volExpected = expected.Count, volVerified = 0, volMissing = 0,
-                volMismatch = 0, volUnexpected = 0;
+            int volVerified = 0, volMissing = 0, volMismatch = 0, volUnexpected = 0;
+            var volChangedIds = new List<string>();
 
-            log.AppendLine($"  [{volLabel}] source={srcLabel}  expected={volExpected}");
-
-            // ── Verify expected files (read-only scan) ───────────────────────
+            // ── Per-artifact verify ──────────────────────────────────────────
             foreach (var ei in expected)
             {
                 var relPath  = Path.Combine(SafeFileName(ei.ReleaseName), ei.FileName);
@@ -6236,40 +6471,89 @@ public partial class MainWindow : Window
                 if (!File.Exists(absPath))
                 {
                     volMissing++;
-                    missingDaIds.Add(ei.DerivedArtifactId);
+                    log.AppendLine($"    MISSING   {dispPath}");
+                    store.BatchUpdateDerivedArtifactStatus(
+                        new[] { ei.DerivedArtifactId }, "missing");
+                    volChangedIds.Add(ei.DerivedArtifactId);
                     await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                         dialog.AppendRow(volLabel, "MISSING", dispPath, ""));
-                    log.AppendLine($"    MISSING  {dispPath}");
                     continue;
                 }
 
-                // Fast size precheck
                 var actualSize = new FileInfo(absPath).Length;
-                var sizeOk     = ei.SizeBytes <= 0 || actualSize == ei.SizeBytes;
 
-                // SHA1 — always compute for expected files that exist
-                var actualSha1 = ComputeFileSha1(absPath);
-
-                if (ei.Sha1.Length > 0 &&
-                    !string.Equals(actualSha1, ei.Sha1, StringComparison.OrdinalIgnoreCase))
+                if (ei.Sha1.Length > 0)
                 {
-                    volMismatch++;
-                    var hashDetail = $"exp:{ei.Sha1[..8]}… got:{actualSha1[..8]}…";
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                        dialog.AppendRow(volLabel, "MISMATCH", dispPath, hashDetail));
-                    log.AppendLine($"    MISMATCH  {dispPath}  expected={ei.Sha1}  actual={actualSha1}");
-                    // Record for apply phase — no filesystem changes here.
-                    mismatchFiles.Add((absPath, ei.FileName, dispPath, hashDetail, volLabel, ei.DerivedArtifactId));
+                    var actualSha1 = ComputeFileSha1(absPath);
+                    if (string.Equals(actualSha1, ei.Sha1, StringComparison.OrdinalIgnoreCase))
+                    {
+                        volVerified++;
+                        log.AppendLine($"    VERIFIED  {dispPath}  sha1={actualSha1}");
+                        store.BatchUpdateDerivedArtifactStatus(
+                            new[] { ei.DerivedArtifactId }, "present");
+                        volChangedIds.Add(ei.DerivedArtifactId);
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(volLabel, "VERIFIED", dispPath,
+                                FormatBytes(actualSize)));
+                    }
+                    else
+                    {
+                        volMismatch++;
+                        var hashDetail = $"exp:{ei.Sha1[..8]}… got:{actualSha1[..8]}…";
+                        log.AppendLine($"    MISMATCH  {dispPath}  " +
+                                       $"expected={ei.Sha1}  actual={actualSha1}");
+                        if (quarantineMismatch)
+                        {
+                            var qDir  = Path.Combine(quarantineBaseDir,
+                                SafeFileName(ei.ReleaseName));
+                            bool moved = TryQuarantineFile(absPath, ei.FileName,
+                                qDir, out var moveErr);
+                            if (moved)
+                            {
+                                log.AppendLine($"    QUARANTINED  {dispPath}  → incoming-skip");
+                                store.BatchUpdateDerivedArtifactStatus(
+                                    new[] { ei.DerivedArtifactId }, "missing");
+                                volChangedIds.Add(ei.DerivedArtifactId);
+                                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                                    dialog.AppendRow(volLabel, "QUARANTINED", dispPath,
+                                        "moved to incoming-skip"));
+                            }
+                            else
+                            {
+                                log.AppendLine($"    QUARANTINE-FAILED  {dispPath}  {moveErr}");
+                                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                                    dialog.AppendRow(volLabel, "MISMATCH", dispPath, hashDetail));
+                            }
+                        }
+                        else
+                        {
+                            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                                dialog.AppendRow(volLabel, "MISMATCH", dispPath, hashDetail));
+                        }
+                    }
                 }
                 else
                 {
-                    volVerified++;
-                    verifiedDaIds.Add(ei.DerivedArtifactId);
-                    verifiedBytes += actualSize;
-                    var detail = sizeOk ? FormatBytes(actualSize) : $"size:{actualSize}≠{ei.SizeBytes}";
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                        dialog.AppendRow(volLabel, "VERIFIED", dispPath, detail));
-                    log.AppendLine($"    VERIFIED  {dispPath}  sha1={actualSha1}");
+                    bool sizeOk = ei.SizeBytes <= 0 || actualSize == ei.SizeBytes;
+                    if (sizeOk)
+                    {
+                        volVerified++;
+                        log.AppendLine($"    VERIFIED  {dispPath}  (no sha1)");
+                        store.BatchUpdateDerivedArtifactStatus(
+                            new[] { ei.DerivedArtifactId }, "present");
+                        volChangedIds.Add(ei.DerivedArtifactId);
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(volLabel, "VERIFIED", dispPath,
+                                $"{FormatBytes(actualSize)} (no sha1)"));
+                    }
+                    else
+                    {
+                        volMismatch++;
+                        var detail = $"size:{actualSize}≠{ei.SizeBytes}";
+                        log.AppendLine($"    MISMATCH  {dispPath}  {detail}");
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(volLabel, "MISMATCH", dispPath, detail));
+                    }
                 }
             }
 
@@ -6279,368 +6563,130 @@ public partial class MainWindow : Window
                 if (!expectedByRelPath.ContainsKey(rel))
                 {
                     volUnexpected++;
-                    unexpectedFiles.Add((Path.Combine(srcRoot, rel), Path.GetFileName(rel), rel, volLabel));
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                        dialog.AppendRow(volLabel, "UNEXPECTED", rel, ""));
                     log.AppendLine($"    UNEXPECTED  {rel}");
+                    if (quarantineUnexpected)
+                    {
+                        var uDir  = Path.Combine(appRoot, "incoming-skip", "unexpected",
+                            SafeFileName(volLabel));
+                        bool moved = TryQuarantineFile(Path.Combine(srcRoot, rel),
+                            Path.GetFileName(rel), uDir, out var uErr);
+                        log.AppendLine(moved
+                            ? $"    QUARANTINED  {rel}  → incoming-skip/unexpected"
+                            : $"    QUARANTINE-FAILED  {rel}  {uErr}");
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(volLabel, moved ? "QUARANTINED" : "UNEXPECTED", rel,
+                                moved ? "moved to incoming-skip/unexpected" : ""));
+                    }
+                    else
+                    {
+                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                            dialog.AppendRow(volLabel, "UNEXPECTED", rel, ""));
+                    }
                 }
             }
 
+            // ── Batch release recalculation for this volume ──────────────────
+            if (volChangedIds.Count > 0)
+                store.RecalculateReleaseStatusForArtifacts(volChangedIds);
+
+            totalVerified   += volVerified;
+            totalMissing    += volMissing;
+            totalMismatch   += volMismatch;
+            totalUnexpected += volUnexpected;
+
+            // ── Volume health ────────────────────────────────────────────────
+            bool volClean  = volMissing == 0 && volMismatch == 0;
+            var  volHealth = volClean && volVerified > 0 ? "ok" : "crit";
+            _catalog.UpdateVolumeHealth(vol.Id, volHealth);
+
+            // ── LOST restore — if was lost and now fully verified ────────────
+            if (wasLost && volClean && volVerified > 0)
+            {
+                restoredVols++;
+                _catalog.UpdateVolumeStatus(vol.Id, "present");
+                var wsR   = Path.Combine(appRoot, "volumes", SafeFileName(volLabel));
+                bool isWs = srcRoot.StartsWith(wsR, StringComparison.OrdinalIgnoreCase);
+                var  loc  = _catalog.GetCurrentLocation(vol.Id);
+                _catalog.SetCurrentLocation(new Data.VolumeLocationRecord
+                {
+                    Id           = Guid.NewGuid().ToString("N"),
+                    VolumeId     = vol.Id,
+                    LocationType = isWs ? "workspace" : "disk",
+                    DiskId       = isWs ? null : loc?.DiskId,
+                    Path         = srcRoot,
+                    IsCurrent    = true,
+                    CreatedAt    = DateTime.UtcNow,
+                });
+                log.AppendLine($"    RESTORED — was LOST, now present  health={volHealth}");
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    dialog.AppendRow(volLabel, "RESTORED", "", "volume restored from LOST"));
+            }
+            else
+            {
+                log.AppendLine($"    → verified={volVerified}  missing={volMissing}  " +
+                               $"mismatch={volMismatch}  unexpected={volUnexpected}  " +
+                               $"health={volHealth}");
+            }
+
             verifiedVols++;
-            totalExpected    += volExpected;
-            totalVerified    += volVerified;
-            totalMissing     += volMissing;
-            totalMismatch    += volMismatch;
-            totalUnexpected  += volUnexpected;
-
-            scannedVolIds.Add(vol.Id);
-            var health = (volMissing + volMismatch == 0) ? "OK" : "CRIT";
-            volHealthLog.Add((vol.Id, volLabel, health));
-
-            log.AppendLine($"    → verified={volVerified} missing={volMissing} " +
-                           $"mismatch={volMismatch} unexpected={volUnexpected}  health={health}");
-
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                 dialog.UpdateStats(totalVols, verifiedVols, skippedVols,
                                    totalExpected, totalVerified, totalMissing));
         }
 
-        // ── Scan complete — update dialog before any apply ────────────────────
-        bool hasUnexpectedQuarantine = quarantineUnexpected && unexpectedFiles.Count > 0;
-
-        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-        {
-            var parts = new System.Text.StringBuilder();
-            parts.Append($"Scan complete — Verified: {totalVerified}  Missing: {totalMissing}  " +
-                         $"Mismatch: {totalMismatch}  Unexpected: {totalUnexpected}");
-            if (totalUnexpected > 0)
-                parts.Append(quarantineUnexpected
-                    ? "  (unexpected: will be quarantined)"
-                    : "  (unexpected: scan-only, no changes applied)");
-            if (verifiedDaIds.Count > 0 || missingDaIds.Count > 0 ||
-                (quarantineMismatch && mismatchFiles.Count > 0) || hasUnexpectedQuarantine)
-                parts.Append("  |  Pending reconcile & apply.");
-            dialog.SetStatus(parts.ToString());
-        });
-
-        // ── Apply phase — gated on user confirmation ──────────────────────────
-        // Gates: quarantine of mismatch files, artifact-status DB writes, release recalculation.
-        bool hasVerifyChanges = verifiedDaIds.Count > 0 || missingDaIds.Count > 0;
-        bool hasQuarantine    = quarantineMismatch && mismatchFiles.Count > 0;
-
-        int appliedArtifacts = 0, appliedReleases = 0;
-        int artPresent = 0, artMissing = 0;
-
-        if (hasVerifyChanges || hasQuarantine || hasUnexpectedQuarantine)
-        {
-            // Build confirmation message describing what will happen.
-            int volsOk   = volHealthLog.Count(v => v.Health == "OK");
-            int volsCrit = volHealthLog.Count(v => v.Health == "CRIT");
-
-            var confirmLines = new System.Text.StringBuilder();
-            confirmLines.AppendLine("Verify & Reconcile — Apply Results?");
-            confirmLines.AppendLine();
-            confirmLines.AppendLine("── Scan Results ─────────────────────────────────────");
-            confirmLines.AppendLine($"  Volumes scanned:     {verifiedVols} of {totalVols}  ({skippedVols} skipped)");
-            confirmLines.AppendLine($"  Files expected:      {totalExpected}");
-            confirmLines.AppendLine($"    Verified:          {totalVerified}");
-            confirmLines.AppendLine($"    Missing:           {totalMissing}");
-            confirmLines.AppendLine($"    Mismatch:          {totalMismatch}");
-            confirmLines.AppendLine();
-            confirmLines.AppendLine("── Reconcile Actions ─────────────────────────────────");
-            confirmLines.AppendLine($"  Artifacts → present: {verifiedDaIds.Count}");
-            confirmLines.AppendLine($"  Artifacts → missing: {missingDaIds.Count}");
-            if (hasQuarantine)
-                confirmLines.AppendLine($"  Mismatches → quarantine: {mismatchFiles.Count}");
-            if (totalUnexpected > 0)
-            {
-                confirmLines.AppendLine();
-                confirmLines.AppendLine("── Unexpected Files ──────────────────────────────────");
-                confirmLines.AppendLine($"  Found:  {totalUnexpected}");
-                confirmLines.AppendLine(hasUnexpectedQuarantine
-                    ? $"  Action: Quarantine → incoming-skip/unexpected/"
-                    : "  Action: Report only  (quarantine disabled)");
-                confirmLines.AppendLine("  Note:   unexpected files do not affect artifact or release state.");
-            }
-            confirmLines.AppendLine();
-            confirmLines.AppendLine("── Volume Health Forecast ────────────────────────────");
-            confirmLines.AppendLine($"  Volumes → OK:   {volsOk}");
-            confirmLines.AppendLine($"  Volumes → CRIT: {volsCrit}");
-            confirmLines.AppendLine();
-            confirmLines.AppendLine("Release statuses will be recalculated.");
-            confirmLines.Append("Cancel to discard — no changes will be applied.");
-
-            bool applyConfirmed = await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(
-                async () => await new ConfirmDialog("Apply Verify Results?", confirmLines.ToString())
-                    .ShowDialog<bool>(this));
-
-            if (!applyConfirmed)
-            {
-                applyCancelled = true;
-                goto WriteLog;
-            }
-
-            // Track mismatch daIds that were successfully quarantined.
-            var quarantinedDaIds = new List<string>();
-
-            // ── Quarantine mismatch files ──────────────────────────────────────
-            if (hasQuarantine)
-            {
-                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                    dialog.SetStatus($"Applying quarantine to {mismatchFiles.Count} mismatch file(s)…"));
-
-                log.AppendLine();
-                log.AppendLine("── Quarantine Summary ───────────────────────────────────────");
-
-                foreach (var (mAbsPath, mFileName, mDispPath, mHashDetail, mVolLabel, mDaId) in mismatchFiles)
-                {
-                    if (!File.Exists(mAbsPath))
-                    {
-                        // File was already removed between scan and apply — treat as quarantined.
-                        totalQuarantined++;
-                        quarantinedDaIds.Add(mDaId);
-                        log.AppendLine($"    SKIP (already gone)  {mDispPath}");
-                        continue;
-                    }
-
-                    bool moved = false;
-                    string? moveError = null;
-                    try
-                    {
-                        Directory.CreateDirectory(quarantineBaseDir);
-                        var dest = IncomingSkipUniquePath(quarantineBaseDir, mFileName);
-                        try
-                        {
-                            File.Move(mAbsPath, dest, overwrite: false);
-                            moved = true;
-                        }
-                        catch
-                        {
-                            // Cross-volume fallback: copy then delete
-                            File.Copy(mAbsPath, dest, overwrite: false);
-                            File.Delete(mAbsPath);
-                            moved = true;
-                        }
-                    }
-                    catch (Exception moveEx)
-                    {
-                        moveError = moveEx.Message;
-                    }
-
-                    if (moved)
-                    {
-                        totalQuarantined++;
-                        quarantinedDaIds.Add(mDaId);
-                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                            dialog.AppendRow(mVolLabel, "QUARANTINED", mDispPath, "moved to incoming-skip"));
-                        log.AppendLine($"    QUARANTINED  {mDispPath}  → incoming-skip");
-                    }
-                    else
-                    {
-                        quarantineFailures++;
-                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                            dialog.AppendRow(mVolLabel, "QUARANTINE FAILED", mDispPath, $"error: {moveError}"));
-                        log.AppendLine($"    QUARANTINE FAILED  {mDispPath}  error={moveError}");
-                    }
-                }
-            }
-
-            // ── Quarantine unexpected files ────────────────────────────────────
-            // Unexpected quarantine never changes artifact or release state.
-            if (hasUnexpectedQuarantine)
-            {
-                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                    dialog.SetStatus($"Quarantining {unexpectedFiles.Count} unexpected file(s)…"));
-
-                var unexpectedBaseDir = Path.Combine(appRoot, "incoming-skip", "unexpected");
-
-                log.AppendLine();
-                log.AppendLine("── Unexpected Summary ───────────────────────────────────────");
-
-                foreach (var (uAbsPath, uFileName, uDispPath, uVolLabel) in unexpectedFiles)
-                {
-                    if (!File.Exists(uAbsPath))
-                    {
-                        unexpectedQuarantined++;
-                        log.AppendLine($"    SKIP (already gone)  {uDispPath}");
-                        continue;
-                    }
-
-                    var volQuarantineDir = Path.Combine(unexpectedBaseDir, SafeFileName(uVolLabel));
-                    bool moved = false;
-                    string? moveError = null;
-                    try
-                    {
-                        Directory.CreateDirectory(volQuarantineDir);
-                        var dest = IncomingSkipUniquePath(volQuarantineDir, uFileName);
-                        try
-                        {
-                            File.Move(uAbsPath, dest, overwrite: false);
-                            moved = true;
-                        }
-                        catch
-                        {
-                            // Cross-volume fallback: copy then delete
-                            File.Copy(uAbsPath, dest, overwrite: false);
-                            File.Delete(uAbsPath);
-                            moved = true;
-                        }
-                    }
-                    catch (Exception moveEx)
-                    {
-                        moveError = moveEx.Message;
-                    }
-
-                    if (moved)
-                    {
-                        unexpectedQuarantined++;
-                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                            dialog.AppendRow(uVolLabel, "QUARANTINED", uDispPath,
-                                "moved to incoming-skip/unexpected"));
-                        log.AppendLine($"    QUARANTINED  {uDispPath}  → incoming-skip/unexpected/{SafeFileName(uVolLabel)}");
-                    }
-                    else
-                    {
-                        unexpectedQuarantineFailures++;
-                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                            dialog.AppendRow(uVolLabel, "QUARANTINE FAILED", uDispPath, $"error: {moveError}"));
-                        log.AppendLine($"    QUARANTINE FAILED  {uDispPath}  error={moveError}");
-                    }
-                }
-            }
-
-            // ── Artifact status DB writes ──────────────────────────────────────
-            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                dialog.SetStatus("Updating artifact and release records…"));
-
-            // VERIFIED → present; MISSING → missing; quarantined MISMATCH → missing.
-            // Non-quarantined MISMATCH artifacts are left unchanged (state unknown).
-            var missingUpdateIds = new List<string>(missingDaIds.Count + quarantinedDaIds.Count);
-            missingUpdateIds.AddRange(missingDaIds);
-            missingUpdateIds.AddRange(quarantinedDaIds);
-
-            artPresent = store.BatchUpdateDerivedArtifactStatus(verifiedDaIds, "present");
-            artMissing = store.BatchUpdateDerivedArtifactStatus(missingUpdateIds, "missing");
-            appliedArtifacts = artPresent + artMissing;
-
-            // ── Release recalculation ──────────────────────────────────────────
-            var allChangedDaIds = new List<string>(verifiedDaIds.Count + missingUpdateIds.Count);
-            allChangedDaIds.AddRange(verifiedDaIds);
-            allChangedDaIds.AddRange(missingUpdateIds);
-            appliedReleases = store.RecalculateReleaseStatusForArtifacts(allChangedDaIds);
-
-            log.AppendLine();
-            log.AppendLine("── Apply Summary ────────────────────────────────────────────");
-            log.AppendLine($"  Artifacts marked present:  {artPresent}");
-            log.AppendLine($"  Artifacts marked missing:  {artMissing}  (scan-missing={missingDaIds.Count}  quarantined={quarantinedDaIds.Count})");
-            log.AppendLine($"  Releases recalculated:     {appliedReleases}");
-
-            // ── Persist volume health ─────────────────────────────────────────
-            // health is set per-scanned-volume only; skipped/lost volumes are excluded.
-            log.AppendLine();
-            log.AppendLine("── Volume Health Summary ────────────────────────────────────");
-            foreach (var (vhVolId, vhLabel, vhHealth) in volHealthLog)
-            {
-                var dbHealth = vhHealth == "CRIT" ? "crit" : "ok";
-                _catalog.UpdateVolumeHealth(vhVolId, dbHealth);
-                log.AppendLine($"  [{vhLabel}]  {vhHealth}");
-            }
-
-            // ── UI refresh ────────────────────────────────────────────────────
-            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                RebuildLibraryDatasets();
-                RefreshVolumes();
-            });
-        }
-
-        WriteLog:
-        // ── Write log ────────────────────────────────────────────────────────
-        var endTime = DateTime.UtcNow;
+        // ── Write log ──────────────────────────────────────────────────────────
+        var endTs = DateTime.UtcNow;
         log.AppendLine();
-        log.AppendLine("── Scan Summary ─────────────────────────────────────────────");
-        log.AppendLine($"  Completed:     {endTime:o}");
-        log.AppendLine($"  Volumes:       total={totalVols}  scanned={verifiedVols}  skipped={skippedVols}");
-        log.AppendLine($"  Files:         expected={totalExpected}  verified={totalVerified}  missing={totalMissing}  mismatch={totalMismatch}  unexpected={totalUnexpected}");
-        log.AppendLine($"  Quarantined:   {totalQuarantined}  failures={quarantineFailures}");
-        if (totalUnexpected > 0)
-            log.AppendLine($"  Unexpected:    found={totalUnexpected}  quarantined={unexpectedQuarantined}" +
-                           $"  failures={unexpectedQuarantineFailures}" +
-                           (quarantineUnexpected ? "" : "  (report only)"));
-        log.AppendLine($"  SHA1-verified: {FormatBytes(verifiedBytes)}");
-        if (applyCancelled)
-            log.AppendLine("  Apply:         CANCELLED — no persistent changes applied");
-        else if (appliedArtifacts > 0 || appliedReleases > 0)
-            log.AppendLine($"  DB apply:      artifacts={appliedArtifacts}  releases={appliedReleases}");
-        else
-            log.AppendLine("  DB apply:      none (nothing to update)");
+        log.AppendLine("── Summary ─────────────────────────────────────────────────────────────");
+        log.AppendLine($"  Completed:     {endTs:o}");
+        log.AppendLine($"  Duration:      {(endTs - startTs).TotalSeconds:F1}s");
+        log.AppendLine($"  Result:        {(cancelled ? "partial" : "ok")}");
+        log.AppendLine($"  Archive:       verified={archiveVerified}  missing={archiveMissing}  " +
+                       $"mismatch={archiveMismatch}  unexpected={archiveUnexpected}  " +
+                       $"sha1-verified={FormatBytes(archiveVerifiedBytes)}");
+        log.AppendLine($"  Volumes:       total={totalVols}  scanned={verifiedVols}  " +
+                       $"skipped={skippedVols}  restored={restoredVols}");
+        log.AppendLine($"  Volume files:  verified={totalVerified}  missing={totalMissing}  " +
+                       $"mismatch={totalMismatch}  unexpected={totalUnexpected}");
+        if (cancelled)
+            log.AppendLine("  Cancelled by user — remaining volumes not scanned.");
 
-        if (_catalog.GetBoolSetting("auto_export_verify_logs", defaultValue: true))
+        try
         {
-            try
-            {
-                var logDir  = Path.Combine(appRoot, "logs", "verify");
-                Directory.CreateDirectory(logDir);
-                var safe    = SafeFileName(info.Name);
-                var logFile = Path.Combine(logDir, $"{endTime:yyyyMMdd-HHmmss}-verify-{safe}.log");
-                File.WriteAllText(logFile, log.ToString());
-            }
-            catch { /* non-fatal */ }
+            var logDir  = Path.Combine(appRoot, "logs", "verify-all");
+            Directory.CreateDirectory(logDir);
+            var logFile = Path.Combine(logDir,
+                $"{endTs:yyyyMMdd-HHmmss}-verify-all-{SafeFileName(info.Name)}.log");
+            File.WriteAllText(logFile, log.ToString());
         }
+        catch { /* non-fatal */ }
 
-        // ── Final status ─────────────────────────────────────────────────────
-        bool clean    = totalMissing == 0 && totalMismatch == 0;
-        int critCount = volHealthLog.Count(v => v.Health == "CRIT");
-        int okCount   = volHealthLog.Count(v => v.Health == "OK");
-        string summary;
-        string unexpectedSummaryLine = "";
-        if (totalUnexpected > 0)
-        {
-            if (applyCancelled || !quarantineUnexpected)
-                unexpectedSummaryLine = $"\nUnexpected: {totalUnexpected} found  (reported only — no artifact changes)";
-            else
-                unexpectedSummaryLine =
-                    $"\nUnexpected: {totalUnexpected} found  |  Quarantined: {unexpectedQuarantined}" +
-                    (unexpectedQuarantineFailures > 0 ? $"  |  Failed: {unexpectedQuarantineFailures}" : "") +
-                    "  (no artifact changes)";
-        }
-
-        if (applyCancelled)
-        {
-            summary =
-                $"Scan complete — no persistent changes applied.\n" +
-                $"Volumes: {verifiedVols}/{totalVols} scanned  ({skippedVols} skipped)\n" +
-                $"Files: expected={totalExpected}  verified={totalVerified}  missing={totalMissing}  " +
-                $"mismatch={totalMismatch}  unexpected={totalUnexpected}" +
-                unexpectedSummaryLine +
-                (clean ? "\nAll expected files verified clean." : "");
-        }
-        else
-        {
-            summary =
-                $"Verify & Reconcile complete.\n" +
-                $"Volumes: {verifiedVols}/{totalVols} scanned  ({skippedVols} skipped)" +
-                (critCount > 0 ? $"  |  {critCount} CRIT  {okCount} OK" : $"  |  all {okCount} OK") + "\n" +
-                $"Files: expected={totalExpected}  verified={totalVerified}  missing={totalMissing}  " +
-                $"mismatch={totalMismatch}  unexpected={totalUnexpected}\n" +
-                $"Artifacts: {artPresent} → present  {artMissing} → missing  |  Releases recalculated: {appliedReleases}\n" +
-                $"Quarantined: {totalQuarantined}" +
-                (quarantineFailures > 0 ? $"  |  Quarantine failures: {quarantineFailures}" : "") +
-                unexpectedSummaryLine +
-                (clean ? "\nAll expected files verified clean." : "");
-        }
+        // ── Final dialog status ────────────────────────────────────────────────
+        bool allClean = archiveMissing == 0 && archiveMismatch == 0 &&
+                        totalMissing   == 0 && totalMismatch   == 0;
+        var summary = new System.Text.StringBuilder();
+        summary.AppendLine(cancelled
+            ? "Verify ALL — partial (cancelled by user)."
+            : "Verify ALL — complete.");
+        summary.AppendLine($"Archive: verified={archiveVerified}  missing={archiveMissing}  " +
+                           $"mismatch={archiveMismatch}  unexpected={archiveUnexpected}");
+        summary.AppendLine($"Volumes: {verifiedVols}/{totalVols} scanned  " +
+                           $"{skippedVols} skipped  {restoredVols} restored");
+        summary.Append($"Files:   verified={totalVerified}  missing={totalMissing}  " +
+                       $"mismatch={totalMismatch}  unexpected={totalUnexpected}");
+        if (allClean && !cancelled)
+            summary.Append("\nAll checked artifacts verified clean.");
 
         await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
         {
             dialog.UpdateStats(totalVols, verifiedVols, skippedVols,
                                totalExpected, totalVerified, totalMissing);
             dialog.SetStatus(
-                $"Volumes: {totalVols}  Scanned: {verifiedVols}  Skipped: {skippedVols}" +
-                (critCount > 0 ? $"  CRIT: {critCount}" : "") +
-                $"  |  Expected: {totalExpected}  OK: {totalVerified}  Missing: {totalMissing}  " +
-                $"Mismatch: {totalMismatch}  Unexpected: {totalUnexpected}  |  " +
-                $"SHA1-verified: {FormatBytes(verifiedBytes)}");
-            dialog.SetCompleted(summary);
+                $"Archive: ok={archiveVerified}  missing={archiveMissing}  " +
+                $"mismatch={archiveMismatch}" +
+                $"  |  Volumes: {verifiedVols}/{totalVols}  " +
+                $"Files: ok={totalVerified}  missing={totalMissing}  mismatch={totalMismatch}");
+            dialog.SetCompleted(summary.ToString().TrimEnd());
         });
     }
 
@@ -7551,6 +7597,32 @@ public partial class MainWindow : Window
             dest = Path.Combine(dir, $"{nameWithoutExt} ({counter}){ext}");
             if (!File.Exists(dest)) return dest;
             counter++;
+        }
+    }
+
+    /// <summary>
+    /// Attempts to move <paramref name="srcPath"/> into <paramref name="quarantineDir"/>.
+    /// Uses copy+delete as fallback if cross-volume move fails. Returns true on success.
+    /// </summary>
+    private static bool TryQuarantineFile(string srcPath, string fileName, string quarantineDir, out string? error)
+    {
+        error = null;
+        try
+        {
+            Directory.CreateDirectory(quarantineDir);
+            var dest = IncomingSkipUniquePath(quarantineDir, fileName);
+            try { File.Move(srcPath, dest, overwrite: false); }
+            catch
+            {
+                File.Copy(srcPath, dest, overwrite: false);
+                File.Delete(srcPath);
+            }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
         }
     }
 
