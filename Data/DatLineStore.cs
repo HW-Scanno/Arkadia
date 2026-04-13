@@ -611,6 +611,31 @@ public sealed class DatLineStore
     }
 
     /// <summary>
+    /// Returns the count and total derived size bytes of derived artifacts with
+    /// status 'present' that are not present in <paramref name="assignedIds"/>.
+    /// Used by the Systems detail pane to show how much unallocated material remains.
+    /// </summary>
+    public (int Count, long TotalBytes) GetUnassignedPresentStats(
+        System.Collections.Generic.IReadOnlySet<string> assignedIds)
+    {
+        int  count = 0;
+        long total = 0;
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, derived_size_bytes FROM derived_artifacts WHERE status = 'present'";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            if (!assignedIds.Contains(r.GetString(0)))
+            {
+                count++;
+                total += r.GetInt64(1);
+            }
+        }
+        return (count, total);
+    }
+
+    /// <summary>
     /// Returns other releases in this DAT line that share file content (by SHA1/MD5) with the
     /// given release. Results are sorted by shared-file count DESC, then release name ASC.
     /// </summary>

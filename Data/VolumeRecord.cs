@@ -8,7 +8,7 @@ public sealed class VolumeRecord
     public required string    Label            { get; init; }
     public required string    PlatformId       { get; init; }
     public required string    DatLineId        { get; init; }
-    public required string    Status           { get; init; }  // present | lost
+    public required string    Status           { get; init; }  // init | present | lost
     public          string    Health           { get; init; } = "ok";  // ok | crit
     public required long      PlannedSizeBytes { get; init; }
     public required long      ActualSizeBytes  { get; init; }

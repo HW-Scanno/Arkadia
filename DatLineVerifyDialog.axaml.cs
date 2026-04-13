@@ -34,7 +34,7 @@ public partial class DatLineVerifyDialog : Window
     }
 
     public void UpdateStats(int totalVols, int verifiedVols, int skippedVols,
-                            int expected, int verified, int missing)
+                            int expected, int verified, int missing, int mismatch = 0)
     {
         StatVolumes.Text     = totalVols.ToString("N0");
         StatVerifiedVols.Text= verifiedVols.ToString("N0");
@@ -42,7 +42,7 @@ public partial class DatLineVerifyDialog : Window
         StatExpected.Text    = expected.ToString("N0");
         StatVerified.Text    = verified.ToString("N0");
         StatMissing.Text     = missing.ToString("N0");
-        StatMismatch.Text    = (expected - verified - missing).ToString("N0");
+        StatMismatch.Text    = mismatch.ToString("N0");
     }
 
     public void SetStatus(string text) => StatusLine.Text = text;

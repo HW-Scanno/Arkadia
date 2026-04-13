@@ -1492,7 +1492,7 @@
                         <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
                                 Margin="10,2" VerticalAlignment="Stretch"/>
                         <Button x:Name="VolActMake"      Classes="view-toggle" IsEnabled="False"
-                                Content="Make"      Click="OnMakeVolume"/>
+                                Content="Plan"      Click="OnMakeVolume"/>
                         <Button x:Name="VolActMove"      Classes="view-toggle" IsEnabled="False"
                                 Content="Move"      Click="OnMoveVolume"/>
                         <Button x:Name="VolActResize"    Classes="view-toggle" IsEnabled="False"
@@ -1501,8 +1501,10 @@
                                 Content="Append"    Click="OnAppendVolume"/>
                         <Button x:Name="VolActReabsorb"  Classes="view-toggle" IsEnabled="False"
                                 Content="Reabsorb"  Click="OnReabsorbVolume"/>
-                        <Button x:Name="VolActMarkLost"  Classes="view-toggle" IsEnabled="False"
-                                Content="Mark Lost" Click="OnMarkVolumeLost"/>
+                        <Button x:Name="VolActMarkLost"    Classes="view-toggle" IsEnabled="False"
+                                Content="Mark Lost"    Click="OnMarkVolumeLost"/>
+                        <Button x:Name="VolActDeleteVolume" Classes="view-toggle danger" IsEnabled="False"
+                                Content="Delete Volume" Click="OnDeleteVolume"/>
                         <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
                                 Margin="10,2" VerticalAlignment="Stretch"/>
                         <Button x:Name="VolActArtifacts" Classes="view-toggle" IsEnabled="False"
@@ -1517,7 +1519,7 @@
                             Padding="20,8"
                             BorderBrush="{DynamicResource ArkSurfaceAlt}"
                             BorderThickness="0,0,0,1">
-                        <Grid ColumnDefinitions="52,0.75*,80,140,90,90,0.5*,3*">
+                        <Grid ColumnDefinitions="72,0.75*,80,140,90,90,0.5*,3*">
                             <TextBlock Grid.Column="0" Classes="col-header" Text="STATUS"    HorizontalAlignment="Center"/>
                             <TextBlock Grid.Column="1" Classes="col-header" Text="LABEL"/>
                             <TextBlock Grid.Column="2" Classes="col-header" Text="ARTIFACTS" HorizontalAlignment="Center" Margin="8,0,0,0"/>
@@ -1538,7 +1540,7 @@
                              SelectionChanged="OnVolumeSelectionChanged">
                         <ListBox.ItemTemplate>
                             <DataTemplate x:DataType="vols:VolumeEntry">
-                                <Grid ColumnDefinitions="52,0.75*,80,140,90,90,0.5*,3*" Margin="20,0">
+                                <Grid ColumnDefinitions="72,0.75*,80,140,90,90,0.5*,3*" Margin="20,0">
                                     <TextBlock Grid.Column="0"
                                                Text="{Binding StatusLabel}"
                                                FontSize="11" FontWeight="SemiBold"

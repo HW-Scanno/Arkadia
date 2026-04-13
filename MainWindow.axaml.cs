@@ -644,17 +644,25 @@ public partial class MainWindow : Window
         var text  = new SolidColorBrush(Color.Parse("#E0E0F0"));
         var panel = SystemsDetailPanel;
 
-        // Compute status counts from store
-        int present        = 0;
-        int reconciliation = 0;  // = 'lost' releases only
+        // Compute status counts and unassigned artifact stats from store
+        int  present         = 0;
+        int  reconciliation  = 0;  // = 'lost' releases only
+        int  unassignedCount = 0;
+        long unassignedBytes = 0;
         if (d.DataStorePath.Length > 0)
         {
             var absPath = Path.Combine(_dataDir, d.DataStorePath);
             if (File.Exists(absPath))
             {
-                var counts     = new DatLineStore(absPath).GetAllStatusCounts();
+                var datStore   = new DatLineStore(absPath);
+                var counts     = datStore.GetAllStatusCounts();
                 present        = counts.Present;
                 reconciliation = counts.Lost;
+
+                var assignedIds = d.CatalogId is not null
+                    ? _catalog.GetAssignedDerivedIdsByDatLine(d.CatalogId)
+                    : new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
+                (unassignedCount, unassignedBytes) = datStore.GetUnassignedPresentStats(assignedIds);
             }
         }
         var coverage = d.Releases > 0
@@ -730,6 +738,8 @@ public partial class MainWindow : Window
         AddStatusRow("Incomplete",     $"{d.Outdated:N0}");
         AddStatusRow("Reconciliation", $"{reconciliation:N0}");
         AddStatusRow("Coverage",       coverage);
+        AddStatusRow("Unassigned",     $"{unassignedCount:N0}");
+        AddStatusRow("Unassigned Size", FormatBytes(unassignedBytes));
 
         // ── Transform strategy summary ────────────────────────────────────────
         panel.Children.Add(new Border
@@ -2173,15 +2183,16 @@ public partial class MainWindow : Window
     private void UpdateVolumeDetailPanel(VolumeEntry? entry)
     {
         bool hasVol      = entry is not null;
-        bool isPhysical  = hasVol && entry!.StatusLabel is "LOCAL" or "ON DISK";
+        bool isPhysical  = hasVol && entry!.Status == "present";
         bool isNotLost   = hasVol && entry!.Status != "lost";
 
-        VolActMake.IsEnabled     = isPhysical;   // requires files on disk/workspace
+        VolActMake.IsEnabled     = isNotLost;    // plan available for init + present; disabled for lost
         VolActMove.IsEnabled     = isPhysical;   // requires physical source
         VolActResize.IsEnabled   = isNotLost;
         VolActAppend.IsEnabled   = isPhysical;   // requires files on disk/workspace
         VolActReabsorb.IsEnabled = isPhysical;   // requires physical source
-        VolActMarkLost.IsEnabled = isNotLost;    // already-lost volumes are no-ops
+        VolActMarkLost.IsEnabled    = isNotLost;  // already-lost volumes are no-ops
+        VolActDeleteVolume.IsEnabled = hasVol;    // enforcement is at click time
 
         VolActVerifyVolume.IsEnabled = hasVol
             && entry!.ArtifactCount > 0
@@ -2355,11 +2366,11 @@ public partial class MainWindow : Window
                     }
 
                     processed++;
-                    int snap_ok = okCount, snap_miss = missingCount;
+                    int snap_ok = okCount, snap_miss = missingCount, snap_mismatch = mismatchCount;
                     await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                     {
                         dlg.AppendRow(entry.Label, result, vi.FileName, detail);
-                        dlg.UpdateStats(1, 0, 0, verifyInfos.Count, snap_ok, snap_miss);
+                        dlg.UpdateStats(1, 0, 0, verifyInfos.Count, snap_ok, snap_miss, snap_mismatch);
                         dlg.SetStatus($"Verifying {processed}/{verifyInfos.Count}...");
                     });
                 }
@@ -2450,7 +2461,7 @@ public partial class MainWindow : Window
             dlg.SetFailed(errorMessage);
         else
         {
-            dlg.UpdateStats(1, 1, 0, verifyInfos.Count, okCount, missingCount);
+            dlg.UpdateStats(1, 1, 0, verifyInfos.Count, okCount, missingCount, mismatchCount);
             bool allPresent = badDaIds.Count == 0;
             string statusLine = wasLost && allPresent
                 ? "Volume RESTORED from LOST."
@@ -3495,6 +3506,18 @@ public partial class MainWindow : Window
             CreatedAt    = DateTime.UtcNow,
         });
 
+        // Promote init → present after successful materialization
+        if (entry.Status == "init")
+            _catalog.UpdateVolumeStatus(entry.Id, "present");
+
+        // Realign DA + release state for artifacts just moved out of archive
+        var movedDaIds = notBuilt.Select(x => x.Info.DerivedArtifactId).ToList();
+        if (movedDaIds.Count > 0)
+        {
+            store.BatchUpdateDerivedArtifactStatus(movedDaIds, "present");
+            store.RecalculateReleaseStatusForArtifacts(movedDaIds);
+        }
+
         RefreshVolumes();
         RefreshDisks();
 
@@ -3573,7 +3596,7 @@ public partial class MainWindow : Window
             // ── Preview ───────────────────────────────────────────────────────
             var preview = new PlanVolumeDialog(planResult);
             (preview.FindControl<Avalonia.Controls.TextBlock>("DialogTitle"))!.Text =
-                $"Make Volume — {entry.Label}";
+                $"Plan Volume — {entry.Label}";
             var proceed = await preview.ShowDialog<bool>(this);
             if (!proceed) return;
 
@@ -3590,7 +3613,7 @@ public partial class MainWindow : Window
                 : $"Files moved:    {movedCount}  (already built: {alreadyBuiltCount})";
 
             await new InfoDialog(
-                "Make Volume — Complete",
+                "Plan Volume — Complete",
                 $"Volume:         {entry.Label}\n" +
                 $"Releases:       {releaseCount}\n" +
                 $"Artifacts:      {linkedCount}\n" +
@@ -3600,7 +3623,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) when (ex is not OutOfMemoryException)
         {
-            await new InfoDialog("Make Volume Error", ex.Message).ShowDialog(this);
+            await new InfoDialog("Plan Volume Error", ex.Message).ShowDialog(this);
         }
     }
 
@@ -3932,14 +3955,42 @@ public partial class MainWindow : Window
 
         var newBytes = dlg.ResultBytes;
 
+        // Rule A — occupied-size lower bound (always)
         if (newBytes < entry.ActualSizeBytes)
         {
-            await new InfoDialog("Cannot Shrink",
-                $"New capacity ({FormatBytes(newBytes)}) is smaller than the actual " +
-                $"content size ({FormatBytes(entry.ActualSizeBytes)}).\n\n" +
-                "Reabsorb or remove artifacts first.")
+            var diff = entry.ActualSizeBytes - newBytes;
+            await new InfoDialog(
+                "Cannot Resize Volume",
+                "The requested size is smaller than the space already occupied by artifacts in this volume.\n\n" +
+                $"Requested size:             {FormatBytes(newBytes)}\n" +
+                $"Current occupied size:      {FormatBytes(entry.ActualSizeBytes)}\n" +
+                $"Additional capacity required: {FormatBytes(diff)}")
                 .ShowDialog(this);
             return;
+        }
+
+        // Rule B — disk capacity upper bound (disk-backed volumes only)
+        if (entry.DiskId is not null)
+        {
+            var disk = _catalog.GetDisks().FirstOrDefault(d => d.Id == entry.DiskId);
+            if (disk is not null)
+            {
+                var otherPlanned      = _catalog.GetDiskPlannedUsageExcluding(disk.Id, entry.Id);
+                var availableForThis  = disk.DeclaredCapacityBytes - otherPlanned;
+                if (newBytes > availableForThis)
+                {
+                    var diff = newBytes - availableForThis;
+                    await new InfoDialog(
+                        "Cannot Resize Volume",
+                        "The requested size cannot be applied because the target disk does not have enough allocatable capacity.\n\n" +
+                        $"Requested size:          {FormatBytes(newBytes)}\n" +
+                        $"Available for this volume: {FormatBytes(Math.Max(0, availableForThis))}\n" +
+                        $"Additional space needed: {FormatBytes(diff)}\n\n" +
+                        "This disk already has other planned volumes assigned to it.")
+                        .ShowDialog(this);
+                    return;
+                }
+            }
         }
 
         var vol = _catalog.GetVolumes().FirstOrDefault(v => v.Id == entry.Id);
@@ -4216,6 +4267,11 @@ public partial class MainWindow : Window
                 }
             }
             log?.AppendLine("APPEND-COMPLETE");
+
+            // Realign DA + release state immediately after archive files removed
+            var appendedDaIds = toAppend.Select(x => x.Info.DerivedArtifactId).ToList();
+            store.BatchUpdateDerivedArtifactStatus(appendedDaIds, "present");
+            store.RecalculateReleaseStatusForArtifacts(appendedDaIds);
         }
 
         // ── Write log ──────────────────────────────────────────────────────
@@ -4693,6 +4749,40 @@ public partial class MainWindow : Window
             VolumesList.SelectedItem = updatedLost;
             UpdateVolumeDetailPanel(updatedLost);
         }
+    }
+
+    // ── Delete Volume ─────────────────────────────────────────────────────────
+
+    private async void OnDeleteVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = VolumesList.SelectedItem as VolumeEntry;
+        if (entry is null) return;
+
+        if (entry.Status != "lost")
+        {
+            await new InfoDialog(
+                "Cannot Delete Volume",
+                "Delete Volume is only available for volumes already marked LOST.\n\n" +
+                "Mark the volume as LOST first if you want to remove it permanently from the catalog.")
+                .ShowDialog(this);
+            return;
+        }
+
+        var confirmed = await new ConfirmDialog(
+            "Delete Volume",
+            "This will permanently remove the lost volume from the catalog.\n" +
+            "Volume metadata and all volume-artifact mappings will be deleted.\n\n" +
+            "This action cannot be undone.")
+            .ShowDialog<bool>(this);
+        if (!confirmed) return;
+
+        _catalog.DeleteVolume(entry.Id);
+
+        RebuildLibraryDatasets();
+        RefreshVolumes();
+        RefreshAnalyticsIfBuilt();
+        RefreshDiskDetailIfSelected();
+        UpdateVolumeDetailPanel(null);
     }
 
     /// <summary>
@@ -6631,7 +6721,7 @@ public partial class MainWindow : Window
             verifiedVols++;
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                 dialog.UpdateStats(totalVols, verifiedVols, skippedVols,
-                                   totalExpected, totalVerified, totalMissing));
+                                   totalExpected, totalVerified, totalMissing, totalMismatch));
         }
 
         // ── Write log ──────────────────────────────────────────────────────────
@@ -6680,7 +6770,7 @@ public partial class MainWindow : Window
         await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
         {
             dialog.UpdateStats(totalVols, verifiedVols, skippedVols,
-                               totalExpected, totalVerified, totalMissing);
+                               totalExpected, totalVerified, totalMissing, totalMismatch);
             dialog.SetStatus(
                 $"Archive: ok={archiveVerified}  missing={archiveMissing}  " +
                 $"mismatch={archiveMismatch}" +

@@ -985,6 +985,27 @@ public sealed class CatalogService
         return (capacity, used, Math.Max(0, capacity - used));
     }
 
+    /// <summary>
+    /// Returns the sum of planned_size_bytes for all volumes whose current location
+    /// is on <paramref name="diskId"/>, excluding <paramref name="excludeVolumeId"/>.
+    /// Used by the Resize Volume validation to calculate allocatable capacity.
+    /// </summary>
+    public long GetDiskPlannedUsageExcluding(string diskId, string excludeVolumeId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COALESCE(SUM(v.planned_size_bytes), 0)
+            FROM volumes v
+            JOIN volume_locations vl ON vl.volume_id = v.id
+            WHERE vl.disk_id = $diskId AND vl.is_current = 1
+              AND v.id != $excludeId
+            """;
+        cmd.Parameters.AddWithValue("$diskId",    diskId);
+        cmd.Parameters.AddWithValue("$excludeId", excludeVolumeId);
+        return (long)(cmd.ExecuteScalar() ?? 0L);
+    }
+
     private static DiskRecord ReadDisk(SqliteDataReader r) => new()
     {
         Id                    = r.GetString(0),

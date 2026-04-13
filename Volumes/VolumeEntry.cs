@@ -30,13 +30,16 @@ public sealed class VolumeEntry
     public string ActualLabel  => FormatBytes(ActualSizeBytes);
 
     public string StatusLabel =>
+        Status == "init"                          ? "INIT"    :
         Status == "lost"                          ? "LOST"    :
+        Health == "crit"                          ? "WARNING" :
         CurrentLocation.StartsWith("disk:")       ? "ON DISK" :
         CurrentLocation == "Local Archive"        ? "LOCAL"   :
                                                     "WARNING";
 
     public IBrush StatusBrush => StatusLabel switch
     {
+        "INIT"    => new SolidColorBrush(Color.Parse("#78909C")),
         "ON DISK" => new SolidColorBrush(Color.Parse("#4CAF50")),
         "LOCAL"   => new SolidColorBrush(Color.Parse("#26C6DA")),
         "LOST"    => new SolidColorBrush(Color.Parse("#EF5350")),

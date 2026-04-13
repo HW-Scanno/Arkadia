@@ -112,7 +112,7 @@ public partial class CreateVolumeDialog : Window
             Label            = LabelInput.Text!.Trim(),
             PlatformId       = datLine.PlatformId,
             DatLineId        = datLine.Id,
-            Status           = "offline",
+            Status           = "init",
             PlannedSizeBytes = (long)(sizeGb * 1024 * 1024 * 1024),
             ActualSizeBytes  = 0,
             CreatedAt        = DateTime.UtcNow,
