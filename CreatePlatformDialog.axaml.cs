@@ -16,6 +16,7 @@ public partial class CreatePlatformDialog : Window
     private readonly HashSet<string> _existingIds;
     private readonly bool            _isEditMode;
     private readonly string          _imageDir;
+    private readonly CatalogService  _catalog;
 
     private string? _logoPath;      // null = no new file chosen (keep existing or none)
     private string? _detailsPath;
@@ -31,23 +32,26 @@ public partial class CreatePlatformDialog : Window
     public bool DeleteDetailsImage         { get; private set; }
 
     // Parameterless ctor required by Avalonia XAML compiler
-    public CreatePlatformDialog() : this([], null, string.Empty, []) { }
+    public CreatePlatformDialog() : this([], null, string.Empty, [], null!) { }
 
     /// <param name="existingIds">IDs already in the catalog — used for uniqueness check.</param>
     /// <param name="prefill">Non-null → edit mode; pre-fills all fields, locks ID.</param>
     /// <param name="imageDir">Path to data/systemimages — used to check existing images.</param>
     /// <param name="hardwareTypes">Hardware type list loaded from the DB — drives the ComboBox.</param>
+    /// <param name="catalog">Catalog service — used to refresh platform types after manager closes.</param>
     public CreatePlatformDialog(
         IEnumerable<string>                 existingIds,
         PlatformRecord?                     prefill,
         string                              imageDir,
-        IReadOnlyList<HardwareTypeRecord>   hardwareTypes)
+        IReadOnlyList<HardwareTypeRecord>   hardwareTypes,
+        CatalogService                      catalog)
     {
         InitializeComponent();
 
         _existingIds = new HashSet<string>(existingIds, StringComparer.OrdinalIgnoreCase);
         _imageDir    = imageDir;
         _isEditMode  = prefill is not null;
+        _catalog     = catalog;
 
         // Build a display list with a blank leading entry
         var items = new List<HardwareTypeRecord>(hardwareTypes.Count + 1)
@@ -94,6 +98,22 @@ public partial class CreatePlatformDialog : Window
         DetailsDropArea.PointerPressed += async (_, _) => await BrowseImage(isLogo: false);
 
         ValidateForm();
+    }
+
+    private async void OnManagePlatformTypes(object? sender, RoutedEventArgs e)
+    {
+        var prevId = (HardwareTypeInput.SelectedItem as HardwareTypeRecord)?.Id;
+        var dialog = new PlatformTypeManagerDialog(_catalog);
+        await dialog.ShowDialog<bool>(this);
+
+        var refreshed = _catalog.LoadHardwareTypes();
+        var items = new List<HardwareTypeRecord>(refreshed.Count + 1)
+        {
+            new() { Id = "", Name = "", SortOrder = 0 }
+        };
+        items.AddRange(refreshed);
+        HardwareTypeInput.ItemsSource  = items;
+        HardwareTypeInput.SelectedItem = items.Find(h => h.Id == (prevId ?? "")) ?? items[0];
     }
 
     private void RefreshDeleteButtons(string platformId)

@@ -16,32 +16,22 @@ public partial class UpdateDatDialog : Window
     public string?           Version     => VersionInput.Text?.Trim();
 
     // Parameterless ctor required by Avalonia XAML compiler
-    public UpdateDatDialog() : this(new DatLineRecord(), "", "") { }
+    public UpdateDatDialog() : this(new DatLineRecord(), "", "", "") { }
 
     public UpdateDatDialog(
         DatLineRecord datLine,
         string        platformName,
+        string        authorityName,
         string        storageStrategyName)
     {
         InitializeComponent();
 
-        InfoId.Text       = datLine.Id;
-        InfoPlatform.Text = platformName;
-        InfoAuthority.Text = AuthorityLabel(datLine.Authority);
+        InfoId.Text        = datLine.Id;
+        InfoPlatform.Text  = platformName;
+        InfoAuthority.Text = authorityName.Length > 0 ? authorityName : datLine.Authority;
         InfoCategory.Text  = datLine.DatCategory;
         InfoStorage.Text   = storageStrategyName.Length > 0 ? storageStrategyName : "—";
     }
-
-    private static string AuthorityLabel(string authority) => authority switch
-    {
-        "redump"   => "Redump",
-        "no-intro" => "No-Intro",
-        "tosec"    => "TOSEC",
-        "custom"   => "Custom",
-        _ => authority.Length > 0
-                 ? char.ToUpperInvariant(authority[0]) + authority[1..]
-                 : authority,
-    };
 
     // ── Browse ───────────────────────────────────────────────────────────────
 

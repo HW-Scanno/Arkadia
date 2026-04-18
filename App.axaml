@@ -10,15 +10,9 @@
             <Setter Property="ContextMenu">
                 <Setter.Value>
                     <ContextMenu>
-                        <MenuItem Header="Cut"
-                                  Command="{x:Static local:TextBoxCommands.Cut}"
-                                  CommandParameter="{Binding $parent[ContextMenu].PlacementTarget}"/>
-                        <MenuItem Header="Copy"
-                                  Command="{x:Static local:TextBoxCommands.Copy}"
-                                  CommandParameter="{Binding $parent[ContextMenu].PlacementTarget}"/>
-                        <MenuItem Header="Paste"
-                                  Command="{x:Static local:TextBoxCommands.Paste}"
-                                  CommandParameter="{Binding $parent[ContextMenu].PlacementTarget}"/>
+                        <MenuItem Header="Cut"   Command="{x:Static local:TextBoxCommands.Cut}"/>
+                        <MenuItem Header="Copy"  Command="{x:Static local:TextBoxCommands.Copy}"/>
+                        <MenuItem Header="Paste" Command="{x:Static local:TextBoxCommands.Paste}"/>
                     </ContextMenu>
                 </Setter.Value>
             </Setter>

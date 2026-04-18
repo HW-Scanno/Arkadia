@@ -69,7 +69,7 @@
 
             <StackPanel Spacing="4">
                 <TextBlock Classes="field-label" Text="LABEL *"/>
-                <TextBox x:Name="LabelInput" TextChanged="OnFieldChanged"/>
+                <TextBox x:Name="LabelInput" TextChanged="OnLabelChanged"/>
             </StackPanel>
 
             <StackPanel Spacing="4">
@@ -83,12 +83,19 @@
                 <TextBlock Classes="field-label" Text="DAT LINE *"/>
                 <ComboBox x:Name="DatLineCombo"
                           HorizontalAlignment="Stretch"
-                          SelectionChanged="OnFieldChanged"/>
+                          SelectionChanged="OnDatLineChanged"/>
             </StackPanel>
 
             <StackPanel Spacing="4">
                 <TextBlock Classes="field-label" Text="PLANNED SIZE (GB) *"/>
-                <TextBox x:Name="PlannedSizeInput" TextChanged="OnFieldChanged"/>
+                <Grid ColumnDefinitions="*,8,Auto">
+                    <TextBox Grid.Column="0" x:Name="PlannedSizeInput" TextChanged="OnFieldChanged"/>
+                    <Button Grid.Column="2"
+                            Classes="secondary"
+                            Content="Suggest Size"
+                            Padding="12,7"
+                            Click="OnSuggestSize"/>
+                </Grid>
             </StackPanel>
 
             <TextBlock x:Name="ErrorText"

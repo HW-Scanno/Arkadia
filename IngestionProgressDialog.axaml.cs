@@ -31,10 +31,9 @@ public partial class IngestionProgressDialog : Window
 
         OpProgress.IsIndeterminate = p.IsIndeterminate;
         OpProgress.Maximum         = p.Total > 0 ? p.Total : 100;
-        OpProgress.Value           = p.Processed;
-        CountProcessed.Text        = p.Processed.ToString("N0");
-        CountAccepted.Text         = p.Accepted.ToString("N0");
-        CountRejected.Text         = p.Rejected.ToString("N0");
+        if (p.Processed is { } proc) { OpProgress.Value = proc; CountProcessed.Text = proc.ToString("N0"); }
+        if (p.Accepted  is { } acc)  CountAccepted.Text  = acc.ToString("N0");
+        if (p.Rejected  is { } rej)  CountRejected.Text  = rej.ToString("N0");
 
         if (p.NewOperation is { } op)
             AppendOperation(op);

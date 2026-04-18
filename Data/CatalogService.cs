@@ -38,7 +38,8 @@ public sealed class CatalogService
             CREATE TABLE IF NOT EXISTS hardware_types (
                 id         TEXT PRIMARY KEY,
                 name       TEXT NOT NULL,
-                sort_order INTEGER NOT NULL
+                sort_order INTEGER NOT NULL,
+                is_seeded  INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS platforms (
@@ -65,16 +66,18 @@ public sealed class CatalogService
             );
 
             CREATE TABLE IF NOT EXISTS dat_lines (
-                id                   TEXT PRIMARY KEY,
-                platform_id          TEXT NOT NULL,
-                name                 TEXT NOT NULL,
-                authority            TEXT NOT NULL,
-                dat_category         TEXT NOT NULL DEFAULT '',
-                version              TEXT,
-                storage_strategy_id  TEXT,
-                data_store_path      TEXT NOT NULL DEFAULT '',
-                release_count        INTEGER NOT NULL DEFAULT 0,
-                imported_at_utc      TEXT NOT NULL,
+                id                       TEXT PRIMARY KEY,
+                platform_id              TEXT NOT NULL,
+                name                     TEXT NOT NULL,
+                authority                TEXT NOT NULL,
+                dat_category             TEXT NOT NULL DEFAULT '',
+                version                  TEXT,
+                storage_strategy_id      TEXT,
+                data_store_path          TEXT NOT NULL DEFAULT '',
+                release_count            INTEGER NOT NULL DEFAULT 0,
+                imported_at_utc          TEXT NOT NULL,
+                transform_strategy_type  TEXT NOT NULL DEFAULT 'none',
+                folder_transform_id      TEXT,
                 FOREIGN KEY(platform_id) REFERENCES platforms(id) ON DELETE CASCADE
             );
 
@@ -89,6 +92,7 @@ public sealed class CatalogService
                 brand                    TEXT,
                 model                    TEXT,
                 serial                   TEXT,
+                family                   TEXT NOT NULL DEFAULT 'core',
                 created_at               TEXT NOT NULL,
                 updated_at               TEXT NOT NULL
             );
@@ -99,6 +103,7 @@ public sealed class CatalogService
                 platform_id         TEXT NOT NULL,
                 dat_line_id         TEXT NOT NULL,
                 status              TEXT NOT NULL,
+                health              TEXT NOT NULL DEFAULT 'ok',
                 planned_size_bytes  INTEGER NOT NULL,
                 actual_size_bytes   INTEGER NOT NULL,
                 created_at          TEXT NOT NULL,
@@ -136,6 +141,12 @@ public sealed class CatalogService
             CREATE INDEX IF NOT EXISTS idx_volume_artifacts_volume  ON volume_artifacts(volume_id);
             CREATE INDEX IF NOT EXISTS idx_volume_artifacts_datline ON volume_artifacts(dat_line_id);
 
+            CREATE TABLE IF NOT EXISTS authorities (
+                id        TEXT PRIMARY KEY,
+                name      TEXT NOT NULL,
+                is_seeded INTEGER NOT NULL DEFAULT 0
+            );
+
             CREATE TABLE IF NOT EXISTS settings (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -144,7 +155,8 @@ public sealed class CatalogService
             CREATE TABLE IF NOT EXISTS tools (
                 tool_id          TEXT PRIMARY KEY,
                 folder_name      TEXT NOT NULL,
-                executable_name  TEXT NOT NULL
+                executable_name  TEXT NOT NULL,
+                is_bundled       INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS transforms (
@@ -153,44 +165,19 @@ public sealed class CatalogService
                 tool_id           TEXT,
                 command_template  TEXT NOT NULL DEFAULT '',
                 output_extension  TEXT NOT NULL DEFAULT '',
-                is_enabled        INTEGER NOT NULL DEFAULT 1
+                is_enabled        INTEGER NOT NULL DEFAULT 1,
+                transform_type    TEXT NOT NULL DEFAULT 'file_strategy'
             );
-            """;
-        cmd.ExecuteNonQuery();
 
-        // ── Migrations for existing databases ────────────────────────────────
-        // Rename hardware_type (free text) → hardware_type_id (FK to hardware_types)
-        RunMigration(conn, "ALTER TABLE platforms ADD COLUMN hardware_type_id TEXT");
-        // Migrate any existing free-text value: match by lowercase id
-        RunMigration(conn, """
-            UPDATE platforms
-            SET    hardware_type_id = LOWER(hardware_type)
-            WHERE  hardware_type IS NOT NULL
-              AND  hardware_type_id IS NULL
-            """);
-        RunMigration(conn, "ALTER TABLE platforms DROP COLUMN hardware_type");
-
-        // ── Migrations ────────────────────────────────────────────────────────
-        RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN storage_strategy_id TEXT");
-        RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN data_store_path TEXT NOT NULL DEFAULT ''");
-        RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN dat_category TEXT NOT NULL DEFAULT ''"  );
-        RunMigration(conn, "ALTER TABLE volume_artifacts ADD COLUMN content_identity_key TEXT NOT NULL DEFAULT ''"  );
-        RunMigration(conn, "ALTER TABLE volumes ADD COLUMN health TEXT NOT NULL DEFAULT 'ok'");
-        RunMigration(conn, "ALTER TABLE transforms ADD COLUMN transform_type TEXT NOT NULL DEFAULT 'file_strategy'");
-        RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN transform_strategy_type TEXT NOT NULL DEFAULT 'none'");
-        RunMigration(conn, "ALTER TABLE dat_lines ADD COLUMN folder_transform_id TEXT");
-        RunMigration(conn, """
             CREATE TABLE IF NOT EXISTS dat_line_extension_transforms (
                 dat_line_id    TEXT NOT NULL,
                 file_extension TEXT NOT NULL,
                 transform_id   TEXT,
                 is_discard     INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (dat_line_id, file_extension)
-            )
-            """);
-        RunMigration(conn, "ALTER TABLE disks ADD COLUMN family TEXT NOT NULL DEFAULT 'core'");
-        RunMigration(conn, "ALTER TABLE tools ADD COLUMN is_bundled INTEGER NOT NULL DEFAULT 0");
-        RunMigration(conn, "UPDATE tools SET is_bundled = 1 WHERE tool_id IN ('7zip', 'chdman')");
+            );
+            """;
+        cmd.ExecuteNonQuery();
 
         // ── Seed storage_strategies if empty ──────────────────────────────────
         using var stratCheck = conn.CreateCommand();
@@ -236,19 +223,11 @@ public sealed class CatalogService
                     ('chd_cd_compression',   'CHD CD Compression',      'chdman', 'createcd -i "{input}" -o "{output}"',      '.chd', 1, 'file_strategy'),
                     ('chd_dvd_compression',  'CHD DVD Compression',     'chdman', 'createdvd -i "{input}" -o "{output}"',     '.chd', 1, 'file_strategy'),
                     ('chd_gd_compression',   'CHD GD Compression',      'chdman', 'createcd -i "{input}" -o "{output}"',      '.chd', 1, 'file_strategy'),
-                    ('zip_compression',      'ZIP Compression',         '7zip',   'a -tzip "{output}" "{input}"',             '.zip', 1, 'folder_strategy'),
+                    ('zip_compression',      'ZIP Compression (Folder)', '7zip',   'a -tzip "{output}" "{input}"',             '.zip', 1, 'folder_strategy'),
                     ('zip_file_compression', 'ZIP Compression (File)',  '7zip',   'a -tzip "{output}" "{input}"',             '.zip', 1, 'file_strategy');
                 """;
             txSeed.ExecuteNonQuery();
         }
-
-        // ── Backfill transforms added after initial seeding ───────────────────
-        using var backfill = conn.CreateCommand();
-        backfill.CommandText = """
-            INSERT OR IGNORE INTO transforms(transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type) VALUES
-                ('zip_file_compression', 'ZIP Compression (File)', '7zip', 'a -tzip "{output}" "{input}"', '.zip', 1, 'file_strategy');
-            """;
-        backfill.ExecuteNonQuery();
 
         // ── Seed default settings if missing ─────────────────────────────────
         using var settingSeed = conn.CreateCommand();
@@ -278,22 +257,26 @@ public sealed class CatalogService
         {
             using var seed = conn.CreateCommand();
             seed.CommandText = """
-                INSERT INTO hardware_types(id, name, sort_order) VALUES
-                    ('console',  'Console',  10),
-                    ('handheld', 'Handheld', 20),
-                    ('computer', 'Computer', 30),
-                    ('arcade',   'Arcade',   40),
-                    ('other',    'Other',    99);
+                INSERT INTO hardware_types(id, name, sort_order, is_seeded) VALUES
+                    ('console',  'Console',  10, 1),
+                    ('handheld', 'Handheld', 20, 1),
+                    ('computer', 'Computer', 30, 1),
+                    ('arcade',   'Arcade',   40, 1),
+                    ('other',    'Other',    99, 1);
                 """;
             seed.ExecuteNonQuery();
         }
-    }
 
-    private static void RunMigration(SqliteConnection conn, string sql)
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        try { cmd.ExecuteNonQuery(); } catch { /* already applied — safe to ignore */ }
+        // ── Seed authorities (INSERT OR IGNORE — safe to re-run) ─────────────
+        using var authSeed = conn.CreateCommand();
+        authSeed.CommandText = """
+            INSERT OR IGNORE INTO authorities(id, name, is_seeded) VALUES
+                ('redump',  'ReDump',   1),
+                ('nointro', 'No-Intro', 1),
+                ('tosec',   'TOSEC',    1),
+                ('custom',  'Custom',   1);
+            """;
+        authSeed.ExecuteNonQuery();
     }
 
     // ── Platforms ────────────────────────────────────────────────────────────
@@ -420,7 +403,7 @@ public sealed class CatalogService
         var list = new List<HardwareTypeRecord>();
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, name, sort_order FROM hardware_types ORDER BY sort_order, name";
+        cmd.CommandText = "SELECT id, name, sort_order, is_seeded FROM hardware_types ORDER BY sort_order, name";
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
             list.Add(new HardwareTypeRecord
@@ -428,8 +411,43 @@ public sealed class CatalogService
                 Id        = reader.GetString(0),
                 Name      = reader.GetString(1),
                 SortOrder = reader.GetInt32(2),
+                IsSeeded  = reader.GetInt32(3) != 0,
             });
         return list;
+    }
+
+    public void SaveHardwareType(HardwareTypeRecord type)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO hardware_types(id, name, sort_order, is_seeded)
+            VALUES($id, $name, $sort, $seeded)
+            ON CONFLICT(id) DO UPDATE SET name = excluded.name
+            """;
+        cmd.Parameters.AddWithValue("$id",     type.Id);
+        cmd.Parameters.AddWithValue("$name",   type.Name);
+        cmd.Parameters.AddWithValue("$sort",   type.SortOrder);
+        cmd.Parameters.AddWithValue("$seeded", type.IsSeeded ? 1 : 0);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void DeleteHardwareType(string id)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM hardware_types WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.ExecuteNonQuery();
+    }
+
+    public bool HardwareTypeHasDependencies(string id)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM platforms WHERE hardware_type_id = $id LIMIT 1";
+        cmd.Parameters.AddWithValue("$id", id);
+        return cmd.ExecuteScalar() is not null;
     }
 
     public List<StorageStrategyRecord> LoadStorageStrategies()
@@ -448,6 +466,58 @@ public sealed class CatalogService
                 SortOrder   = reader.GetInt32(3),
             });
         return list;
+    }
+
+    // ── Authorities ───────────────────────────────────────────────────────────
+
+    public List<AuthorityRecord> LoadAuthorities()
+    {
+        var list = new List<AuthorityRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, name, is_seeded FROM authorities ORDER BY name";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new AuthorityRecord
+            {
+                Id       = r.GetString(0),
+                Name     = r.GetString(1),
+                IsSeeded = r.GetInt32(2) != 0,
+            });
+        return list;
+    }
+
+    public void SaveAuthority(AuthorityRecord authority)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO authorities(id, name, is_seeded)
+            VALUES($id, $name, $seeded)
+            ON CONFLICT(id) DO UPDATE SET name = excluded.name
+            """;
+        cmd.Parameters.AddWithValue("$id",     authority.Id);
+        cmd.Parameters.AddWithValue("$name",   authority.Name);
+        cmd.Parameters.AddWithValue("$seeded", authority.IsSeeded ? 1 : 0);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void DeleteAuthority(string id)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM authorities WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.ExecuteNonQuery();
+    }
+
+    public bool AuthorityHasDependencies(string id)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM dat_lines WHERE authority = $id LIMIT 1";
+        cmd.Parameters.AddWithValue("$id", id);
+        return cmd.ExecuteScalar() is not null;
     }
 
     // ── Tools ─────────────────────────────────────────────────────────────────

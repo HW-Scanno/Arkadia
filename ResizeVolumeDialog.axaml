@@ -36,15 +36,23 @@
             <StackPanel Spacing="6">
                 <TextBlock Text="New planned capacity (GB):"
                            FontSize="12" Foreground="#888899"/>
-                <TextBox x:Name="SizeInput"
-                         FontSize="13"
-                         Background="#1A1A24"
-                         Foreground="#F0F0F0"
-                         BorderBrush="#2A2A44"
-                         BorderThickness="1"
-                         Padding="8,6"
-                         CornerRadius="4"
-                         TextChanged="OnSizeChanged"/>
+                <Grid ColumnDefinitions="*,8,Auto">
+                    <TextBox Grid.Column="0"
+                             x:Name="SizeInput"
+                             FontSize="13"
+                             Background="#1A1A24"
+                             Foreground="#F0F0F0"
+                             BorderBrush="#2A2A44"
+                             BorderThickness="1"
+                             Padding="8,6"
+                             CornerRadius="4"
+                             TextChanged="OnSizeChanged"/>
+                    <Button Grid.Column="2"
+                            Classes="secondary"
+                            Content="Suggest Size"
+                            Padding="12,6"
+                            Click="OnSuggestSize"/>
+                </Grid>
                 <TextBlock x:Name="ErrorText"
                            FontSize="11" Foreground="#EF5350"
                            IsVisible="False"/>

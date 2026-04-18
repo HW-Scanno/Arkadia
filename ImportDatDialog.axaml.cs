@@ -14,15 +14,17 @@ public partial class ImportDatDialog : Window
     private string?              _filePath;
     private DatParser.Result?    _parseResult;
     private readonly HashSet<string> _existingDatLineIds;
+    private readonly CatalogService  _catalog;
+    private readonly string          _dataDir;
 
     public string? SelectedFilePath   { get; private set; }
     public string? PlatformId         { get; private set; }
     public string? Authority          { get; private set; }
+    public AuthorityRecord? SelectedAuthority { get; private set; }
     public string? DatCategory        { get; private set; }
     public string? ParsedDate         { get; private set; }
     public string? Version            { get; private set; }
     public string? DatLineId          { get; private set; }
-    public string? StorageStrategyId  { get; private set; }
     public int     ReleaseCount       { get; private set; }
 
     // Parsed games, passed back to MainWindow for persistence.
@@ -30,19 +32,21 @@ public partial class ImportDatDialog : Window
         _parseResult?.Games ?? [];
 
     // Parameterless ctor required by Avalonia XAML compiler
-    public ImportDatDialog() : this([], [], []) { }
+    public ImportDatDialog() : this([], [], null!, string.Empty) { }
 
     public ImportDatDialog(
-        IReadOnlyList<PlatformRecord>         platforms,
-        IReadOnlyList<StorageStrategyRecord>  storageStrategies,
-        IReadOnlyList<DatLineRecord>          existingDatLines)
+        IReadOnlyList<PlatformRecord>  platforms,
+        IReadOnlyList<DatLineRecord>   existingDatLines,
+        CatalogService                 catalog,
+        string                         dataDir)
     {
         InitializeComponent();
 
         _existingDatLineIds = existingDatLines.Select(d => d.Id).ToHashSet();
+        _catalog = catalog;
+        _dataDir = dataDir;
 
-        AuthorityInput.ItemsSource   = new[] { "redump", "no-intro", "tosec", "custom" };
-        AuthorityInput.SelectedIndex = 0;
+        RefreshAuthorityList(null);
 
         var platformItems = new List<PlatformRecord>(platforms.Count + 1)
         {
@@ -51,9 +55,6 @@ public partial class ImportDatDialog : Window
         platformItems.AddRange(platforms);
         PlatformInput.ItemsSource   = platformItems;
         PlatformInput.SelectedIndex = 0;
-
-        StorageStrategyInput.ItemsSource   = storageStrategies;
-        StorageStrategyInput.SelectedIndex = storageStrategies.Count > 0 ? 0 : -1;
 
         CategoryInput.ItemsSource = new[] { "Media", "Firmware", "BIOS", "eShop", "Other" };
 
@@ -128,7 +129,7 @@ public partial class ImportDatDialog : Window
     private void UpdateDatLineId()
     {
         var platformId = (PlatformInput.SelectedItem as PlatformRecord)?.Id ?? "";
-        var authority  = AuthorityInput.SelectedItem as string ?? "";
+        var authority  = (AuthorityInput.SelectedItem as AuthorityRecord)?.Id ?? "";
         var category   = CategoryInput.Text?.Trim() ?? "";
         var slug       = CategorySlug(category);
 
@@ -161,16 +162,37 @@ public partial class ImportDatDialog : Window
         ValidateForm();
     }
 
+    // ── Authority list refresh ────────────────────────────────────────────────
+
+    private void RefreshAuthorityList(string? preserveId)
+    {
+        var authorities = _catalog?.LoadAuthorities() ?? [];
+        AuthorityInput.ItemsSource = authorities;
+        var sel = preserveId is not null
+            ? authorities.FirstOrDefault(a => a.Id == preserveId)
+            : authorities.FirstOrDefault();
+        AuthorityInput.SelectedItem = sel;
+    }
+
+    private async void OnManageAuthorities(object? sender, RoutedEventArgs e)
+    {
+        var prevId = (AuthorityInput.SelectedItem as AuthorityRecord)?.Id;
+        var dialog = new AuthorityManagerDialog(_catalog, _dataDir);
+        await dialog.ShowDialog<bool>(this);
+        RefreshAuthorityList(prevId);
+        UpdateDatLineId();
+        ValidateForm();
+    }
+
     // ── Validation ───────────────────────────────────────────────────────────
 
     private void ValidateForm()
     {
         var hasFile     = _filePath is not null;
         var hasPlatform = (PlatformInput.SelectedItem as PlatformRecord)?.Id.Length > 0;
-        var hasAuth     = (AuthorityInput.SelectedItem as string)?.Length > 0;
+        var hasAuth     = (AuthorityInput.SelectedItem as AuthorityRecord)?.Id.Length > 0;
         var hasCategory = CategorySlug(CategoryInput.Text?.Trim() ?? "").Length > 0;
         var hasDate     = ParsedDateInput.Text?.Trim().Length > 0;
-        var hasStrategy = StorageStrategyInput.SelectedItem is StorageStrategyRecord s && s.Id.Length > 0;
         var parseOk     = _parseResult?.Success == true;
 
         var datLineId   = DatLineIdInput.Text?.Trim() ?? "";
@@ -178,7 +200,7 @@ public partial class ImportDatDialog : Window
 
         DatLineConflictText.IsVisible = isDuplicate;
         ImportButton.IsEnabled = hasFile && hasPlatform && hasAuth && hasCategory
-                              && hasDate && hasStrategy && parseOk && !isDuplicate;
+                              && hasDate && parseOk && !isDuplicate;
     }
 
     // ── Confirm / Cancel ─────────────────────────────────────────────────────
@@ -186,14 +208,14 @@ public partial class ImportDatDialog : Window
     private void OnImport(object? sender, RoutedEventArgs e)
     {
         SelectedFilePath  = _filePath;
+        SelectedAuthority = AuthorityInput.SelectedItem as AuthorityRecord;
         PlatformId        = (PlatformInput.SelectedItem as PlatformRecord)?.Id ?? "";
-        Authority         = AuthorityInput.SelectedItem as string ?? "";
+        Authority         = SelectedAuthority?.Id ?? "";
         DatCategory       = CategoryInput.Text?.Trim() ?? "";
         ParsedDate        = ParsedDateInput.Text?.Trim() ?? "";
         Version           = VersionInput.Text?.Trim() ?? "";
-        DatLineId         = DatLineIdInput.Text?.Trim() ?? "";
-        StorageStrategyId = (StorageStrategyInput.SelectedItem as StorageStrategyRecord)?.Id ?? "";
-        ReleaseCount      = _parseResult?.Games.Count ?? 0;
+        DatLineId    = DatLineIdInput.Text?.Trim() ?? "";
+        ReleaseCount = _parseResult?.Games.Count ?? 0;
         Close(true);
     }
 

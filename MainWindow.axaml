@@ -416,6 +416,8 @@
                             <StackPanel Spacing="4">
                                 <TextBlock Classes="widget-title" Text="RELEASES"/>
                                 <TextBlock x:Name="DashReleasesCount" Classes="card-value" Text="—"/>
+                                <TextBlock x:Name="DashCoverage"
+                                           FontSize="12" Foreground="#888899" Text="—"/>
                             </StackPanel>
                         </Border>
 
@@ -517,6 +519,34 @@
                         </Border>
 
                     </UniformGrid>
+
+                    <!-- ════ PIPELINE ════ -->
+                    <TextBlock Text="PIPELINE"
+                               FontSize="10" FontWeight="SemiBold" LetterSpacing="1.5"
+                               Foreground="#555566" Margin="0,8,0,0"/>
+
+                    <Border Classes="card">
+                        <StackPanel Spacing="0">
+                            <TextBlock Classes="widget-title" Text="INGESTION PIPELINE"/>
+                            <Border Classes="card-divider"/>
+                            <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                <TextBlock Grid.Column="0" Classes="card-key" Text="Incoming"/>
+                                <TextBlock Grid.Column="1" x:Name="DashPipelineIncoming" Classes="card-val" Text="—"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                <TextBlock Grid.Column="0" Classes="card-key" Text="Staging"/>
+                                <TextBlock Grid.Column="1" x:Name="DashPipelineStaging" Classes="card-val" Text="—"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
+                                <TextBlock Grid.Column="0" Classes="card-key" Text="Source"/>
+                                <TextBlock Grid.Column="1" x:Name="DashPipelineSource" Classes="card-val" Text="—"/>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0" Classes="card-key" Text="Archive"/>
+                                <TextBlock Grid.Column="1" x:Name="DashPipelineArchive" Classes="card-val" Text="—"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
 
                     <!-- ════ LATEST LOG OPERATIONS ════ -->
                     <TextBlock Text="LATEST LOG OPERATIONS"

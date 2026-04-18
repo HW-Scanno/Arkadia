@@ -1,0 +1,264 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.AuthorityManagerDialog"
+        Title="Manage Authorities"
+        Width="560" Height="580"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+
+        <Style Selector="TextBox">
+            <Setter Property="Background"      Value="#0D0D13"/>
+            <Setter Property="Foreground"      Value="#E8E8F0"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="Padding"         Value="8,7"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="BorderBrush" Duration="0:0:0.13"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="TextBox:pointerover">
+            <Setter Property="BorderBrush" Value="#4C3020"/>
+        </Style>
+        <Style Selector="TextBox:focus-within">
+            <Setter Property="BorderBrush" Value="#E07040"/>
+        </Style>
+
+        <Style Selector="TextBox.id-display">
+            <Setter Property="IsReadOnly"   Value="True"/>
+            <Setter Property="FontFamily"   Value="Consolas,Courier New,monospace"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="Foreground"   Value="#E07040"/>
+            <Setter Property="Background"   Value="#0D0D13"/>
+            <Setter Property="BorderBrush"  Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"      Value="8,7"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Opacity"      Value="0.7"/>
+        </Style>
+
+        <Style Selector="Border.authority-row">
+            <Setter Property="Background"      Value="#1A1A24"/>
+            <Setter Property="BorderBrush"     Value="#1E1E2C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="Padding"         Value="12,9"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="Border.authority-row:pointerover">
+            <Setter Property="Background" Value="#22223A"/>
+            <Setter Property="BorderBrush" Value="#3A3A58"/>
+        </Style>
+        <Style Selector="Border.authority-row.selected">
+            <Setter Property="Background"  Value="#2A1A10"/>
+            <Setter Property="BorderBrush" Value="#E07040"/>
+        </Style>
+
+        <Style Selector="Border.editor-card">
+            <Setter Property="Background"      Value="#1A1A24"/>
+            <Setter Property="BorderBrush"     Value="#1E1E2C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="6"/>
+            <Setter Property="Padding"         Value="16,14"/>
+        </Style>
+
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- ── Header ── -->
+        <Border Grid.Row="0"
+                Padding="24,20,24,16"
+                BorderBrush="#181826" BorderThickness="0,0,0,1"
+                Background="#0F0F14">
+            <StackPanel Spacing="4">
+                <TextBlock Text="Manage Authorities"
+                           FontSize="15" FontWeight="SemiBold" Foreground="#F0F0F0"/>
+                <TextBlock Text="Add, rename, and remove authorities. Seeded entries cannot be deleted."
+                           FontSize="12" Foreground="#555566"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Body ── -->
+        <ScrollViewer Grid.Row="1"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+            <StackPanel Margin="24,18,24,18" Spacing="0">
+
+                <!-- Authority list -->
+                <TextBlock Text="AUTHORITIES"
+                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                           Foreground="#C8C8DC" Margin="0,0,0,8"/>
+
+                <StackPanel x:Name="AuthorityListPanel" Spacing="4" Margin="0,0,0,16"/>
+
+                <!-- Editor panel (hidden until row selected) -->
+                <Border x:Name="EditorPanel"
+                        Classes="editor-card"
+                        Margin="0,0,0,16"
+                        IsVisible="False">
+                    <StackPanel Spacing="12">
+
+                        <TextBlock Text="EDIT AUTHORITY"
+                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                                   Foreground="#888899"/>
+
+                        <!-- ID + Name row -->
+                        <Grid ColumnDefinitions="*,12,*">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="ID" FontSize="12" Foreground="#888899"/>
+                                <TextBox x:Name="EditorIdInput" Classes="id-display"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="Display Name" FontSize="12" Foreground="#888899"/>
+                                    <TextBlock Text="*" FontSize="12" Foreground="#E07040"/>
+                                </StackPanel>
+                                <TextBox x:Name="EditorNameInput"
+                                         Watermark="e.g. ReDump"
+                                         TextChanged="OnEditorNameChanged"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- Logo -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Authority Logo" FontSize="12" Foreground="#888899"/>
+                            <Grid ColumnDefinitions="260,12,*">
+                                <Border Grid.Column="0"
+                                        Background="#0D0D13"
+                                        BorderBrush="#2A2A3C" BorderThickness="1"
+                                        CornerRadius="4"
+                                        Width="260" Height="120">
+                                    <Image x:Name="EditorLogoImage"
+                                           Stretch="Uniform"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="2" Spacing="6" VerticalAlignment="Top">
+                                    <Button Content="Browse Logo…"
+                                            Background="#242433" Foreground="#E8E8F0"
+                                            BorderBrush="#2A2A3C" BorderThickness="1"
+                                            CornerRadius="4" Padding="12,7" FontSize="12"
+                                            HorizontalAlignment="Stretch"
+                                            Click="OnBrowseLogo"/>
+                                    <Button x:Name="RemoveLogoButton"
+                                            Content="Remove Logo"
+                                            Background="#242433" Foreground="#EF5350"
+                                            BorderBrush="#2A2A3C" BorderThickness="1"
+                                            CornerRadius="4" Padding="12,7" FontSize="12"
+                                            HorizontalAlignment="Stretch"
+                                            Click="OnRemoveLogo"/>
+                                    <TextBlock Text="PNG recommended · stored at data/authorityimages/{id}.png"
+                                               FontSize="10" Foreground="#444458" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- Save / Delete row -->
+                        <Grid ColumnDefinitions="*,8,Auto">
+                            <Button x:Name="EditorDeleteButton"
+                                    Grid.Column="0"
+                                    Content="Delete Authority"
+                                    Background="#2A1218" Foreground="#EF5350"
+                                    BorderBrush="#3A1C22" BorderThickness="1"
+                                    CornerRadius="5" Padding="14,8" FontSize="12"
+                                    HorizontalAlignment="Left"
+                                    Click="OnDeleteAuthority"/>
+                            <Button x:Name="EditorSaveButton"
+                                    Grid.Column="2"
+                                    Content="Save Changes"
+                                    Background="#E07040" Foreground="#FFFFFF"
+                                    CornerRadius="5" Padding="14,8" FontSize="12"
+                                    BorderThickness="0"
+                                    IsEnabled="False"
+                                    Click="OnSaveChanges"/>
+                        </Grid>
+
+                    </StackPanel>
+                </Border>
+
+                <!-- Add panel (hidden until Add New clicked) -->
+                <Border x:Name="AddPanel"
+                        Classes="editor-card"
+                        IsVisible="False">
+                    <StackPanel Spacing="12">
+
+                        <TextBlock Text="ADD AUTHORITY"
+                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                                   Foreground="#888899"/>
+
+                        <Grid ColumnDefinitions="*,12,*">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="ID" FontSize="12" Foreground="#888899"/>
+                                    <TextBlock Text="*" FontSize="12" Foreground="#E07040"/>
+                                </StackPanel>
+                                <TextBox x:Name="AddIdInput"
+                                         Watermark="e.g. myroms"
+                                         TextChanged="OnAddFieldChanged"/>
+                                <TextBlock x:Name="AddIdErrorText"
+                                           FontSize="11" Foreground="#EF5350"
+                                           IsVisible="False" TextWrapping="Wrap"/>
+                                <TextBlock Text="Lowercase letters and digits only. Cannot be changed later."
+                                           FontSize="10" Foreground="#444458" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Spacing="4">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <TextBlock Text="Display Name" FontSize="12" Foreground="#888899"/>
+                                    <TextBlock Text="*" FontSize="12" Foreground="#E07040"/>
+                                </StackPanel>
+                                <TextBox x:Name="AddNameInput"
+                                         Watermark="e.g. My Roms"
+                                         TextChanged="OnAddFieldChanged"/>
+                            </StackPanel>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                            <Button Content="Cancel"
+                                    Background="#242433" Foreground="#F0F0F0"
+                                    Padding="14,8" CornerRadius="5" BorderThickness="0"
+                                    Click="OnCancelAdd"/>
+                            <Button x:Name="AddAuthorityButton"
+                                    Content="Add Authority"
+                                    Background="#E07040" Foreground="#FFFFFF"
+                                    Padding="14,8" CornerRadius="5" BorderThickness="0"
+                                    IsEnabled="False"
+                                    Click="OnAddAuthority"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ── Footer ── -->
+        <Border Grid.Row="2"
+                Padding="24,12,24,14"
+                BorderBrush="#181826" BorderThickness="0,1,0,0"
+                Background="#0F0F14">
+            <Grid ColumnDefinitions="*,Auto">
+                <Button Grid.Column="0"
+                        Content="+ Add New Authority"
+                        Background="#242433" Foreground="#E8E8F0"
+                        BorderBrush="#2A2A3C" BorderThickness="1"
+                        CornerRadius="5" Padding="14,8" FontSize="12"
+                        HorizontalAlignment="Left"
+                        Click="OnShowAddPanel"/>
+                <Button Grid.Column="1"
+                        Content="Close"
+                        Background="#E07040" Foreground="#FFFFFF"
+                        Padding="16,8" CornerRadius="6" BorderThickness="0"
+                        Click="OnClose"/>
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

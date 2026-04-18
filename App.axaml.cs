@@ -7,6 +7,7 @@ using Avalonia;
 using Avalonia.Animation;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
+using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Styling;
@@ -21,6 +22,11 @@ public partial class App : Application
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
+
+        // Capture the last-focused TextBox before the ContextMenu steals focus,
+        // so Cut/Copy/Paste commands always target the correct TextBox instance.
+        InputElement.GotFocusEvent.AddClassHandler<TextBox>(
+            (tb, _) => TextBoxCommands.LastFocused = tb);
     }
 
     public override void OnFrameworkInitializationCompleted()

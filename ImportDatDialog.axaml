@@ -129,9 +129,19 @@
                 </Border>
 
                 <!-- ╔══ CONFIGURATION ══╗ -->
-                <TextBlock Text="CONFIGURATION"
-                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
-                           Foreground="#888899" Margin="0,0,0,8"/>
+                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
+                    <TextBlock Grid.Column="0"
+                               Text="CONFIGURATION"
+                               FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                               Foreground="#888899"
+                               VerticalAlignment="Center"/>
+                    <Button Grid.Column="1"
+                            Content="Manage Authorities"
+                            Background="Transparent" Foreground="#888899"
+                            BorderBrush="#2A2A3C" BorderThickness="1"
+                            CornerRadius="4" Padding="10,4" FontSize="10"
+                            Click="OnManageAuthorities"/>
+                </Grid>
 
                 <Border Classes="section-card" Margin="0,0,0,20">
                     <StackPanel Spacing="13">
@@ -150,7 +160,13 @@
                                           Background="#0D0D13"
                                           BorderBrush="#2A2A3C" BorderThickness="1"
                                           Padding="8,6"
-                                          SelectionChanged="OnConfigChanged"/>
+                                          SelectionChanged="OnConfigChanged">
+                                    <ComboBox.ItemTemplate>
+                                        <DataTemplate x:DataType="data:AuthorityRecord">
+                                            <TextBlock Text="{Binding Name}" FontSize="12"/>
+                                        </DataTemplate>
+                                    </ComboBox.ItemTemplate>
+                                </ComboBox>
                             </StackPanel>
 
                             <!-- Platform -->
@@ -175,27 +191,6 @@
                             </StackPanel>
 
                         </Grid>
-
-                        <!-- Storage Strategy -->
-                        <StackPanel Spacing="4">
-                            <StackPanel Orientation="Horizontal" Spacing="4">
-                                <TextBlock Text="Storage Strategy" FontSize="12" Foreground="#888899"/>
-                                <TextBlock Text="*"               FontSize="12" Foreground="#E07040"/>
-                            </StackPanel>
-                            <ComboBox x:Name="StorageStrategyInput"
-                                      HorizontalAlignment="Stretch"
-                                      FontSize="12"
-                                      Background="#0D0D13"
-                                      BorderBrush="#2A2A3C" BorderThickness="1"
-                                      Padding="8,6"
-                                      SelectionChanged="OnConfigChanged">
-                                <ComboBox.ItemTemplate>
-                                    <DataTemplate x:DataType="data:StorageStrategyRecord">
-                                        <TextBlock Text="{Binding Name}" FontSize="12"/>
-                                    </DataTemplate>
-                                </ComboBox.ItemTemplate>
-                            </ComboBox>
-                        </StackPanel>
 
                         <!-- DAT Category -->
                         <StackPanel Spacing="4">

@@ -167,7 +167,17 @@
 
                         <!-- Hardware Type -->
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Hardware Type" FontSize="12" Foreground="#888899"/>
+                            <Grid ColumnDefinitions="*,Auto">
+                                <TextBlock Grid.Column="0"
+                                           Text="Platform Type" FontSize="12" Foreground="#888899"
+                                           VerticalAlignment="Center"/>
+                                <Button Grid.Column="1"
+                                        Content="Manage"
+                                        Background="Transparent" Foreground="#888899"
+                                        BorderBrush="#2A2A3C" BorderThickness="1"
+                                        CornerRadius="4" Padding="8,3" FontSize="10"
+                                        Click="OnManagePlatformTypes"/>
+                            </Grid>
                             <ComboBox x:Name="HardwareTypeInput"
                                       HorizontalAlignment="Stretch"
                                       FontSize="12"

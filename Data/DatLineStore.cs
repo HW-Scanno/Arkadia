@@ -39,7 +39,8 @@ public sealed class DatLineStore
                 languages            TEXT,
                 format               TEXT,
                 size                 TEXT,
-                release_content_key  TEXT NOT NULL DEFAULT ''
+                release_content_key  TEXT NOT NULL DEFAULT '',
+                introduced_at_utc    TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_releases_name                ON releases(name);
@@ -128,94 +129,6 @@ public sealed class DatLineStore
             """;
         cmd.ExecuteNonQuery();
 
-        // ── Migrations for existing databases ─────────────────────────────────
-        // Rename content_key → release_content_key on existing releases tables.
-        RunMigration(conn, "ALTER TABLE releases RENAME COLUMN content_key TO release_content_key");
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_releases_release_content_key ON releases(release_content_key)");
-
-        // Drop legacy structural tables no longer used in the clean schema.
-        RunMigration(conn, "DROP TABLE IF EXISTS artifact_transforms");
-        RunMigration(conn, "DROP TABLE IF EXISTS release_artifacts");
-        RunMigration(conn, "DROP TABLE IF EXISTS artifacts");
-
-        // Add release_files on databases that predate it.
-        RunMigration(conn, """
-            CREATE TABLE IF NOT EXISTS release_files (
-                id          TEXT PRIMARY KEY,
-                release_id  TEXT NOT NULL,
-                rom_name    TEXT NOT NULL,
-                size        TEXT NOT NULL DEFAULT '',
-                crc         TEXT NOT NULL DEFAULT '',
-                md5         TEXT NOT NULL DEFAULT '',
-                sha1        TEXT NOT NULL DEFAULT ''
-            )
-            """);
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_files_release_id ON release_files(release_id)");
-
-        // Add content_identities / source_artifacts / derived_artifacts for databases that predate them.
-        RunMigration(conn, """
-            CREATE TABLE IF NOT EXISTS content_identities (
-                content_identity_key TEXT PRIMARY KEY,
-                dat_sha1             TEXT,
-                dat_md5              TEXT,
-                dat_crc32            TEXT,
-                created_at_utc       TEXT NOT NULL
-            )
-            """);
-        RunMigration(conn, """
-            CREATE TABLE IF NOT EXISTS source_artifacts (
-                id                   TEXT PRIMARY KEY,
-                content_identity_key TEXT NOT NULL,
-                source_size_bytes    INTEGER NOT NULL,
-                hashed_source_sha1   TEXT NOT NULL DEFAULT '',
-                hashed_source_md5    TEXT,
-                hashed_source_crc32  TEXT,
-                verified_at_utc      TEXT NOT NULL,
-                UNIQUE(content_identity_key, hashed_source_sha1, source_size_bytes)
-            )
-            """);
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_source_artifacts_cik ON source_artifacts(content_identity_key)");
-        RunMigration(conn, """
-            CREATE TABLE IF NOT EXISTS derived_artifacts (
-                id                   TEXT PRIMARY KEY,
-                storage_strategy_id  TEXT NOT NULL,
-                source_artifact_id   TEXT NOT NULL DEFAULT '',
-                content_identity_key TEXT NOT NULL,
-                file_name            TEXT NOT NULL,
-                relative_path        TEXT NOT NULL,
-                derived_size_bytes   INTEGER NOT NULL,
-                hashed_derived_sha1  TEXT NOT NULL DEFAULT '',
-                hashed_derived_md5   TEXT,
-                hashed_derived_crc32 TEXT,
-                status               TEXT NOT NULL,
-                created_at_utc       TEXT NOT NULL,
-                verified_at_utc      TEXT
-            )
-            """);
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_derived_artifacts_content_key ON derived_artifacts(content_identity_key)");
-
-        // Add release_content_links on databases that predate it.
-        RunMigration(conn, """
-            CREATE TABLE IF NOT EXISTS release_content_links (
-                id                   TEXT PRIMARY KEY,
-                release_id           TEXT NOT NULL,
-                content_identity_key TEXT NOT NULL,
-                created_at_utc       TEXT NOT NULL,
-                UNIQUE(release_id, content_identity_key)
-            )
-            """);
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_content_links_release_id ON release_content_links(release_id)");
-        RunMigration(conn, "CREATE INDEX IF NOT EXISTS idx_release_content_links_cik        ON release_content_links(content_identity_key)");
-
-        // Add introduced_at_utc marker column for newly-introduced-by-DAT-update tracking.
-        RunMigration(conn, "ALTER TABLE releases ADD COLUMN introduced_at_utc TEXT");
-    }
-
-    private static void RunMigration(SqliteConnection conn, string sql)
-    {
-        using var cmd = conn.CreateCommand();
-        cmd.CommandText = sql;
-        try { cmd.ExecuteNonQuery(); } catch { /* already applied */ }
     }
 
     /// <summary>

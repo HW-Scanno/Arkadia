@@ -84,6 +84,7 @@ public partial class MainWindow : Window
     // id → display name, rebuilt on every RefreshSystems
     private Dictionary<string, string> _hardwareTypeMap   = [];
     private Dictionary<string, string> _strategyNameMap   = [];
+    private Dictionary<string, string> _authorityNameMap  = [];
 
     private string?        _systemsThemeDir;
     private SystemPlatform? _selectedPlatform;   // kept for OnEditPlatform compat
@@ -136,10 +137,12 @@ public partial class MainWindow : Window
 
     private void RefreshSystems()
     {
-        _hardwareTypeMap = _catalog.LoadHardwareTypes()
+        _hardwareTypeMap  = _catalog.LoadHardwareTypes()
             .ToDictionary(h => h.Id, h => h.Name);
-        _strategyNameMap = _catalog.LoadStorageStrategies()
+        _strategyNameMap  = _catalog.LoadStorageStrategies()
             .ToDictionary(s => s.Id, s => s.Name);
+        _authorityNameMap = _catalog.LoadAuthorities()
+            .ToDictionary(a => a.Id, a => a.Name);
 
         var allDatLines = _catalog.LoadDatLines();
 
@@ -483,10 +486,15 @@ public partial class MainWindow : Window
     private Bitmap? LoadDatAuthorityImage(string authority)
     {
         if (authority.Length == 0) return null;
-        var key  = authority.ToLower().Replace(" ", "").Replace("-", "");
-        var path = Path.Combine(_dataDir, "datimages", $"{key}.png");
+        var path = Path.Combine(_dataDir, "authorityimages", $"{authority}.png");
         if (!File.Exists(path)) return null;
         try { return new Bitmap(path); } catch { return null; }
+    }
+
+    private string GetAuthorityName(string id)
+    {
+        if (id.Length == 0) return id;
+        return _authorityNameMap.TryGetValue(id, out var name) ? name : id;
     }
 
     private Bitmap? LoadSystemImage(string platformId, string role, (int Width, int Height) size)
@@ -715,6 +723,21 @@ public partial class MainWindow : Window
             : "—";
 
         // ── Header ───────────────────────────────────────────────────────────
+
+        // Platform logo
+        if (d.CatalogPlatformId is not null)
+        {
+            var platformImg = LoadSystemImageW(d.CatalogPlatformId, "logo", Systems.PlatformImageSizes.DetailLogoWidth);
+            if (platformImg is not null)
+                panel.Children.Add(new Image
+                {
+                    Source              = platformImg,
+                    MaxWidth            = Systems.PlatformImageSizes.DetailLogoWidth,
+                    Stretch             = Avalonia.Media.Stretch.Uniform,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                    Margin              = new Avalonia.Thickness(0, 0, 0, 12),
+                });
+        }
 
         // Authority logo
         var authorityImg = LoadDatAuthorityImage(d.Authority);
@@ -2393,10 +2416,11 @@ public partial class MainWindow : Window
 
     private async void OnCreateVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        var platforms = _catalog.LoadPlatforms();
-        var datLines  = _catalog.LoadDatLines();
-        var dialog    = new CreateVolumeDialog(platforms, datLines);
-        dialog.FinishInit(platforms);
+        var platforms      = _catalog.LoadPlatforms();
+        var datLines       = _catalog.LoadDatLines();
+        var existingLabels = _catalog.GetVolumes().Select(v => v.Label).ToList();
+        var dialog = new CreateVolumeDialog(platforms, datLines, existingLabels, _catalog, _dataDir);
+        dialog.FinishInit();
         var ok = await dialog.ShowDialog<bool>(this);
         if (!ok || dialog.Result is null) return;
 
@@ -4173,7 +4197,8 @@ public partial class MainWindow : Window
         if (entry is null) return;
         if (entry.Status == "lost") return;
 
-        var dlg       = new ResizeVolumeDialog(entry.Label, entry.PlannedSizeBytes);
+        var dlg       = new ResizeVolumeDialog(entry.Label, entry.PlannedSizeBytes,
+                            entry.ActualSizeBytes, entry.RawDatLineId, entry.DbPath, _catalog);
         var confirmed = await dlg.ShowDialog<bool>(this);
         if (!confirmed) return;
 
@@ -6127,38 +6152,44 @@ public partial class MainWindow : Window
     private void InitDashboard()
     {
         // ── Archive Overview ─────────────────────────────────────────────────
-        var platforms = _catalog.LoadPlatforms();
-        var datLines  = _catalog.LoadDatLines();
-        var volumes   = _catalog.GetVolumes();
-        var disks     = _catalog.GetDisks();
+        var platforms       = _catalog.LoadPlatforms();
+        var datLines        = _catalog.LoadDatLines();
+        var volumes         = _catalog.GetVolumes();
+        var disks           = _catalog.GetDisks();
+        var artifactsStored = _catalog.CountStoredArtifacts();
 
         DashPlatformsCount.Text = platforms.Count.ToString("N0");
         DashDatLinesCount.Text  = datLines.Count.ToString("N0");
         DashReleasesCount.Text  = datLines.Sum(dl => dl.ReleaseCount).ToString("N0");
-        DashArtifactsCount.Text = _catalog.CountStoredArtifacts().ToString("N0");
+        DashArtifactsCount.Text = artifactsStored.ToString("N0");
         DashVolumesCount.Text   = volumes.Count.ToString("N0");
         DashDisksCount.Text     = disks.Count.ToString("N0");
 
         // ── Integrity & Attention ────────────────────────────────────────────
-        DashVolOk.Text   = volumes.Count(v => v.Status != "lost" && v.Health == "ok").ToString("N0");
-        DashVolCrit.Text = volumes.Count(v => v.Health == "crit").ToString("N0");
-        DashVolLost.Text = volumes.Count(v => v.Status == "lost").ToString("N0");
-        DashDiskLost.Text = disks.Count(d => d.Status == "lost").ToString("N0");
+        DashVolOk.Text = volumes.Count(v => v.Status != "lost" && v.Health == "ok").ToString("N0");
+        SetAccentVal(DashVolCrit,  volumes.Count(v => v.Health == "crit"));
+        SetAccentVal(DashVolLost,  volumes.Count(v => v.Status == "lost"));
+        SetAccentVal(DashDiskLost, disks.Count(d => d.Status == "lost"));
 
-        int relMissing = 0, relPending = 0, relOutdated = 0;
+        int relMissing = 0, relPending = 0, relOutdated = 0, relPresent = 0;
         foreach (var dl in datLines)
         {
             if (dl.DataStorePath.Length == 0) continue;
             var dbPath = Path.Combine(_dataDir, dl.DataStorePath);
             if (!File.Exists(dbPath)) continue;
-            var (missing, pending, outdated, _, _) = new DatLineStore(dbPath).GetAllStatusCounts();
+            var (missing, pending, outdated, present, _) = new DatLineStore(dbPath).GetAllStatusCounts();
             relMissing  += missing;
             relPending  += pending;
             relOutdated += outdated;
+            relPresent  += present;
         }
-        DashRelMissing.Text  = relMissing.ToString("N0");
+        SetAccentVal(DashRelMissing, relMissing);
         DashRelPending.Text  = relPending.ToString("N0");
         DashRelOutdated.Text = relOutdated.ToString("N0");
+
+        var totalReleases = datLines.Sum(dl => dl.ReleaseCount);
+        var coveragePct   = totalReleases > 0 ? relPresent * 100 / totalReleases : 0;
+        DashCoverage.Text = $"Coverage: {coveragePct}%";
 
         // ── Tools ────────────────────────────────────────────────────────────
         var tools       = _catalog.LoadTools();
@@ -6166,16 +6197,33 @@ public partial class MainWindow : Window
         int toolBundled = 0, toolPresent = 0, toolMissing = 0;
         foreach (var tool in tools)
         {
-            if (tool.IsBundled) { toolBundled++; }
+            if (tool.IsBundled) toolBundled++;
             var exePath = Path.Combine(appRoot, "tools", tool.FolderName, tool.ExecutableName);
             if (File.Exists(exePath)) toolPresent++;
             else                      toolMissing++;
         }
         DashToolsBuiltIn.Text = toolBundled.ToString("N0");
         DashToolsPresent.Text = toolPresent.ToString("N0");
-        DashToolsMissing.Text = toolMissing.ToString("N0");
+        SetAccentVal(DashToolsMissing, toolMissing);
+
+        // ── Pipeline ─────────────────────────────────────────────────────────
+        static int CountFiles(string dir) =>
+            Directory.Exists(dir) ? Directory.GetFiles(dir, "*", SearchOption.AllDirectories).Length : 0;
+
+        DashPipelineIncoming.Text = CountFiles(Path.Combine(appRoot, "incoming-roms")).ToString("N0");
+        DashPipelineStaging.Text  = CountFiles(Path.Combine(appRoot, "staging")).ToString("N0");
+        DashPipelineSource.Text   = CountFiles(Path.Combine(appRoot, "source")).ToString("N0");
+        DashPipelineArchive.Text  = artifactsStored.ToString("N0");
 
         LoadLatestLogs();
+    }
+
+    private static void SetAccentVal(TextBlock tb, int value)
+    {
+        tb.Text       = value.ToString("N0");
+        tb.Foreground = value > 0
+            ? new SolidColorBrush(Avalonia.Media.Color.Parse("#E07040"))
+            : new SolidColorBrush(Avalonia.Media.Color.Parse("#F0F0F0"));
     }
 
     private void OnDashboardRefresh(object? sender, RoutedEventArgs e) => InitDashboard();
@@ -7007,14 +7055,15 @@ public partial class MainWindow : Window
     {
         if (info.CatalogId is null || info.DataStorePath.Length == 0) return;
 
-        var platformName = _selectedPlatform?.Name ?? info.CatalogPlatformId ?? "";
-        var strategyName = info.StorageStrategy;
+        var platformName  = _selectedPlatform?.Name ?? info.CatalogPlatformId ?? "";
+        var strategyName  = info.StorageStrategy;
 
         var allDatLines = _catalog.LoadDatLines();
         var record      = allDatLines.FirstOrDefault(dl => dl.Id == info.CatalogId);
         if (record is null) return;
 
-        var updateDialog = new UpdateDatDialog(record, platformName, strategyName);
+        var authorityName = GetAuthorityName(record.Authority);
+        var updateDialog  = new UpdateDatDialog(record, platformName, authorityName, strategyName);
         var ok           = await updateDialog.ShowDialog<bool>(this);
         if (!ok) return;
 
@@ -7135,7 +7184,7 @@ public partial class MainWindow : Window
         var dialog = new DeleteDatLineDialog(
             platformName:  platformName,
             datLineName:   record.Name,
-            authority:     record.Authority,
+            authority:     GetAuthorityName(record.Authority),
             releaseCount:  record.ReleaseCount);
 
         var confirmed = await dialog.ShowDialog<bool>(this);
@@ -7819,13 +7868,14 @@ public partial class MainWindow : Window
                         ComputeSourceHashes(destPath);
 
                     // ── 6. Persist/upsert derived artifact ────────────────────
+                    var derivedSizeBytes = new FileInfo(destPath).Length;
                     store.IngestDerivedArtifact(
                         contentIdentityKey: ck,
                         sourceArtifactId:   srcArtifactId,
                         storageStrategyId:  effectiveStratId,
                         fileName:           destName,
                         relativePath:       relPath,
-                        derivedSizeBytes:   new FileInfo(destPath).Length,
+                        derivedSizeBytes:   derivedSizeBytes,
                         hashedDerivedSha1:  hashedDerivedSha1,
                         hashedDerivedMd5:   hashedDerivedMd5,
                         hashedDerivedCrc32: hashedDerivedCrc32);
@@ -7838,6 +7888,15 @@ public partial class MainWindow : Window
                         ContentIdentityKey = ck,
                         CreatedAtUtc       = now,
                     });
+
+                    // ── 8. Remove source file — derived artifact is valid ──────
+                    // Only delete when the derived artifact was actually produced
+                    // with non-zero size; leave the source intact on any failure path.
+                    if (derivedSizeBytes > 0)
+                    {
+                        try { File.Delete(sourceFilePath); }
+                        catch { /* best-effort; leave file if OS denies deletion */ }
+                    }
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
@@ -8212,7 +8271,7 @@ public partial class MainWindow : Window
     {
         var existingIds   = _catalog.LoadPlatforms().Select(p => p.Id);
         var hardwareTypes = _catalog.LoadHardwareTypes();
-        var dialog        = new CreatePlatformDialog(existingIds, null, Path.Combine(_dataDir, "systemimages"), hardwareTypes);
+        var dialog        = new CreatePlatformDialog(existingIds, null, Path.Combine(_dataDir, "systemimages"), hardwareTypes, _catalog);
         var confirmed   = await dialog.ShowDialog<bool>(this);
         if (!confirmed || dialog.CreatedPlatform is null) return;
 
@@ -8256,7 +8315,7 @@ public partial class MainWindow : Window
         var otherIds      = _catalog.LoadPlatforms().Select(p => p.Id).Where(id => id != existing.Id);
         var imageDir      = Path.Combine(_dataDir, "systemimages");
         var hardwareTypes = _catalog.LoadHardwareTypes();
-        var dialog        = new CreatePlatformDialog(otherIds, existing, imageDir, hardwareTypes);
+        var dialog        = new CreatePlatformDialog(otherIds, existing, imageDir, hardwareTypes, _catalog);
         var confirmed = await dialog.ShowDialog<bool>(this);
         if (!confirmed || dialog.CreatedPlatform is null) return;
 
@@ -8295,34 +8354,22 @@ public partial class MainWindow : Window
         RefreshSystemsKeepSelection(existing.Id);
     }
 
-    private static string AuthorityLabel(string authority) => authority switch
-    {
-        "redump"   => "Redump",
-        "no-intro" => "No-Intro",
-        "tosec"    => "TOSEC",
-        "custom"   => "Custom",
-        _          => authority.Length > 0
-                          ? char.ToUpperInvariant(authority[0]) + authority[1..]
-                          : authority,
-    };
-
     private async void OnImportDat(object? sender, RoutedEventArgs e)
     {
-        var platforms         = _catalog.LoadPlatforms();
-        var storageStrategies = _catalog.LoadStorageStrategies();
-        var existingDatLines  = _catalog.LoadDatLines();
-        var importDialog      = new ImportDatDialog(platforms, storageStrategies, existingDatLines);
-        var ok                = await importDialog.ShowDialog<bool>(this);
+        var platforms        = _catalog.LoadPlatforms();
+        var existingDatLines = _catalog.LoadDatLines();
+        var importDialog     = new ImportDatDialog(platforms, existingDatLines, _catalog, _dataDir);
+        var ok               = await importDialog.ShowDialog<bool>(this);
         if (!ok) return;
 
-        var platformId        = importDialog.PlatformId        ?? "";
-        var authority         = importDialog.Authority         ?? "";
-        var datCategory       = importDialog.DatCategory       ?? "";
-        var datLineId         = importDialog.DatLineId         ?? "";
-        var datLineName       = $"{AuthorityLabel(authority)}: {datCategory}";
-        var version           = importDialog.Version           ?? "";
-        var storageStrategyId = importDialog.StorageStrategyId ?? "";
-        var parsedGames       = importDialog.ParsedGames.ToList();
+        var platformId    = importDialog.PlatformId       ?? "";
+        var authority     = importDialog.Authority        ?? "";
+        var datCategory   = importDialog.DatCategory      ?? "";
+        var datLineId     = importDialog.DatLineId        ?? "";
+        var authorityName = importDialog.SelectedAuthority?.Name ?? authority;
+        var datLineName   = $"{authorityName}: {datCategory}";
+        var version     = importDialog.Version     ?? "";
+        var parsedGames = importDialog.ParsedGames.ToList();
 
         var relPath = $"systems/{platformId}/{datLineId}.db";
         var absPath = Path.Combine(_dataDir, relPath);
@@ -8335,7 +8382,7 @@ public partial class MainWindow : Window
             Authority         = authority,
             DatCategory       = datCategory,
             Version           = version,
-            StorageStrategyId = storageStrategyId,
+            StorageStrategyId = "",
             DataStorePath     = relPath,
             ReleaseCount      = parsedGames.Count,
             ImportedAtUtc     = DateTime.UtcNow,
