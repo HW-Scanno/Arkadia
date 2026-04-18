@@ -1,3 +1,43 @@
-bin/*
+# ── Build artifacts ───────────────────────────────────────────────────────────
+bin/
+obj/
+publish/
+
+# ── IDE / Editor ──────────────────────────────────────────────────────────────
+.vs/
+.idea/
+.vscode/
+
+# ── Runtime: logs ─────────────────────────────────────────────────────────────
+# Written by the app next to the executable (AppContext.BaseDirectory).
+# During development this is bin/Debug/net8.0/logs/ — already inside bin/.
+# Listed explicitly as documentation and as a safety net for portable deploys.
+logs/
+
+# ── Runtime: external tools ───────────────────────────────────────────────────
+# 7zip, chdman, and any user-installed tools live in a tools/ folder
+# next to the executable. These are executables, not source — never commit them.
+tools/
+
+# ── Large binary / ROM media ──────────────────────────────────────────────────
 *.iso
-*.log
+*.img
+*.chd
+*.nrg
+*.bin
+*.cue
+
+# ── SQLite databases ──────────────────────────────────────────────────────────
+# catalog.db is created at runtime in data/ (inside bin/ during development).
+# Listed explicitly as a safety net.
+*.db
+*.db-shm
+*.db-wal
+
+# ── Test output ───────────────────────────────────────────────────────────────
+TestResults/
+
+# ── OS junk ───────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini

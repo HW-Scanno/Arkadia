@@ -1,0 +1,120 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.ToolDialog"
+        Title="Tool"
+        Width="440"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+
+        <Style Selector="TextBox.id-readonly">
+            <Setter Property="IsReadOnly" Value="True"/>
+            <Setter Property="Opacity"    Value="0.55"/>
+            <Setter Property="Cursor"     Value="Arrow"/>
+        </Style>
+
+        <Style Selector="TextBox">
+            <Setter Property="Background"      Value="#0D0D13"/>
+            <Setter Property="Foreground"      Value="#E8E8F0"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="Padding"         Value="8,7"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="BorderBrush" Duration="0:0:0.13"/>
+                </Transitions>
+            </Setter>
+        </Style>
+        <Style Selector="TextBox:pointerover">
+            <Setter Property="BorderBrush" Value="#4C3020"/>
+        </Style>
+        <Style Selector="TextBox:focus-within">
+            <Setter Property="BorderBrush" Value="#E07040"/>
+        </Style>
+
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,Auto">
+
+        <!-- ── Header ── -->
+        <Border Grid.Row="0"
+                Padding="24,20,24,16"
+                BorderBrush="#181826" BorderThickness="0,0,0,1"
+                Background="#0F0F14">
+            <StackPanel Spacing="4">
+                <TextBlock x:Name="TitleLabel"
+                           FontSize="15" FontWeight="SemiBold"
+                           Foreground="#F0F0F0"/>
+                <TextBlock x:Name="SubtitleLabel"
+                           FontSize="12" Foreground="#555566"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Form ── -->
+        <StackPanel Grid.Row="1" Margin="24,20,24,20" Spacing="14">
+
+            <!-- Tool ID -->
+            <StackPanel Spacing="4">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <TextBlock Text="Tool ID"  FontSize="12" Foreground="#888899"/>
+                    <TextBlock Text="*"        FontSize="12" Foreground="#E07040"/>
+                </StackPanel>
+                <TextBox x:Name="IdInput"
+                         Watermark="e.g. ffmpeg"
+                         TextChanged="OnFieldChanged"/>
+                <TextBlock x:Name="IdErrorText"
+                           FontSize="11" Foreground="#EF5350"
+                           IsVisible="False" TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- Folder Name -->
+            <StackPanel Spacing="4">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <TextBlock Text="Folder Name" FontSize="12" Foreground="#888899"/>
+                    <TextBlock Text="*"           FontSize="12" Foreground="#E07040"/>
+                </StackPanel>
+                <TextBox x:Name="FolderInput"
+                         Watermark="e.g. ffmpeg"
+                         TextChanged="OnFieldChanged"/>
+                <TextBlock Text="Resolved as: tools/{folder}/{executable}"
+                           FontSize="10" Foreground="#444458"/>
+            </StackPanel>
+
+            <!-- Executable Name -->
+            <StackPanel Spacing="4">
+                <StackPanel Orientation="Horizontal" Spacing="4">
+                    <TextBlock Text="Executable Name" FontSize="12" Foreground="#888899"/>
+                    <TextBlock Text="*"               FontSize="12" Foreground="#E07040"/>
+                </StackPanel>
+                <TextBox x:Name="ExeInput"
+                         Watermark="e.g. ffmpeg.exe"
+                         TextChanged="OnFieldChanged"/>
+            </StackPanel>
+
+        </StackPanel>
+
+        <!-- ── Footer ── -->
+        <Border Grid.Row="2"
+                Padding="24,12,24,18"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Cancel"
+                        Background="#242433" Foreground="#F0F0F0"
+                        Padding="16,8" CornerRadius="6" BorderThickness="0"
+                        Click="OnCancel"/>
+                <Button x:Name="SaveButton"
+                        Background="#E07040" Foreground="#FFFFFF"
+                        Padding="16,8" CornerRadius="6" BorderThickness="0"
+                        IsEnabled="False"
+                        Click="OnSave"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

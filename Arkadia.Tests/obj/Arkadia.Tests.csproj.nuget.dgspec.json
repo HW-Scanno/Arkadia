@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj": {}
+    "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj": {}
   },
   "projects": {
-    "D:\\Projects\\Arkadia\\Arkadia.csproj": {
+    "d:\\Projects\\Arkadia\\Arkadia.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\Projects\\Arkadia\\Arkadia.csproj",
+        "projectUniqueName": "d:\\Projects\\Arkadia\\Arkadia.csproj",
         "projectName": "Arkadia",
-        "projectPath": "D:\\Projects\\Arkadia\\Arkadia.csproj",
+        "projectPath": "d:\\Projects\\Arkadia\\Arkadia.csproj",
         "packagesPath": "C:\\Users\\HWS\\.nuget\\packages\\",
-        "outputPath": "D:\\Projects\\Arkadia\\obj\\",
+        "outputPath": "d:\\Projects\\Arkadia\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\HWS\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -75,6 +75,14 @@
               "target": "Package",
               "version": "[0.38.0, )"
             },
+            "SkiaSharp": {
+              "target": "Package",
+              "version": "[2.88.9, )"
+            },
+            "SkiaSharp.NativeAssets.Win32": {
+              "target": "Package",
+              "version": "[2.88.9, )"
+            },
             "System.Management": {
               "target": "Package",
               "version": "[8.0.0, )"
@@ -100,14 +108,14 @@
         }
       }
     },
-    "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj": {
+    "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
+        "projectUniqueName": "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
         "projectName": "Arkadia.Tests",
-        "projectPath": "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
+        "projectPath": "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
         "packagesPath": "C:\\Users\\HWS\\.nuget\\packages\\",
-        "outputPath": "D:\\Projects\\Arkadia\\Arkadia.Tests\\obj\\",
+        "outputPath": "d:\\Projects\\Arkadia\\Arkadia.Tests\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\HWS\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -122,8 +130,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "D:\\Projects\\Arkadia\\Arkadia.csproj": {
-                "projectPath": "D:\\Projects\\Arkadia\\Arkadia.csproj"
+              "d:\\Projects\\Arkadia\\Arkadia.csproj": {
+                "projectPath": "d:\\Projects\\Arkadia\\Arkadia.csproj"
               }
             }
           }

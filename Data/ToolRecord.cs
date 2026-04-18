@@ -5,4 +5,5 @@ public sealed class ToolRecord
     public string Id             { get; set; } = "";
     public string FolderName     { get; set; } = "";
     public string ExecutableName { get; set; } = "";
+    public bool   IsBundled      { get; set; } = false;
 }

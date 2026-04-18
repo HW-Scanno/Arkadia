@@ -11,15 +11,10 @@ public partial class CreateDiskDialog : Window
     public DiskRecord?    Result       { get; private set; }
     public DiscoveredDisk? SelectedDrive { get; private set; }
 
-    private readonly string _label;
-
-    public CreateDiskDialog() : this("ARKADIA-0001") { }
-
-    public CreateDiskDialog(string autoLabel)
+    public CreateDiskDialog()
     {
-        _label = autoLabel;
         InitializeComponent();
-        GeneratedLabelText.Text = autoLabel;
+        GeneratedLabelText.Text = "Auto-generated on confirmation";
     }
 
     private async void OnSelectDrive(object? sender, RoutedEventArgs e)
@@ -54,13 +49,15 @@ public partial class CreateDiskDialog : Window
     private void OnConfirm(object? sender, RoutedEventArgs e)
     {
         if (SelectedDrive is null) return;
-        var now = DateTime.UtcNow;
+        var now    = DateTime.UtcNow;
+        var family = (FamilyCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "core";
 
         Result = new DiskRecord
         {
             Id                    = Guid.NewGuid().ToString("N"),
-            Label                 = _label,          // preview — OnAddDisk overwrites with confirmed
+            Label                 = "",               // filled in by OnAddDisk after sequence commit
             Status                = "available",
+            Family                = family,
             DeclaredCapacityBytes = SelectedDrive.TotalCapacityBytes,
             Filesystem            = SelectedDrive.DriveFormat,
             Brand                 = BrandInput.Text?.Trim()  ?? "",

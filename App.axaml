@@ -1,10 +1,29 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:Arkadia"
              x:Class="Arkadia.App"
              RequestedThemeVariant="Dark">
 
     <Application.Styles>
         <StyleInclude Source="avares://Semi.Avalonia/SemiTheme.axaml"/>
+        <Style Selector="TextBox">
+            <Setter Property="ContextMenu">
+                <Setter.Value>
+                    <ContextMenu>
+                        <MenuItem Header="Cut"
+                                  Command="{x:Static local:TextBoxCommands.Cut}"
+                                  CommandParameter="{Binding $parent[ContextMenu].PlacementTarget}"/>
+                        <MenuItem Header="Copy"
+                                  Command="{x:Static local:TextBoxCommands.Copy}"
+                                  CommandParameter="{Binding $parent[ContextMenu].PlacementTarget}"/>
+                        <MenuItem Header="Paste"
+                                  Command="{x:Static local:TextBoxCommands.Paste}"
+                                  CommandParameter="{Binding $parent[ContextMenu].PlacementTarget}"/>
+                    </ContextMenu>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style Selector="Window">
             <Setter Property="Icon">
                 <Setter.Value>

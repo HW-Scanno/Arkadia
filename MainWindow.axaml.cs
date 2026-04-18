@@ -324,8 +324,7 @@ public partial class MainWindow : Window
         textRow.Children.Add(coverageBlock);
         textRow.Children.Add(datCountBlock);
 
-        var logoImg = LoadSystemImage(p.Id, "logo")
-                   ?? (_systemsThemeDir is not null ? SystemImageLoader.Load(_systemsThemeDir, p.Id) : null);
+        var logoImg = LoadSystemImage(p.Id, "logo", Systems.PlatformImageSizes.Logo);
 
         var innerRow = new Grid();
         innerRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto)); // accent bar
@@ -490,12 +489,47 @@ public partial class MainWindow : Window
         try { return new Bitmap(path); } catch { return null; }
     }
 
-    private Bitmap? LoadSystemImage(string platformId, string suffix)
+    private Bitmap? LoadSystemImage(string platformId, string role, (int Width, int Height) size)
     {
-        var catalogPath = Path.Combine(_dataDir, "systemimages", $"{platformId}-{suffix}.png");
-        if (File.Exists(catalogPath))
-            try { return new Bitmap(catalogPath); } catch { }
+        var imageDir = Path.Combine(_dataDir, "systemimages");
+
+        var cachedName = Systems.PlatformImageCache.CachedFileName(platformId, role, size.Width, size.Height);
+        var cachedPath = Path.Combine(imageDir, cachedName);
+        if (File.Exists(cachedPath))
+            try { return new Bitmap(cachedPath); } catch { }
+
+        var sourcePath = Path.Combine(imageDir, Systems.PlatformImageCache.SourceFileName(platformId, role));
+        if (File.Exists(sourcePath))
+            try { return new Bitmap(sourcePath); } catch { }
+
         return null;
+    }
+
+    private Bitmap? LoadSystemImageW(string platformId, string role, int width)
+    {
+        var imageDir = Path.Combine(_dataDir, "systemimages");
+
+        var cachedPath = Path.Combine(imageDir, Systems.PlatformImageCache.CachedWidthFileName(platformId, role, width));
+        if (File.Exists(cachedPath))
+            try { return new Bitmap(cachedPath); } catch { }
+
+        var sourcePath = Path.Combine(imageDir, Systems.PlatformImageCache.SourceFileName(platformId, role));
+        if (File.Exists(sourcePath))
+            try { return new Bitmap(sourcePath); } catch { }
+
+        return null;
+    }
+
+    private void DeletePlatformImageFiles(string imageDir, string platformId, string role)
+    {
+        void TryDel(string path) { if (File.Exists(path)) File.Delete(path); }
+
+        TryDel(Path.Combine(imageDir, $"{platformId}-{role}.png"));
+        TryDel(Path.Combine(imageDir, Systems.PlatformImageCache.SourceFileName(platformId, role)));
+        foreach (var (w, h) in Systems.PlatformImageSizes.All)
+            TryDel(Path.Combine(imageDir, Systems.PlatformImageCache.CachedFileName(platformId, role, w, h)));
+        foreach (var w in Systems.PlatformImageSizes.AllWidthConstrained)
+            TryDel(Path.Combine(imageDir, Systems.PlatformImageCache.CachedWidthFileName(platformId, role, w)));
     }
 
     private void UpdateDetailPane(SystemPlatform? p, DatLineInfo? d)
@@ -523,10 +557,21 @@ public partial class MainWindow : Window
         var accent = new SolidColorBrush(Color.Parse("#7B68EE"));
         var panel  = SystemsDetailPanel;
 
+        // Platform logo (width-constrained, above main image)
+        var logoW300 = LoadSystemImageW(p.Id, "logo", Systems.PlatformImageSizes.DetailLogoWidth);
+        if (logoW300 is not null)
+            panel.Children.Add(new Image
+            {
+                Source              = logoW300,
+                Width               = 300,
+                Stretch             = Avalonia.Media.Stretch.Uniform,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                Margin              = new Avalonia.Thickness(0, 0, 0, 10),
+            });
+
         // Platform image
-        var img = LoadSystemImage(p.Id, "details")
-               ?? LoadSystemImage(p.Id, "logo")
-               ?? (_systemsThemeDir is not null ? SystemImageLoader.Load(_systemsThemeDir, p.Id) : null);
+        var img = LoadSystemImage(p.Id, "details", Systems.PlatformImageSizes.Detail)
+               ?? LoadSystemImage(p.Id, "logo",    Systems.PlatformImageSizes.Detail);
         if (img is not null)
             panel.Children.Add(new Image
             {
@@ -1440,6 +1485,7 @@ public partial class MainWindow : Window
 
     private List<DiskEntry> _allDiskEntries  = [];
     private List<DiskEntry> _filteredDisks   = [];
+    private DiskEntry?      _selectedDiskEntry;
 
     private void InitDisks() => RefreshDisks();
 
@@ -1456,6 +1502,7 @@ public partial class MainWindow : Window
                 Id                    = d.Id,
                 Label                 = d.Label,
                 Status                = d.Status,
+                Family                = d.Family,
                 DeclaredCapacityBytes = cap > 0 ? cap : d.DeclaredCapacityBytes,
                 UsedBytes             = used,
                 Filesystem            = d.Filesystem,
@@ -1478,25 +1525,166 @@ public partial class MainWindow : Window
                             d.Model.Contains(search, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
-        DisksList.ItemsSource  = _filteredDisks;
-        DisksCountText.Text    = _filteredDisks.Count == _allDiskEntries.Count
+        _selectedDiskEntry = null;
+        DisksCountText.Text = _filteredDisks.Count == _allDiskEntries.Count
             ? $"{_allDiskEntries.Count} disks"
             : $"{_filteredDisks.Count} of {_allDiskEntries.Count} disks";
+        RenderDisksPanel();
         UpdateDiskDetailPanel(null);
     }
 
     private void OnDisksSearchChanged(object? sender, Avalonia.Controls.TextChangedEventArgs e)
         => ApplyDisksFilter();
 
-    private void OnDiskSelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
-        => UpdateDiskDetailPanel(DisksList.SelectedItem as DiskEntry);
+    private static readonly string[] DiskFamilyOrder = ["core", "extras", "books"];
+
+    private void RenderDisksPanel()
+    {
+        DisksPanel.Children.Clear();
+        if (_filteredDisks.Count == 0) return;
+
+        var groups = DiskFamilyOrder
+            .Select(f => (Family: f, Items: _filteredDisks.Where(d => d.Family == f).ToList()))
+            .Where(g => g.Items.Count > 0)
+            .ToList();
+
+        var showHeaders = groups.Count > 1;
+
+        foreach (var (family, items) in groups)
+        {
+            if (showHeaders)
+                DisksPanel.Children.Add(MakeGroupHeader(family));
+
+            foreach (var entry in items)
+                DisksPanel.Children.Add(MakeDiskRow(entry));
+        }
+    }
+
+    private Border MakeDiskRow(DiskEntry entry)
+    {
+        bool isSelected    = _selectedDiskEntry?.Id == entry.Id;
+        var  textPrimary   = new SolidColorBrush(isSelected ? Color.Parse("#E8E8FF") : Color.Parse("#CCCCDD"));
+        var  textSecondary = new SolidColorBrush(Color.Parse("#888899"));
+        var  barWidth      = Math.Clamp(entry.UsageRatio, 0.0, 1.0) * 66.0;
+
+        var grid = new Grid { Margin = new Avalonia.Thickness(20, 0) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(52)));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(200)));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(90)));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(90)));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(90)));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(100)));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(130)));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(130)));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+
+        void Add(int col, Control ctrl) { Grid.SetColumn(ctrl, col); grid.Children.Add(ctrl); }
+
+        Add(0, new TextBlock
+        {
+            Text                = entry.StatusLabel,
+            FontSize            = 11,
+            FontWeight          = FontWeight.SemiBold,
+            Foreground          = entry.StatusBrush,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+        });
+        Add(1, new TextBlock
+        {
+            Text             = entry.Label,
+            FontSize         = 13,
+            Foreground       = textPrimary,
+            TextTrimming     = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        });
+        Add(2, new TextBlock
+        {
+            Text                = entry.CapacityLabel,
+            FontSize            = 12,
+            Foreground          = textSecondary,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+        });
+        Add(3, new TextBlock
+        {
+            Text                = entry.UsedLabel,
+            FontSize            = 12,
+            Foreground          = textSecondary,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+        });
+        Add(4, new TextBlock
+        {
+            Text                = entry.FreeLabel,
+            FontSize            = 12,
+            Foreground          = textSecondary,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+        });
+        Add(5, new TextBlock
+        {
+            Text                = entry.FilesystemLabel,
+            FontSize            = 12,
+            Foreground          = textSecondary,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+        });
+        Add(6, new TextBlock
+        {
+            Text             = entry.ModelLabel,
+            FontSize         = 12,
+            Foreground       = textSecondary,
+            TextTrimming     = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        });
+        Add(7, new TextBlock
+        {
+            Text             = entry.SerialLabel,
+            FontSize         = 12,
+            Foreground       = textSecondary,
+            TextTrimming     = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        });
+        Add(8, new Border
+        {
+            Height            = 8,
+            CornerRadius      = new Avalonia.CornerRadius(1),
+            Background        = new SolidColorBrush(Color.Parse("#2A2A3E")),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin            = new Avalonia.Thickness(8, 0),
+            Child = new Border
+            {
+                Width               = barWidth,
+                Height              = 8,
+                CornerRadius        = new Avalonia.CornerRadius(1),
+                Background          = new SolidColorBrush(Color.Parse("#4CAF50")),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            },
+        });
+
+        var row = new Border
+        {
+            Background = new SolidColorBrush(isSelected ? Color.Parse("#1E1E2E") : Colors.Transparent),
+            Height     = 36,
+            Cursor     = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+            Child      = grid,
+        };
+        var diskId = entry.Id;
+        row.PointerPressed += (_, _) => SelectDisk(diskId);
+        return row;
+    }
+
+    private void SelectDisk(string diskId)
+    {
+        _selectedDiskEntry = _filteredDisks.FirstOrDefault(d => d.Id == diskId);
+        RenderDisksPanel();
+        UpdateDiskDetailPanel(_selectedDiskEntry);
+    }
 
     private async void OnAddDisk(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        // Peek (no increment) for display; label is only committed on confirm.
-        var previewLabel = _catalog.PeekNextDiskLabel();
-        var dialog       = new CreateDiskDialog(previewLabel);
-        var ok           = await dialog.ShowDialog<bool>(this);
+        var dialog = new CreateDiskDialog();
+        var ok     = await dialog.ShowDialog<bool>(this);
         if (!ok || dialog.Result is null || dialog.SelectedDrive is null) return;
 
         var mountpoint = dialog.SelectedDrive.Mountpoint;
@@ -1504,7 +1692,7 @@ public partial class MainWindow : Window
         try
         {
             // ── Commit label sequence ─────────────────────────────────────────
-            var confirmedLabel = _catalog.NextDiskLabel();
+            var confirmedLabel = _catalog.NextDiskLabel(dialog.Result.Family);
 
             // ── Safety: no marker overwrite in Add Disk ───────────────────────
             var markerPath = Data.DiskDiscoveryService.MarkerPath(mountpoint);
@@ -1560,6 +1748,7 @@ public partial class MainWindow : Window
                 Id                    = raw.Id,
                 Label                 = confirmedLabel,
                 Status                = "available",
+                Family                = raw.Family,
                 DeclaredCapacityBytes = raw.DeclaredCapacityBytes,
                 Filesystem            = raw.Filesystem,
                 Brand                 = raw.Brand,
@@ -1597,7 +1786,7 @@ public partial class MainWindow : Window
 
     private async void OnInitializeDisk(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        var entry = DisksList.SelectedItem as DiskEntry;
+        var entry = _selectedDiskEntry;
         if (entry is null)
         {
             await new InfoDialog("No Disk Selected",
@@ -1684,10 +1873,7 @@ public partial class MainWindow : Window
             RefreshDisks();
             var updated = _filteredDisks.FirstOrDefault(d => d.Id == entry.Id);
             if (updated is not null)
-            {
-                DisksList.SelectedItem = updated;
-                UpdateDiskDetailPanel(updated);
-            }
+                SelectDisk(updated.Id);
 
             await new InfoDialog("Disk Initialized",
                 $"Disk \"{entry.Label}\" has been initialized.\n\n" +
@@ -1704,7 +1890,7 @@ public partial class MainWindow : Window
 
     private async void OnReinitializeDisk(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        var entry = DisksList.SelectedItem as DiskEntry;
+        var entry = _selectedDiskEntry;
         if (entry is null)
         {
             await new InfoDialog("No Disk Selected",
@@ -1799,10 +1985,7 @@ public partial class MainWindow : Window
             RefreshDisks();
             var updated = _filteredDisks.FirstOrDefault(d => d.Id == entry.Id);
             if (updated is not null)
-            {
-                DisksList.SelectedItem = updated;
-                UpdateDiskDetailPanel(updated);
-            }
+                SelectDisk(updated.Id);
 
             await new InfoDialog("Disk Reinitialized",
                 $"Disk \"{entry.Label}\" has been reinitialized.\n\n" +
@@ -1819,7 +2002,7 @@ public partial class MainWindow : Window
 
     private async void OnMarkDiskLost(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        var entry = DisksList.SelectedItem as DiskEntry;
+        var entry = _selectedDiskEntry;
         if (entry is null)
         {
             await new InfoDialog("No Disk Selected",
@@ -1884,6 +2067,48 @@ public partial class MainWindow : Window
         {
             await new InfoDialog("Mark Lost Error", ex.Message).ShowDialog(this);
         }
+    }
+
+    private async void OnDeleteDisk(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = _selectedDiskEntry;
+        if (entry is null) return;
+
+        if (entry.Status != "lost")
+        {
+            await new InfoDialog(
+                "Cannot Delete Disk",
+                "Before deleting the disk you must mark it as Lost with the Mark Lost button.")
+                .ShowDialog(this);
+            return;
+        }
+
+        if (_catalog.HasActiveDiskVolumes(entry.Id))
+        {
+            await new InfoDialog(
+                "Cannot Delete Disk",
+                $"Disk \"{entry.Label}\" still has volumes assigned to it that are not marked LOST.\n\n" +
+                "Mark all volumes on this disk as LOST before deleting the disk.")
+                .ShowDialog(this);
+            return;
+        }
+
+        var confirmed = await new ConfirmDialog(
+            "Delete Disk",
+            $"Permanently remove disk \"{entry.Label}\" from the catalog?\n\n" +
+            "Volume location history for this disk will be deleted.\n" +
+            "Volumes previously on this disk will remain in the catalog.\n\n" +
+            "This action cannot be undone.")
+            .ShowDialog<bool>(this);
+        if (!confirmed) return;
+
+        _catalog.DeleteDisk(entry.Id);
+
+        _selectedDiskEntry = null;
+        RefreshDisks();
+        RefreshVolumes();
+        RefreshAnalyticsIfBuilt();
+        UpdateDiskDetailPanel(null);
     }
 
     private void UpdateDiskDetailPanel(DiskEntry? entry)
@@ -2100,13 +2325,12 @@ public partial class MainWindow : Window
     /// </summary>
     private void RefreshDiskDetailIfSelected()
     {
-        var prevId = (DisksList.SelectedItem as DiskEntry)?.Id;
-        RefreshDisks();   // rebuilds _allDiskEntries; resets ItemsSource; clears panel
+        var prevId = _selectedDiskEntry?.Id;
+        RefreshDisks();   // rebuilds _allDiskEntries; clears panel
         if (prevId is null) return;
         var restored = _filteredDisks.FirstOrDefault(d => d.Id == prevId);
         if (restored is null) return;
-        DisksList.SelectedItem = restored;
-        UpdateDiskDetailPanel(restored);
+        SelectDisk(restored.Id);
     }
 
     // ── Volumes ───────────────────────────────────────────────────────────────
@@ -2437,7 +2661,7 @@ public partial class MainWindow : Window
         }
 
         // ── Write log ─────────────────────────────────────────────────────
-        if (log is not null)
+        if (log is not null && _catalog.GetBoolSetting("auto_export_verify_logs", defaultValue: true))
         {
             var endTime = DateTime.UtcNow;
             log.AppendLine();
@@ -5939,16 +6163,15 @@ public partial class MainWindow : Window
         // ── Tools ────────────────────────────────────────────────────────────
         var tools       = _catalog.LoadTools();
         var appRoot     = AppContext.BaseDirectory;
-        var builtInIds  = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "7zip" };
-        int toolBuiltIn = 0, toolPresent = 0, toolMissing = 0;
+        int toolBundled = 0, toolPresent = 0, toolMissing = 0;
         foreach (var tool in tools)
         {
-            if (builtInIds.Contains(tool.Id)) { toolBuiltIn++;  continue; }
+            if (tool.IsBundled) { toolBundled++; }
             var exePath = Path.Combine(appRoot, "tools", tool.FolderName, tool.ExecutableName);
             if (File.Exists(exePath)) toolPresent++;
-            else toolMissing++;
+            else                      toolMissing++;
         }
-        DashToolsBuiltIn.Text = toolBuiltIn.ToString("N0");
+        DashToolsBuiltIn.Text = toolBundled.ToString("N0");
         DashToolsPresent.Text = toolPresent.ToString("N0");
         DashToolsMissing.Text = toolMissing.ToString("N0");
 
@@ -6936,9 +7159,46 @@ public partial class MainWindow : Window
         var platformId        = info.CatalogPlatformId;
         var datLineId         = info.CatalogId;
         var absDbPath         = Path.Combine(_dataDir, info.DataStorePath);
-        var storageStrategyId = info.DataStorePath.Length > 0
-            ? (_catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId)?.StorageStrategyId ?? "")
-            : "";
+        var datLineRecord     = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
+        var storageStrategyId = datLineRecord?.StorageStrategyId ?? "";
+
+        // ── Preflight: verify required tools are present ──────────────────────
+        {
+            var pfTransforms = _catalog.LoadTransforms();
+            var pfTools      = _catalog.LoadTools().ToDictionary(t => t.Id, StringComparer.OrdinalIgnoreCase);
+            var pfAppRoot    = AppContext.BaseDirectory;
+
+            var requiredToolIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var activeXf = pfTransforms.FirstOrDefault(t => t.Id == storageStrategyId);
+            if (activeXf?.ToolId is { Length: > 0 } sid)
+                requiredToolIds.Add(sid);
+
+            if (datLineRecord?.TransformStrategyType == "file_extension")
+            {
+                foreach (var m in _catalog.LoadExtensionMappings(datLineId))
+                {
+                    if (m.IsDiscard || string.IsNullOrEmpty(m.TransformId)) continue;
+                    var xf = pfTransforms.FirstOrDefault(t => t.Id == m.TransformId);
+                    if (xf?.ToolId is { Length: > 0 } eid)
+                        requiredToolIds.Add(eid);
+                }
+            }
+
+            var missingTools = requiredToolIds
+                .Where(id => pfTools.TryGetValue(id, out var tool) &&
+                             !File.Exists(Path.Combine(pfAppRoot, "tools", tool.FolderName, tool.ExecutableName)))
+                .ToList();
+
+            if (missingTools.Count > 0)
+            {
+                await new InfoDialog(
+                    "Missing Tools",
+                    $"The following tools are required for this ingestion but are not installed:\n{string.Join(", ", missingTools)}\n\nPlease install the missing tools before ingesting."
+                ).ShowDialog(this);
+                return;
+            }
+        }
 
         var progressDialog = new IngestionProgressDialog($"Ingest Files — {info.Name}");
         var progress       = new Progress<IngestionProgress>(p => progressDialog.Update(p));
@@ -7255,9 +7515,12 @@ public partial class MainWindow : Window
 
         // successfullyCopied: source files whose every pending target was copied OK.
         // allTargetsSatisfied: source files that had no pending targets at all (already done).
-        var successfullyCopied   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var allTargetsSatisfied  = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var affectedReleaseIds   = new HashSet<string>(StringComparer.Ordinal);
+        // transformFailedReleases: releases where at least one file's transform failed — their
+        //   contributing source files must not be deleted from incoming-roms.
+        var successfullyCopied      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allTargetsSatisfied     = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var affectedReleaseIds      = new HashSet<string>(StringComparer.Ordinal);
+        var transformFailedReleases = new HashSet<string>(StringComparer.Ordinal);
         int copyCount = 0;
 
         foreach (var (srcPath, destinations) in copyPlan)
@@ -7579,14 +7842,18 @@ public partial class MainWindow : Window
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
                     // Transform failures must never block the rest of ingestion.
+                    transformFailedReleases.Add(releaseId);
                     var failOp = new IngestionOperation(f.RomName, "transform-failed", ex.Message);
                     result.Operations.Add(failOp);
                     progress.Report(new IngestionProgress { NewOperation = failOp });
                 }
             }
 
-            store.UpdateReleaseStatus(releaseId, "present");
-            result.ReleasesPresent++;
+            if (!transformFailedReleases.Contains(releaseId))
+            {
+                store.UpdateReleaseStatus(releaseId, "present");
+                result.ReleasesPresent++;
+            }
 
             var archOp = new IngestionOperation(
                 release.Name, "source",
@@ -7604,7 +7871,14 @@ public partial class MainWindow : Window
 
             if (successfullyCopied.Contains(srcPath))
             {
-                // All pending targets were copied successfully → delete source.
+                // Guard: if any target release had a transform failure, leave the source
+                // in incoming-roms so the user can retry after fixing the tool/config.
+                bool hasTransformFailure = copyPlan.TryGetValue(srcPath, out var targets) &&
+                    targets.Any(t => transformFailedReleases.Contains(t.ReleaseId));
+                if (hasTransformFailure)
+                    continue;
+
+                // All pending targets were copied and transformed successfully → delete source.
                 try
                 {
                     File.Delete(srcPath);
@@ -7945,16 +8219,28 @@ public partial class MainWindow : Window
         var platform = dialog.CreatedPlatform;
         _catalog.SavePlatforms([platform]);
 
+        Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "incoming-roms", platform.Id));
+
         // Copy images into data/systemimages/
         var imageDir = Path.Combine(_dataDir, "systemimages");
         Directory.CreateDirectory(imageDir);
 
         if (dialog.LogoImagePath is not null)
+        {
             File.Copy(dialog.LogoImagePath,
                 Path.Combine(imageDir, $"{platform.Id}-logo.png"), overwrite: true);
+            var src = Path.Combine(imageDir, Systems.PlatformImageCache.SourceFileName(platform.Id, "logo"));
+            File.Copy(dialog.LogoImagePath, src, overwrite: true);
+            Systems.PlatformImageCache.GenerateCachedVariants(src, platform.Id, "logo");
+        }
         if (dialog.DetailsImagePath is not null)
+        {
             File.Copy(dialog.DetailsImagePath,
                 Path.Combine(imageDir, $"{platform.Id}-details.png"), overwrite: true);
+            var src = Path.Combine(imageDir, Systems.PlatformImageCache.SourceFileName(platform.Id, "details"));
+            File.Copy(dialog.DetailsImagePath, src, overwrite: true);
+            Systems.PlatformImageCache.GenerateCachedVariants(src, platform.Id, "details");
+        }
 
         RefreshSystemsKeepSelection(platform.Id);
     }
@@ -7981,22 +8267,30 @@ public partial class MainWindow : Window
         // Apply image deletions
         if (dialog.DeleteLogoImage)
         {
-            var p = Path.Combine(imageDir, $"{existing.Id}-logo.png");
-            if (File.Exists(p)) File.Delete(p);
+            DeletePlatformImageFiles(imageDir, existing.Id, "logo");
         }
         if (dialog.DeleteDetailsImage)
         {
-            var p = Path.Combine(imageDir, $"{existing.Id}-details.png");
-            if (File.Exists(p)) File.Delete(p);
+            DeletePlatformImageFiles(imageDir, existing.Id, "details");
         }
 
         // Apply new images (overwrite if replacing)
         if (dialog.LogoImagePath is not null)
+        {
             File.Copy(dialog.LogoImagePath,
                 Path.Combine(imageDir, $"{existing.Id}-logo.png"), overwrite: true);
+            var src = Path.Combine(imageDir, Systems.PlatformImageCache.SourceFileName(existing.Id, "logo"));
+            File.Copy(dialog.LogoImagePath, src, overwrite: true);
+            Systems.PlatformImageCache.GenerateCachedVariants(src, existing.Id, "logo");
+        }
         if (dialog.DetailsImagePath is not null)
+        {
             File.Copy(dialog.DetailsImagePath,
                 Path.Combine(imageDir, $"{existing.Id}-details.png"), overwrite: true);
+            var src = Path.Combine(imageDir, Systems.PlatformImageCache.SourceFileName(existing.Id, "details"));
+            File.Copy(dialog.DetailsImagePath, src, overwrite: true);
+            Systems.PlatformImageCache.GenerateCachedVariants(src, existing.Id, "details");
+        }
 
         RefreshSystemsKeepSelection(existing.Id);
     }
@@ -8415,7 +8709,9 @@ public partial class MainWindow : Window
         SettingLogOnCopy.IsChecked               = _catalog.GetBoolSetting("log_on_copy",                    defaultValue: true);
         SettingAutoExportVerifyLogs.IsChecked    = _catalog.GetBoolSetting("auto_export_verify_logs",        defaultValue: true);
         SettingAutoExportRepairLogs.IsChecked    = _catalog.GetBoolSetting("auto_export_repair_logs",        defaultValue: true);
-        SettingShowDebugArtifactInfo.IsChecked   = _catalog.GetBoolSetting("show_debug_artifact_info",       defaultValue: false);
+        SettingShowDebugArtifactInfo.IsChecked     = _catalog.GetBoolSetting("show_debug_artifact_info",       defaultValue: false);
+        SettingImageCacheRegenWriteLog.IsChecked   = _catalog.GetBoolSetting("image_cache_regen_write_log",   defaultValue: true);
+        SettingLogsToKeep.Text                     = _catalog.GetSetting("logs_to_keep_per_type", "5");
     }
 
     private void OnSaveSettings(object? sender, RoutedEventArgs e)
@@ -8426,13 +8722,55 @@ public partial class MainWindow : Window
         _catalog.SetSetting("log_on_copy",                     SettingLogOnCopy.IsChecked             == true ? "true" : "false");
         _catalog.SetSetting("auto_export_verify_logs",         SettingAutoExportVerifyLogs.IsChecked  == true ? "true" : "false");
         _catalog.SetSetting("auto_export_repair_logs",         SettingAutoExportRepairLogs.IsChecked  == true ? "true" : "false");
-        _catalog.SetSetting("show_debug_artifact_info",        SettingShowDebugArtifactInfo.IsChecked == true ? "true" : "false");
+        _catalog.SetSetting("show_debug_artifact_info",      SettingShowDebugArtifactInfo.IsChecked   == true ? "true" : "false");
+        _catalog.SetSetting("image_cache_regen_write_log",  SettingImageCacheRegenWriteLog.IsChecked == true ? "true" : "false");
+        var logsToKeepRaw = SettingLogsToKeep.Text?.Trim() ?? "5";
+        var logsToKeep    = int.TryParse(logsToKeepRaw, out var lv) && lv >= 1 ? lv : 5;
+        _catalog.SetSetting("logs_to_keep_per_type", logsToKeep.ToString());
+        SettingLogsToKeep.Text = logsToKeep.ToString();
         // Apply show_debug_artifact_info immediately (affects current session without restart)
         _showDebugArtifactInfo = SettingShowDebugArtifactInfo.IsChecked == true;
     }
 
     private void OnReloadSettings(object? sender, RoutedEventArgs e)
         => LoadAllSettings();
+
+    private async void OnPruneLogs(object? sender, RoutedEventArgs e)
+    {
+        var keepRaw = SettingLogsToKeep.Text?.Trim() ?? "5";
+        var keep    = int.TryParse(keepRaw, out var kv) && kv >= 1 ? kv : 5;
+
+        var logsRoot = Path.Combine(AppContext.BaseDirectory, "logs");
+        if (!Directory.Exists(logsRoot))
+        {
+            await new InfoDialog("Prune Logs", "No logs directory found. Nothing to prune.").ShowDialog(this);
+            return;
+        }
+
+        var subfolders    = Directory.GetDirectories(logsRoot);
+        int typesChecked  = 0;
+        int filesDeleted  = 0;
+
+        foreach (var folder in subfolders)
+        {
+            typesChecked++;
+            var files = Directory.GetFiles(folder)
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .Skip(keep)
+                .ToList();
+
+            foreach (var file in files)
+            {
+                try { File.Delete(file); filesDeleted++; }
+                catch { /* non-fatal */ }
+            }
+        }
+
+        await new InfoDialog(
+            "Prune Logs",
+            $"Pruning complete.\n\nLog types checked: {typesChecked}\nFiles deleted: {filesDeleted}"
+        ).ShowDialog(this);
+    }
 
     // ── Integrity Validation ──────────────────────────────────────────────────
 
@@ -8529,31 +8867,232 @@ public partial class MainWindow : Window
             .ShowDialog(this);
     }
 
+    // ── Image Cache Regeneration ──────────────────────────────────────────────
+
+    private async void OnRegenerateImageCache(object? sender, RoutedEventArgs e)
+    {
+        var imageDir  = Path.Combine(_dataDir, "systemimages");
+        var writeLog  = _catalog.GetBoolSetting("image_cache_regen_write_log", defaultValue: true);
+        var startTime = DateTime.UtcNow;
+        var dialog    = new ImageCacheProgressDialog("Regenerate Image Cache");
+
+        Systems.ImageCacheResult? result = null;
+        var progress = new Progress<Systems.ImageCacheProgress>(p =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() => dialog.Update(p)));
+
+        var workTask = Task.Run(() => result = RunImageCacheRegen(imageDir, progress));
+
+        _ = workTask.ContinueWith(t =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (t.IsFaulted)
+                    dialog.SetFailed(t.Exception!.InnerException?.Message ?? t.Exception.Message);
+                else
+                    dialog.SetCompleted(result!);
+            }),
+            System.Threading.Tasks.TaskContinuationOptions.None);
+
+        await dialog.ShowDialog<bool>(this);
+
+        if (writeLog && result is not null && result.Success)
+            WriteImageCacheLog(result, startTime);
+    }
+
+    private static Systems.ImageCacheResult RunImageCacheRegen(
+        string imageDir, IProgress<Systems.ImageCacheProgress> progress)
+    {
+        var result = new Systems.ImageCacheResult();
+
+        if (!Directory.Exists(imageDir))
+        {
+            progress.Report(new() { PhaseText = "No images directory found.", IsIndeterminate = false });
+            return result;
+        }
+
+        var sourceFiles = Directory.GetFiles(imageDir, "*_source.png");
+        int total       = sourceFiles.Length;
+
+        progress.Report(new()
+        {
+            PhaseText       = $"Found {total} source file(s).",
+            IsIndeterminate = false,
+            Total           = total,
+            Processed       = 0,
+            Generated       = 0,
+        });
+
+        foreach (var sourceFile in sourceFiles)
+        {
+            var baseName = Path.GetFileNameWithoutExtension(sourceFile);
+            if (!baseName.EndsWith("_source", StringComparison.OrdinalIgnoreCase)) continue;
+
+            var idAndRole = baseName[..^"_source".Length];
+            string? role = null, platformId = null;
+            foreach (var r in (string[])["logo", "details"])
+            {
+                if (idAndRole.EndsWith($"-{r}", StringComparison.OrdinalIgnoreCase))
+                {
+                    role       = r;
+                    platformId = idAndRole[..^(r.Length + 1)];
+                    break;
+                }
+            }
+            if (role is null || platformId is null) continue;
+
+            result.SourcesProcessed++;
+            var fileName = Path.GetFileName(sourceFile);
+
+            var sourceOp = new Ingestion.IngestionOperation(fileName, "SOURCE", sourceFile);
+            result.Operations.Add(sourceOp);
+            progress.Report(new()
+            {
+                PhaseText    = $"Processing {fileName}…",
+                IsIndeterminate = false,
+                Total        = total,
+                Processed    = result.SourcesProcessed,
+                Generated    = result.CachedGenerated,
+                NewOperation = sourceOp,
+            });
+
+            foreach (var (w, h) in Systems.PlatformImageSizes.All)
+            {
+                var cachedName = Systems.PlatformImageCache.CachedFileName(platformId, role, w, h);
+                var cachedPath = Path.Combine(imageDir, cachedName);
+                try
+                {
+                    Systems.PlatformImageCache.GenerateSingle(sourceFile, cachedPath, w, h);
+                    result.CachedGenerated++;
+
+                    var cacheOp = new Ingestion.IngestionOperation(fileName, "CACHE", cachedPath);
+                    result.Operations.Add(cacheOp);
+                    progress.Report(new()
+                    {
+                        IsIndeterminate = false,
+                        Total           = total,
+                        Processed       = result.SourcesProcessed,
+                        Generated       = result.CachedGenerated,
+                        NewOperation    = cacheOp,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    var errOp = new Ingestion.IngestionOperation(fileName, "cache-failed", ex.Message);
+                    result.Operations.Add(errOp);
+                    progress.Report(new()
+                    {
+                        IsIndeterminate = false,
+                        Total           = total,
+                        Processed       = result.SourcesProcessed,
+                        Generated       = result.CachedGenerated,
+                        NewOperation    = errOp,
+                    });
+                }
+            }
+
+            foreach (var w in Systems.PlatformImageSizes.AllWidthConstrained)
+            {
+                var cachedName = Systems.PlatformImageCache.CachedWidthFileName(platformId, role, w);
+                var cachedPath = Path.Combine(imageDir, cachedName);
+                try
+                {
+                    Systems.PlatformImageCache.GenerateSingleWidthConstrained(sourceFile, cachedPath, w);
+                    result.CachedGenerated++;
+
+                    var cacheOp = new Ingestion.IngestionOperation(fileName, "CACHE", cachedPath);
+                    result.Operations.Add(cacheOp);
+                    progress.Report(new()
+                    {
+                        IsIndeterminate = false,
+                        Total           = total,
+                        Processed       = result.SourcesProcessed,
+                        Generated       = result.CachedGenerated,
+                        NewOperation    = cacheOp,
+                    });
+                }
+                catch (Exception ex)
+                {
+                    var errOp = new Ingestion.IngestionOperation(fileName, "cache-failed", ex.Message);
+                    result.Operations.Add(errOp);
+                    progress.Report(new()
+                    {
+                        IsIndeterminate = false,
+                        Total           = total,
+                        Processed       = result.SourcesProcessed,
+                        Generated       = result.CachedGenerated,
+                        NewOperation    = errOp,
+                    });
+                }
+            }
+        }
+
+        progress.Report(new()
+        {
+            PhaseText       = "Done.",
+            IsIndeterminate = false,
+            Total           = total,
+            Processed       = result.SourcesProcessed,
+            Generated       = result.CachedGenerated,
+        });
+
+        return result;
+    }
+
+    private static void WriteImageCacheLog(Systems.ImageCacheResult result, DateTime startTime)
+    {
+        try
+        {
+            var logDir = Path.Combine(AppContext.BaseDirectory, "logs", "imagecache");
+            Directory.CreateDirectory(logDir);
+            var logPath = Path.Combine(logDir, $"image_cache_regen_{startTime:yyyyMMdd-HHmmss}.txt");
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("Image Cache Regeneration Log");
+            sb.AppendLine($"Generated: {startTime:o}");
+            sb.AppendLine();
+            foreach (var op in result.Operations)
+                sb.AppendLine($"{op.Action,-14} | {op.Object,-40} | {op.Destination}");
+            sb.AppendLine();
+            sb.AppendLine($"Sources processed:     {result.SourcesProcessed}");
+            sb.AppendLine($"Cache files generated: {result.CachedGenerated}");
+            File.WriteAllText(logPath, sb.ToString());
+        }
+        catch { /* non-fatal */ }
+    }
+
     // ── Operations ───────────────────────────────────────────────────────────
+
+    private ToolRecord?                    _selectedTool;
+    private Border?                        _selectedToolBorder;
+    private readonly Dictionary<string, Border> _toolBorders = new();
 
     private List<TransformRecord>               _transforms       = [];
     private TransformRecord?                    _editingTransform;
     private Border?                             _selectedTransformBorder;
     private readonly Dictionary<string, Border> _transformBorders = new();
 
-    private void InitOperations()
+    private void InitOperations(string? selectToolId = null)
     {
-        var appRoot       = AppContext.BaseDirectory;
-        var tools         = _catalog.LoadTools();
-        var builtInToolIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "7zip" };
+        var appRoot = AppContext.BaseDirectory;
+        var tools   = _catalog.LoadTools();
+
+        _selectedTool           = null;
+        _selectedToolBorder     = null;
+        ToolEditBtn.IsEnabled   = false;
+        ToolDeleteBtn.IsEnabled = false;
+        _toolBorders.Clear();
 
         OperationsToolsPanel.Children.Clear();
         foreach (var tool in tools)
         {
-            var exePath   = Path.Combine(appRoot, "tools", tool.FolderName, tool.ExecutableName);
-            var isBuiltIn = builtInToolIds.Contains(tool.Id);
-            var present   = !isBuiltIn && File.Exists(exePath);
+            var exePath = Path.Combine(appRoot, "tools", tool.FolderName, tool.ExecutableName);
+            var present = File.Exists(exePath);
 
-            var statusText  = isBuiltIn ? "BUILT-IN" : (present ? "PRESENT" : "MISSING");
-            var statusColor = isBuiltIn ? "#29B6F6"  : (present ? "#4CAF50"  : "#EF5350");
-            var pathColor   = isBuiltIn ? "#555566"  : (present ? "#555566"  : "#EF5350");
+            var originText    = tool.IsBundled ? "BUNDLED" : "CUSTOM";
+            var originColor   = tool.IsBundled ? "#29B6F6" : "#888899";
+            var presenceText  = present ? "PRESENT" : "MISSING";
+            var presenceColor = present ? "#4CAF50" : "#EF5350";
+            var pathColor     = present ? "#555566" : "#EF5350";
 
-            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("180,Auto,*"), Margin = new Avalonia.Thickness(0, 0, 0, 4) };
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("180,Auto,Auto,*") };
             var nameBlock = new TextBlock
             {
                 Text              = tool.Id,
@@ -8561,12 +9100,21 @@ public partial class MainWindow : Window
                 Foreground        = new SolidColorBrush(Avalonia.Media.Color.Parse("#CCCCDD")),
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             };
-            var statusBlock = new TextBlock
+            var originBlock = new TextBlock
             {
-                Text              = statusText,
+                Text              = originText,
                 FontSize          = 10,
                 FontWeight        = Avalonia.Media.FontWeight.SemiBold,
-                Foreground        = new SolidColorBrush(Avalonia.Media.Color.Parse(statusColor)),
+                Foreground        = new SolidColorBrush(Avalonia.Media.Color.Parse(originColor)),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                Margin            = new Avalonia.Thickness(0, 0, 8, 0),
+            };
+            var presenceBlock = new TextBlock
+            {
+                Text              = presenceText,
+                FontSize          = 10,
+                FontWeight        = Avalonia.Media.FontWeight.SemiBold,
+                Foreground        = new SolidColorBrush(Avalonia.Media.Color.Parse(presenceColor)),
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
                 Margin            = new Avalonia.Thickness(0, 0, 12, 0),
             };
@@ -8578,18 +9126,109 @@ public partial class MainWindow : Window
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
                 TextWrapping      = Avalonia.Media.TextWrapping.NoWrap,
             };
-            Avalonia.Controls.Grid.SetColumn(nameBlock,   0);
-            Avalonia.Controls.Grid.SetColumn(statusBlock, 1);
-            Avalonia.Controls.Grid.SetColumn(pathBlock,   2);
+            Avalonia.Controls.Grid.SetColumn(nameBlock,     0);
+            Avalonia.Controls.Grid.SetColumn(originBlock,   1);
+            Avalonia.Controls.Grid.SetColumn(presenceBlock, 2);
+            Avalonia.Controls.Grid.SetColumn(pathBlock,     3);
             row.Children.Add(nameBlock);
-            row.Children.Add(statusBlock);
+            row.Children.Add(originBlock);
+            row.Children.Add(presenceBlock);
             row.Children.Add(pathBlock);
-            OperationsToolsPanel.Children.Add(row);
+
+            var rowBorder = new Border
+            {
+                Background    = Brushes.Transparent,
+                CornerRadius  = new Avalonia.CornerRadius(3),
+                Padding       = new Avalonia.Thickness(4, 2),
+                Child         = row,
+                Cursor        = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+            };
+            var capturedTool   = tool;
+            var capturedBorder = rowBorder;
+            rowBorder.PointerPressed += (_, _) => SelectTool(capturedTool, capturedBorder);
+            _toolBorders[tool.Id] = rowBorder;
+            OperationsToolsPanel.Children.Add(rowBorder);
+        }
+
+        // Restore selection if requested
+        if (selectToolId != null && _toolBorders.TryGetValue(selectToolId, out var selBorder))
+        {
+            var selTool = tools.FirstOrDefault(t => t.Id == selectToolId);
+            if (selTool != null) SelectTool(selTool, selBorder);
         }
 
         _transforms = _catalog.LoadTransforms();
         BuildTransformListPanel();
         TransformEditorPanel.IsVisible = false;
+    }
+
+    private void SelectTool(ToolRecord tool, Border border)
+    {
+        if (_selectedToolBorder != null)
+            _selectedToolBorder.Background = Brushes.Transparent;
+
+        border.Background   = new SolidColorBrush(Avalonia.Media.Color.Parse("#1A1A2C"));
+        _selectedToolBorder = border;
+        _selectedTool       = tool;
+
+        ToolEditBtn.IsEnabled   = true;
+        ToolDeleteBtn.IsEnabled = !tool.IsBundled;
+    }
+
+    private async void OnDeleteTool(object? sender, RoutedEventArgs e)
+    {
+        if (_selectedTool is not ToolRecord tool) return;
+        if (tool.IsBundled) return;
+
+        if (_catalog.ToolHasDependencies(tool.Id))
+        {
+            await new InfoDialog(
+                "Cannot Delete Tool",
+                "This tool is used by one or more transforms and cannot be deleted.\n\n" +
+                "Please update or remove those transforms before deleting this tool.")
+                .ShowDialog(this);
+            return;
+        }
+
+        var confirmed = await new ConfirmDialog(
+            "Delete Tool",
+            $"This will permanently remove tool \"{tool.Id}\" from the catalog.\n\n" +
+            "This action cannot be undone. Proceed?")
+            .ShowDialog<bool>(this);
+        if (!confirmed) return;
+
+        _catalog.DeleteTool(tool.Id);
+        _selectedTool           = null;
+        _selectedToolBorder     = null;
+        ToolEditBtn.IsEnabled   = false;
+        ToolDeleteBtn.IsEnabled = false;
+        InitOperations();
+    }
+
+    private async void OnAddTool(object? sender, RoutedEventArgs e)
+    {
+        var existingIds = _catalog.LoadTools().Select(t => t.Id);
+        var dialog      = new ToolDialog(existingIds, null);
+        var ok          = await dialog.ShowDialog<bool>(this);
+        if (!ok || dialog.Result is not ToolRecord tool) return;
+
+        _catalog.SaveTool(tool);
+        InitOperations(tool.Id);
+    }
+
+    private async void OnEditTool(object? sender, RoutedEventArgs e)
+    {
+        if (_selectedTool is not ToolRecord current) return;
+
+        var existingIds = _catalog.LoadTools()
+            .Where(t => t.Id != current.Id)
+            .Select(t => t.Id);
+        var dialog = new ToolDialog(existingIds, current);
+        var ok     = await dialog.ShowDialog<bool>(this);
+        if (!ok || dialog.Result is not ToolRecord tool) return;
+
+        _catalog.SaveTool(tool);
+        InitOperations(tool.Id);
     }
 
     // ── Logs ─────────────────────────────────────────────────────────────────
@@ -8841,6 +9480,7 @@ public partial class MainWindow : Window
         TransformTypeBox.SelectedIndex = t.TransformType == "folder_strategy" ? 1 : 0;
         TransformCmdBox.Text           = t.CommandTemplate;
         TransformOutputExtBox.Text     = t.OutputExtension;
+        TransformDeleteBtn.IsEnabled   = t.Id.StartsWith("custom_");
         TransformEditorPanel.IsVisible = true;
         UpdateCommandPreview();
     }
@@ -8925,6 +9565,39 @@ public partial class MainWindow : Window
         };
         _transforms.Add(draft);
         BuildTransformListPanel(draft.Id);
+    }
+
+    private async void OnDeleteTransform(object? sender, RoutedEventArgs e)
+    {
+        if (_editingTransform is not TransformRecord t)
+            return;
+
+        if (!t.Id.StartsWith("custom_"))
+            return;
+
+        if (_catalog.TransformHasDependencies(t.Id))
+        {
+            await new InfoDialog(
+                "Cannot Delete Transform",
+                $"\"{t.Name}\" is still referenced by one or more DAT line configurations.\n\n" +
+                "Remove all DAT line references to this transform before deleting it.")
+                .ShowDialog(this);
+            return;
+        }
+
+        var confirmed = await new ConfirmDialog(
+            "Delete Transform",
+            $"This will permanently delete \"{t.Name}\".\n\n" +
+            "This action cannot be undone.")
+            .ShowDialog<bool>(this);
+        if (!confirmed) return;
+
+        _catalog.DeleteTransform(t.Id);
+        _transforms            = _catalog.LoadTransforms();
+        _editingTransform      = null;
+        TransformEditorPanel.IsVisible = false;
+        TransformDeleteBtn.IsEnabled   = false;
+        BuildTransformListPanel();
     }
 
     private async void OnTestTransform(object? sender, RoutedEventArgs e)

@@ -22,6 +22,8 @@ public sealed class ActionColorConverter : IValueConverter
             "hash"      => "#B39DDB",
             "verify"    => "#CE93D8",
             "transform" => "#26C6DA",
+            "SOURCE"    => "#00BCD4",   // image cache: source master row
+            "CACHE"     => "#4CAF50",   // image cache: cached variant row
             _           => action.EndsWith("-failed", StringComparison.Ordinal) ? "#E57373" : "#FFB74D",
         };
         return new SolidColorBrush(Color.Parse(hex));

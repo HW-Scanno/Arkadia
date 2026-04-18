@@ -22,6 +22,14 @@
         <Style Selector="TextBox:focus-within">
             <Setter Property="BorderBrush" Value="#E07040"/>
         </Style>
+        <Style Selector="ComboBox">
+            <Setter Property="Background"   Value="#0D0D13"/>
+            <Setter Property="Foreground"   Value="#E8E8F0"/>
+            <Setter Property="BorderBrush"  Value="#2A2A3C"/>
+            <Setter Property="FontSize"     Value="12"/>
+            <Setter Property="Padding"      Value="8,7"/>
+            <Setter Property="CornerRadius" Value="4"/>
+        </Style>
         <Style Selector="TextBlock.field-label">
             <Setter Property="FontSize"   Value="11"/>
             <Setter Property="Foreground" Value="#888899"/>
@@ -110,6 +118,17 @@
             <StackPanel Spacing="4">
                 <TextBlock Classes="field-label" Text="SERIAL"/>
                 <TextBox x:Name="SerialInput"/>
+            </StackPanel>
+
+            <StackPanel Spacing="4">
+                <TextBlock Classes="field-label" Text="FAMILY"/>
+                <ComboBox x:Name="FamilyCombo"
+                          HorizontalAlignment="Stretch"
+                          SelectedIndex="0">
+                    <ComboBoxItem Content="Core"   Tag="core"/>
+                    <ComboBoxItem Content="Extras" Tag="extras"/>
+                    <ComboBoxItem Content="Books"  Tag="books"/>
+                </ComboBox>
             </StackPanel>
 
         </StackPanel>

@@ -7,6 +7,7 @@ public sealed class DiskRecord
     public required string Id                    { get; init; }
     public required string Label                 { get; init; }
     public required string Status                { get; init; }  // available | assigned | lost
+    public required string Family                { get; init; }  // core | extras | books
     public required long   DeclaredCapacityBytes { get; init; }
     public          string Filesystem            { get; init; } = "";
     public          string Brand                 { get; init; } = "";

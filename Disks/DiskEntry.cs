@@ -8,6 +8,7 @@ public sealed class DiskEntry
     public required string Id                    { get; init; }
     public required string Label                 { get; init; }
     public required string Status                { get; init; }
+    public required string Family                { get; init; }
     public required long   DeclaredCapacityBytes { get; init; }
     public required long   UsedBytes             { get; init; }
     public required string Filesystem            { get; init; }
@@ -23,7 +24,8 @@ public sealed class DiskEntry
     public string CapacityLabel => FormatBytes(DeclaredCapacityBytes);
     public string UsedLabel     => FormatBytes(UsedBytes);
     public string FreeLabel     => FormatBytes(FreeBytes);
-    public string ModelLabel    => string.IsNullOrEmpty(Model) ? "—" : Model;
+    public string ModelLabel    => string.IsNullOrEmpty(Model)  ? "—" : Model;
+    public string SerialLabel   => string.IsNullOrEmpty(Serial) ? "—" : Serial;
     public string FilesystemLabel => string.IsNullOrEmpty(Filesystem) ? "—" : Filesystem;
 
     public IBrush StatusBrush => Status switch

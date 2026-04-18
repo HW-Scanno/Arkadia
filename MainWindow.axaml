@@ -8,7 +8,7 @@
         xmlns:data="using:Arkadia.Data"
         x:Class="Arkadia.MainWindow"
         Title="Arkadia"
-        Width="1400" Height="785"
+        Width="1550" Height="785"
         MinWidth="800" MinHeight="565"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource ArkBackground}"
@@ -502,7 +502,7 @@
                                 <TextBlock Classes="widget-title" Text="TOOLS"/>
                                 <Border Classes="card-divider"/>
                                 <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Built-In"/>
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Bundled"/>
                                     <TextBlock Grid.Column="1" x:Name="DashToolsBuiltIn" Classes="card-val" Text="—"/>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,4">
@@ -1276,6 +1276,11 @@
                                 Classes="view-toggle"
                                 Margin="0,0,8,0"
                                 Click="OnMarkDiskLost"/>
+                        <Button DockPanel.Dock="Left"
+                                Content="Delete Disk"
+                                Classes="view-toggle danger"
+                                Margin="0,0,8,0"
+                                Click="OnDeleteDisk"/>
                         <TextBlock x:Name="DisksCountText"
                                    DockPanel.Dock="Right"
                                    VerticalAlignment="Center"
@@ -1299,7 +1304,7 @@
                                 Padding="20,8"
                                 BorderBrush="{DynamicResource ArkSurfaceAlt}"
                                 BorderThickness="0,0,0,1">
-                            <Grid ColumnDefinitions="52,*,90,90,90,100,140,90">
+                            <Grid ColumnDefinitions="52,200,90,90,90,100,130,130,*">
                                 <TextBlock Grid.Column="0" Classes="col-header" Text="STATUS" HorizontalAlignment="Center"/>
                                 <TextBlock Grid.Column="1" Classes="col-header" Text="LABEL"/>
                                 <TextBlock Grid.Column="2" Classes="col-header" Text="CAPACITY" HorizontalAlignment="Right"/>
@@ -1307,79 +1312,15 @@
                                 <TextBlock Grid.Column="4" Classes="col-header" Text="FREE" HorizontalAlignment="Right"/>
                                 <TextBlock Grid.Column="5" Classes="col-header" Text="FILESYSTEM" HorizontalAlignment="Center"/>
                                 <TextBlock Grid.Column="6" Classes="col-header" Text="MODEL"/>
-                                <TextBlock Grid.Column="7" Classes="col-header" Text="USAGE" HorizontalAlignment="Center"/>
+                                <TextBlock Grid.Column="7" Classes="col-header" Text="SERIAL"/>
+                                <TextBlock Grid.Column="8" Classes="col-header" Text="USAGE" HorizontalAlignment="Center"/>
                             </Grid>
                         </Border>
 
-                        <ListBox x:Name="DisksList"
-                                 Grid.Row="1"
-                                 Background="Transparent"
-                                 BorderThickness="0"
-                                 Padding="0"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                                 SelectionChanged="OnDiskSelectionChanged">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate x:DataType="disks:DiskEntry">
-                                    <Grid ColumnDefinitions="52,*,90,90,90,100,140,90" Margin="20,0">
-                                        <TextBlock Grid.Column="0"
-                                                   Text="{Binding StatusLabel}"
-                                                   FontSize="11" FontWeight="SemiBold"
-                                                   Foreground="{Binding StatusBrush}"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="1"
-                                                   Text="{Binding Label}"
-                                                   FontSize="13"
-                                                   Foreground="{DynamicResource ArkTextPrimary}"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="2"
-                                                   Text="{Binding CapacityLabel}"
-                                                   FontSize="12"
-                                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                                   HorizontalAlignment="Right"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="3"
-                                                   Text="{Binding UsedLabel}"
-                                                   FontSize="12"
-                                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                                   HorizontalAlignment="Right"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="4"
-                                                   Text="{Binding FreeLabel}"
-                                                   FontSize="12"
-                                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                                   HorizontalAlignment="Right"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="5"
-                                                   Text="{Binding FilesystemLabel}"
-                                                   FontSize="12"
-                                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                                   HorizontalAlignment="Center"
-                                                   VerticalAlignment="Center"/>
-                                        <TextBlock Grid.Column="6"
-                                                   Text="{Binding ModelLabel}"
-                                                   FontSize="12"
-                                                   Foreground="{DynamicResource ArkTextSecondary}"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   VerticalAlignment="Center"/>
-                                        <!-- Usage bar -->
-                                        <Border Grid.Column="7"
-                                                Height="8"
-                                                CornerRadius="1"
-                                                Background="{DynamicResource ArkSurfaceAlt}"
-                                                VerticalAlignment="Center"
-                                                Margin="8,0">
-                                            <Border HorizontalAlignment="Left"
-                                                    Height="8"
-                                                    CornerRadius="1"
-                                                    Background="#4CAF50"
-                                                    Width="{Binding UsageRatio, Converter={x:Static disks:DiskUsageBarConverter.Instance}}"/>
-                                        </Border>
-                                    </Grid>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
+                        <ScrollViewer Grid.Row="1"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="DisksPanel" Spacing="0"/>
+                        </ScrollViewer>
 
                     </Grid><!-- /table column -->
 
@@ -1679,115 +1620,207 @@
                 </StackPanel>
 
                 <ScrollViewer Grid.Row="1" Margin="28,18,28,24">
-                    <StackPanel Spacing="20" MaxWidth="680" HorizontalAlignment="Left">
+                    <StackPanel Spacing="20">
 
-                        <!-- ── VERIFY BEHAVIOR card ──────────────────────────── -->
-                        <Border Background="#0A0A12" BorderBrush="#1E1E2C"
-                                BorderThickness="1" CornerRadius="6" Padding="20,16">
-                            <StackPanel Spacing="0">
+                        <!-- ── 2-column card grid ─────────────────────────────── -->
+                        <Grid ColumnDefinitions="*,20,*">
 
-                                <TextBlock Text="VERIFY BEHAVIOR"
-                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
-                                           Foreground="#555566" Margin="0,0,0,16"/>
+                            <!-- ── Left column: VERIFY BEHAVIOR, DEBUG, PLATFORM IMAGES -->
+                            <StackPanel Grid.Column="0" Spacing="20">
 
-                                <!-- quarantine_mismatch_on_verify -->
-                                <StackPanel Spacing="4" Margin="0,0,0,14">
-                                    <CheckBox x:Name="SettingQuarantineMismatch"
-                                              Content="Quarantine mismatches during verify"
-                                              FontSize="12" Foreground="#CCCCDD"/>
-                                    <TextBlock Text="When enabled, files that fail checksum verification can be moved to incoming-skip during Verify apply."
-                                               FontSize="11" Foreground="#555577"
-                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
+                                <!-- ── VERIFY BEHAVIOR card ─────────────────────── -->
+                                <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                        BorderThickness="1" CornerRadius="6" Padding="20,16">
+                                    <StackPanel Spacing="0">
 
-                                <!-- quarantine_unexpected_on_verify -->
-                                <StackPanel Spacing="4">
-                                    <CheckBox x:Name="SettingQuarantineUnexpected"
-                                              Content="Quarantine unexpected files during verify"
-                                              FontSize="12" Foreground="#CCCCDD"/>
-                                    <TextBlock Text="When enabled, files present on volume but not expected by the DAT can be moved to incoming-skip during Verify apply."
-                                               FontSize="11" Foreground="#555577"
-                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
+                                        <TextBlock Text="VERIFY BEHAVIOR"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                                   Foreground="#555566" Margin="0,0,0,16"/>
 
-                            </StackPanel>
-                        </Border><!-- /Verify Behavior card -->
+                                        <!-- quarantine_mismatch_on_verify -->
+                                        <StackPanel Spacing="4" Margin="0,0,0,14">
+                                            <CheckBox x:Name="SettingQuarantineMismatch"
+                                                      Content="Quarantine mismatches during verify"
+                                                      FontSize="12" Foreground="#CCCCDD"/>
+                                            <TextBlock Text="When enabled, files that fail checksum verification can be moved to incoming-skip during Verify apply."
+                                                       FontSize="11" Foreground="#555577"
+                                                       Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
 
-                        <!-- ── LOGGING card ──────────────────────────────────── -->
-                        <Border Background="#0A0A12" BorderBrush="#1E1E2C"
-                                BorderThickness="1" CornerRadius="6" Padding="20,16">
-                            <StackPanel Spacing="0">
+                                        <!-- quarantine_unexpected_on_verify -->
+                                        <StackPanel Spacing="4">
+                                            <CheckBox x:Name="SettingQuarantineUnexpected"
+                                                      Content="Quarantine unexpected files during verify"
+                                                      FontSize="12" Foreground="#CCCCDD"/>
+                                            <TextBlock Text="When enabled, files present on volume but not expected by the DAT can be moved to incoming-skip during Verify apply."
+                                                       FontSize="11" Foreground="#555577"
+                                                       Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
 
-                                <TextBlock Text="LOGGING"
-                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
-                                           Foreground="#555566" Margin="0,0,0,16"/>
+                                    </StackPanel>
+                                </Border><!-- /Verify Behavior card -->
 
-                                <!-- auto_export_ingestion_logs -->
-                                <StackPanel Spacing="4" Margin="0,0,0,14">
-                                    <CheckBox x:Name="SettingAutoExportLogs"
-                                              Content="Auto-export ingestion logs"
-                                              FontSize="12" Foreground="#CCCCDD"/>
-                                    <TextBlock Text="Automatically write a log file to the logs/ folder each time an ingestion run completes."
-                                               FontSize="11" Foreground="#555577"
-                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
+                                <!-- ── DEBUG card ───────────────────────────────── -->
+                                <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                        BorderThickness="1" CornerRadius="6" Padding="20,16">
+                                    <StackPanel Spacing="0">
 
-                                <!-- log_on_copy -->
-                                <StackPanel Spacing="4" Margin="0,0,0,14">
-                                    <CheckBox x:Name="SettingLogOnCopy"
-                                              Content="Auto-export copy logs"
-                                              FontSize="12" Foreground="#CCCCDD"/>
-                                    <TextBlock Text="Automatically include individual file copy operations in the volume build log."
-                                               FontSize="11" Foreground="#555577"
-                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
+                                        <TextBlock Text="DEBUG"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                                   Foreground="#555566" Margin="0,0,0,16"/>
 
-                                <!-- auto_export_verify_logs -->
-                                <StackPanel Spacing="4" Margin="0,0,0,14">
-                                    <CheckBox x:Name="SettingAutoExportVerifyLogs"
-                                              Content="Auto-export verify logs"
-                                              FontSize="12" Foreground="#CCCCDD"/>
-                                    <TextBlock Text="Automatically write a log file to the logs/verify/ folder each time a verify run completes."
-                                               FontSize="11" Foreground="#555577"
-                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
+                                        <!-- show_debug_artifact_info -->
+                                        <StackPanel Spacing="4">
+                                            <CheckBox x:Name="SettingShowDebugArtifactInfo"
+                                                      Content="Show debug artifact info in Library"
+                                                      FontSize="12" Foreground="#CCCCDD"/>
+                                            <TextBlock Text="When enabled, detailed artifact and content identity data is shown in the Library release detail panel. Takes effect immediately."
+                                                       FontSize="11" Foreground="#555577"
+                                                       Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
 
-                                <!-- auto_export_repair_logs -->
-                                <StackPanel Spacing="4">
-                                    <CheckBox x:Name="SettingAutoExportRepairLogs"
-                                              Content="Auto-export repair logs"
-                                              FontSize="12" Foreground="#CCCCDD"/>
-                                    <TextBlock Text="Automatically write a log file to the logs/repair/ folder each time a repair run completes."
-                                               FontSize="11" Foreground="#555577"
-                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
+                                    </StackPanel>
+                                </Border><!-- /Debug card -->
 
-                            </StackPanel>
-                        </Border><!-- /Ingest Behavior card -->
+                                <!-- ── PLATFORM IMAGES card ─────────────────────── -->
+                                <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                        BorderThickness="1" CornerRadius="6" Padding="20,16">
+                                    <StackPanel Spacing="0">
 
-                        <!-- ── DEBUG card ─────────────────────────────────────── -->
-                        <Border Background="#0A0A12" BorderBrush="#1E1E2C"
-                                BorderThickness="1" CornerRadius="6" Padding="20,16">
-                            <StackPanel Spacing="0">
+                                        <TextBlock Text="PLATFORM IMAGES"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                                   Foreground="#555566" Margin="0,0,0,16"/>
 
-                                <TextBlock Text="DEBUG"
-                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
-                                           Foreground="#555566" Margin="0,0,0,16"/>
+                                        <StackPanel Spacing="4">
+                                            <Button Content="Regenerate Image Cache"
+                                                    Classes="view-toggle"
+                                                    Click="OnRegenerateImageCache"/>
+                                            <TextBlock Text="Scans all _source.png files in data/systemimages/ and regenerates cached variants at all target sizes. Always shows a progress window."
+                                                       FontSize="11" Foreground="#555577"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
 
-                                <!-- show_debug_artifact_info -->
-                                <StackPanel Spacing="4">
-                                    <CheckBox x:Name="SettingShowDebugArtifactInfo"
-                                              Content="Show debug artifact info in Library"
-                                              FontSize="12" Foreground="#CCCCDD"/>
-                                    <TextBlock Text="When enabled, detailed artifact and content identity data is shown in the Library release detail panel. Takes effect immediately."
-                                               FontSize="11" Foreground="#555577"
-                                               Margin="22,0,0,0" TextWrapping="Wrap"/>
-                                </StackPanel>
+                                    </StackPanel>
+                                </Border><!-- /Platform Images card -->
 
-                            </StackPanel>
-                        </Border><!-- /Debug card -->
+                            </StackPanel><!-- /Left column -->
 
-                        <!-- ── Save / Reload ──────────────────────────────────── -->
+                            <!-- ── Right column: LOGGING, DIAGNOSTICS ───────────── -->
+                            <StackPanel Grid.Column="2" Spacing="20">
+
+                                <!-- ── LOGGING card ─────────────────────────────── -->
+                                <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                        BorderThickness="1" CornerRadius="6" Padding="20,16">
+                                    <StackPanel Spacing="0">
+
+                                        <TextBlock Text="LOGGING"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                                   Foreground="#555566" Margin="0,0,0,16"/>
+
+                                        <!-- auto_export_ingestion_logs -->
+                                        <StackPanel Spacing="4" Margin="0,0,0,14">
+                                            <CheckBox x:Name="SettingAutoExportLogs"
+                                                      Content="Auto-export ingestion logs"
+                                                      FontSize="12" Foreground="#CCCCDD"/>
+                                            <TextBlock Text="Automatically write a log file to logs/ingest/ each time an ingestion run completes."
+                                                       FontSize="11" Foreground="#555577"
+                                                       Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                        <!-- log_on_copy -->
+                                        <StackPanel Spacing="4" Margin="0,0,0,14">
+                                            <CheckBox x:Name="SettingLogOnCopy"
+                                                      Content="Auto-export copy logs"
+                                                      FontSize="12" Foreground="#CCCCDD"/>
+                                            <TextBlock Text="Automatically include individual file copy operations in the volume build log."
+                                                       FontSize="11" Foreground="#555577"
+                                                       Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                        <!-- auto_export_verify_logs -->
+                                        <StackPanel Spacing="4" Margin="0,0,0,14">
+                                            <CheckBox x:Name="SettingAutoExportVerifyLogs"
+                                                      Content="Auto-export verify logs"
+                                                      FontSize="12" Foreground="#CCCCDD"/>
+                                            <TextBlock Text="Automatically write a log file to logs/volume-verify/ each time a verify run completes."
+                                                       FontSize="11" Foreground="#555577"
+                                                       Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                        <!-- auto_export_repair_logs -->
+                                        <StackPanel Spacing="4" Margin="0,0,0,14">
+                                            <CheckBox x:Name="SettingAutoExportRepairLogs"
+                                                      Content="Auto-export repair logs"
+                                                      FontSize="12" Foreground="#CCCCDD"/>
+                                            <TextBlock Text="Automatically write a log file to logs/repair/ each time a repair run completes."
+                                                       FontSize="11" Foreground="#555577"
+                                                       Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                        <!-- image_cache_regen_write_log -->
+                                        <StackPanel Spacing="4" Margin="0,0,0,14">
+                                            <CheckBox x:Name="SettingImageCacheRegenWriteLog"
+                                                      Content="Auto-export image cache regeneration logs"
+                                                      FontSize="12" Foreground="#CCCCDD"/>
+                                            <TextBlock Text="Automatically write a log file to logs/imagecache/ each time Image Cache Regeneration completes."
+                                                       FontSize="11" Foreground="#555577"
+                                                       Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                        <Border Height="1" Background="#1E1E2C" Margin="0,2,0,14"/>
+
+                                        <!-- logs_to_keep_per_type -->
+                                        <StackPanel Spacing="4" Margin="0,0,0,14">
+                                            <TextBlock Text="Logs to keep per type"
+                                                       FontSize="12" Foreground="#888899"/>
+                                            <TextBox x:Name="SettingLogsToKeep"
+                                                     Watermark="5"
+                                                     Width="72"
+                                                     HorizontalAlignment="Left"/>
+                                            <TextBlock Text="Number of log files to retain per log type when pruning. Minimum 1."
+                                                       FontSize="11" Foreground="#555577"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                        <!-- Prune Logs -->
+                                        <StackPanel Spacing="4">
+                                            <Button Content="Prune Logs"
+                                                    Classes="view-toggle"
+                                                    Click="OnPruneLogs"/>
+                                            <TextBlock Text="Delete older log files in each logs/ subfolder, keeping only the most recent N per type."
+                                                       FontSize="11" Foreground="#555577"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                    </StackPanel>
+                                </Border><!-- /Logging card -->
+
+                                <!-- ── DIAGNOSTICS card ──────────────────────────── -->
+                                <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                        BorderThickness="1" CornerRadius="6" Padding="20,16">
+                                    <StackPanel Spacing="0">
+
+                                        <TextBlock Text="DIAGNOSTICS"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                                   Foreground="#555566" Margin="0,0,0,16"/>
+
+                                        <StackPanel Spacing="4">
+                                            <Button Content="Validate Integrity"
+                                                    Classes="view-toggle"
+                                                    Click="OnValidateIntegrity"/>
+                                            <TextBlock Text="Checks invariants across volumes, artifacts, and releases. Read-only. Writes a report to logs/integrity/."
+                                                       FontSize="11" Foreground="#555577"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                    </StackPanel>
+                                </Border><!-- /Diagnostics card -->
+
+                            </StackPanel><!-- /Right column -->
+
+                        </Grid><!-- /2-column card grid -->
+
+                        <!-- ── Save / Reload — full width, after all cards ─────── -->
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <Button Content="Save Settings"
                                     Classes="view-toggle"
@@ -1796,27 +1829,6 @@
                                     Classes="view-toggle"
                                     Click="OnReloadSettings"/>
                         </StackPanel>
-
-                        <!-- ── DIAGNOSTICS card ───────────────────────────────── -->
-                        <Border Background="#0A0A12" BorderBrush="#1E1E2C"
-                                BorderThickness="1" CornerRadius="6" Padding="20,16">
-                            <StackPanel Spacing="0">
-
-                                <TextBlock Text="DIAGNOSTICS"
-                                           FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
-                                           Foreground="#555566" Margin="0,0,0,16"/>
-
-                                <StackPanel Spacing="4">
-                                    <Button Content="Validate Integrity"
-                                            Classes="view-toggle"
-                                            Click="OnValidateIntegrity"/>
-                                    <TextBlock Text="Checks invariants across volumes, artifacts, and releases. Read-only. Writes a report to logs/integrity/."
-                                               FontSize="11" Foreground="#555577"
-                                               TextWrapping="Wrap"/>
-                                </StackPanel>
-
-                            </StackPanel>
-                        </Border><!-- /Diagnostics card -->
 
                     </StackPanel>
                 </ScrollViewer>
@@ -1847,6 +1859,22 @@
 
                                 <!-- tool rows injected here by code -->
                                 <StackPanel x:Name="OperationsToolsPanel" Spacing="4"/>
+
+                                <StackPanel Orientation="Horizontal" Margin="0,10,0,0" Spacing="8">
+                                    <Button Content="Add Tool"
+                                            Classes="view-toggle"
+                                            Click="OnAddTool"/>
+                                    <Button x:Name="ToolEditBtn"
+                                            Content="Edit Tool"
+                                            Classes="view-toggle"
+                                            IsEnabled="False"
+                                            Click="OnEditTool"/>
+                                    <Button x:Name="ToolDeleteBtn"
+                                            Content="Delete Tool"
+                                            Classes="view-toggle danger"
+                                            IsEnabled="False"
+                                            Click="OnDeleteTool"/>
+                                </StackPanel>
 
                             </StackPanel>
                         </Border><!-- /Tools card -->
@@ -1991,7 +2019,7 @@
                                                FontFamily="Cascadia Code,Consolas,Courier New,monospace"/>
                                 </Border>
 
-                                <!-- save + test -->
+                                <!-- save + test + delete -->
                                 <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,20">
                                     <Button x:Name="TransformSaveBtn"
                                             Content="Save"
@@ -2001,6 +2029,11 @@
                                             Content="Test Transform"
                                             Classes="view-toggle"
                                             Click="OnTestTransform"/>
+                                    <Button x:Name="TransformDeleteBtn"
+                                            Content="Delete Transform"
+                                            Classes="view-toggle danger"
+                                            IsEnabled="False"
+                                            Click="OnDeleteTransform"/>
                                 </StackPanel>
 
                                 <Border Height="1" Background="#1E1E2C" Margin="0,0,0,16"/>

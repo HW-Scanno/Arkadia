@@ -188,6 +188,9 @@ public sealed class CatalogService
                 PRIMARY KEY (dat_line_id, file_extension)
             )
             """);
+        RunMigration(conn, "ALTER TABLE disks ADD COLUMN family TEXT NOT NULL DEFAULT 'core'");
+        RunMigration(conn, "ALTER TABLE tools ADD COLUMN is_bundled INTEGER NOT NULL DEFAULT 0");
+        RunMigration(conn, "UPDATE tools SET is_bundled = 1 WHERE tool_id IN ('7zip', 'chdman')");
 
         // ── Seed storage_strategies if empty ──────────────────────────────────
         using var stratCheck = conn.CreateCommand();
@@ -214,9 +217,9 @@ public sealed class CatalogService
         {
             using var toolSeed = conn.CreateCommand();
             toolSeed.CommandText = """
-                INSERT INTO tools(tool_id, folder_name, executable_name) VALUES
-                    ('chdman', 'chdman', 'chdman.exe'),
-                    ('7zip',   '7zip',   '7z.exe');
+                INSERT INTO tools(tool_id, folder_name, executable_name, is_bundled) VALUES
+                    ('chdman', 'chdman', 'chdman.exe', 1),
+                    ('7zip',   '7zip',   '7z.exe',     1);
                 """;
             toolSeed.ExecuteNonQuery();
         }
@@ -229,14 +232,23 @@ public sealed class CatalogService
             using var txSeed = conn.CreateCommand();
             txSeed.CommandText = """
                 INSERT INTO transforms(transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type) VALUES
-                    ('no_compression',      'No Compression',      null,     '',                                         '',     1, 'file_strategy'),
-                    ('chd_cd_compression',  'CHD CD Compression',  'chdman', 'createcd -i "{input}" -o "{output}"',      '.chd', 1, 'file_strategy'),
-                    ('chd_dvd_compression', 'CHD DVD Compression', 'chdman', 'createdvd -i "{input}" -o "{output}"',     '.chd', 1, 'file_strategy'),
-                    ('chd_gd_compression',  'CHD GD Compression',  'chdman', 'createcd -i "{input}" -o "{output}"',      '.chd', 1, 'file_strategy'),
-                    ('zip_compression',     'ZIP Compression',     '7zip',   'a -tzip "{output}" "{input}"',             '.zip', 1, 'folder_strategy');
+                    ('no_compression',       'No Compression',          null,     '',                                         '',     1, 'file_strategy'),
+                    ('chd_cd_compression',   'CHD CD Compression',      'chdman', 'createcd -i "{input}" -o "{output}"',      '.chd', 1, 'file_strategy'),
+                    ('chd_dvd_compression',  'CHD DVD Compression',     'chdman', 'createdvd -i "{input}" -o "{output}"',     '.chd', 1, 'file_strategy'),
+                    ('chd_gd_compression',   'CHD GD Compression',      'chdman', 'createcd -i "{input}" -o "{output}"',      '.chd', 1, 'file_strategy'),
+                    ('zip_compression',      'ZIP Compression',         '7zip',   'a -tzip "{output}" "{input}"',             '.zip', 1, 'folder_strategy'),
+                    ('zip_file_compression', 'ZIP Compression (File)',  '7zip',   'a -tzip "{output}" "{input}"',             '.zip', 1, 'file_strategy');
                 """;
             txSeed.ExecuteNonQuery();
         }
+
+        // ── Backfill transforms added after initial seeding ───────────────────
+        using var backfill = conn.CreateCommand();
+        backfill.CommandText = """
+            INSERT OR IGNORE INTO transforms(transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type) VALUES
+                ('zip_file_compression', 'ZIP Compression (File)', '7zip', 'a -tzip "{output}" "{input}"', '.zip', 1, 'file_strategy');
+            """;
+        backfill.ExecuteNonQuery();
 
         // ── Seed default settings if missing ─────────────────────────────────
         using var settingSeed = conn.CreateCommand();
@@ -247,9 +259,14 @@ public sealed class CatalogService
                 ('auto_export_verify_logs', 'true'),
                 ('auto_export_repair_logs', 'true'),
                 ('disk_sequence', '0'),
+                ('disk_sequence_core',   '0'),
+                ('disk_sequence_extras', '0'),
+                ('disk_sequence_books',  '0'),
                 ('log_on_copy', 'true'),
                 ('quarantine_unexpected_on_verify', 'false'),
-                ('quarantine_mismatch_on_verify', 'false')
+                ('quarantine_mismatch_on_verify', 'false'),
+                ('image_cache_regen_write_log', 'true'),
+                ('logs_to_keep_per_type', '5')
             """;
         settingSeed.ExecuteNonQuery();
 
@@ -440,7 +457,7 @@ public sealed class CatalogService
         var list = new List<ToolRecord>();
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
-        cmd.CommandText = "SELECT tool_id, folder_name, executable_name FROM tools ORDER BY tool_id";
+        cmd.CommandText = "SELECT tool_id, folder_name, executable_name, is_bundled FROM tools ORDER BY tool_id";
         using var r = cmd.ExecuteReader();
         while (r.Read())
             list.Add(new ToolRecord
@@ -448,8 +465,42 @@ public sealed class CatalogService
                 Id             = r.GetString(0),
                 FolderName     = r.GetString(1),
                 ExecutableName = r.GetString(2),
+                IsBundled      = r.GetInt32(3) != 0,
             });
         return list;
+    }
+
+    public void SaveTool(ToolRecord tool)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT OR REPLACE INTO tools(tool_id, folder_name, executable_name, is_bundled)
+            VALUES($id, $folder, $exe, $bundled)
+            """;
+        cmd.Parameters.AddWithValue("$id",      tool.Id);
+        cmd.Parameters.AddWithValue("$folder",  tool.FolderName);
+        cmd.Parameters.AddWithValue("$exe",     tool.ExecutableName);
+        cmd.Parameters.AddWithValue("$bundled", tool.IsBundled ? 1 : 0);
+        cmd.ExecuteNonQuery();
+    }
+
+    public bool ToolHasDependencies(string toolId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM transforms WHERE tool_id = $id";
+        cmd.Parameters.AddWithValue("$id", toolId);
+        return (long)(cmd.ExecuteScalar() ?? 0L) > 0;
+    }
+
+    public void DeleteTool(string toolId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM tools WHERE tool_id = $id";
+        cmd.Parameters.AddWithValue("$id", toolId);
+        cmd.ExecuteNonQuery();
     }
 
     // ── Transforms ────────────────────────────────────────────────────────────
@@ -501,6 +552,29 @@ public sealed class CatalogService
         cmd.Parameters.AddWithValue("$ext",     t.OutputExtension);
         cmd.Parameters.AddWithValue("$enabled", t.IsEnabled ? 1 : 0);
         cmd.Parameters.AddWithValue("$type",    t.TransformType);
+        cmd.ExecuteNonQuery();
+    }
+
+    public bool TransformHasDependencies(string id)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT 1 FROM dat_line_extension_transforms WHERE transform_id = $id
+            UNION ALL
+            SELECT 1 FROM dat_lines WHERE folder_transform_id = $id
+            LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("$id", id);
+        return cmd.ExecuteScalar() is not null;
+    }
+
+    public void DeleteTransform(string id)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM transforms WHERE transform_id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
         cmd.ExecuteNonQuery();
     }
 
@@ -758,7 +832,7 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, label, status, declared_capacity_bytes, filesystem, brand, model, serial, created_at, updated_at
+            SELECT id, label, status, declared_capacity_bytes, filesystem, brand, model, serial, created_at, updated_at, family
             FROM disks
             ORDER BY label
             """;
@@ -798,6 +872,45 @@ public sealed class CatalogService
 
         return FormatDiskLabel(next);
     }
+
+    /// <summary>
+    /// Atomically increments and returns the next disk label for the given family.
+    /// Format: ARKADIA-{PREFIX}-XXXX  (e.g. ARKADIA-CORE-0001)
+    /// Uses the settings key "disk_sequence_{family}".
+    /// </summary>
+    public string NextDiskLabel(string family)
+    {
+        var key = $"disk_sequence_{family}";
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        using var read = conn.CreateCommand();
+        read.Transaction = tx;
+        read.CommandText = "SELECT value FROM settings WHERE key = $key";
+        read.Parameters.AddWithValue("$key", key);
+        var raw = read.ExecuteScalar() as string;
+        int next = raw is not null && int.TryParse(raw, out var n) ? n + 1 : 1;
+
+        using var write = conn.CreateCommand();
+        write.Transaction = tx;
+        write.CommandText = """
+            INSERT INTO settings(key, value) VALUES($key, $v)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """;
+        write.Parameters.AddWithValue("$key", key);
+        write.Parameters.AddWithValue("$v",   next.ToString());
+        write.ExecuteNonQuery();
+        tx.Commit();
+
+        return $"ARKADIA-{FamilyToPrefix(family)}-{next:D4}";
+    }
+
+    private static string FamilyToPrefix(string family) => family switch
+    {
+        "extras" => "EXTRAS",
+        "books"  => "BOOKS",
+        _        => "CORE",
+    };
 
     /// <summary>
     /// Returns what the next disk label would be WITHOUT incrementing the sequence.
@@ -936,8 +1049,8 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO disks(id, label, status, declared_capacity_bytes, filesystem, brand, model, serial, created_at, updated_at)
-            VALUES($id, $label, $status, $cap, $fs, $brand, $model, $serial, $created, $updated)
+            INSERT INTO disks(id, label, status, declared_capacity_bytes, filesystem, brand, model, serial, created_at, updated_at, family)
+            VALUES($id, $label, $status, $cap, $fs, $brand, $model, $serial, $created, $updated, $family)
             ON CONFLICT(id) DO UPDATE SET
                 label                   = excluded.label,
                 status                  = excluded.status,
@@ -946,6 +1059,7 @@ public sealed class CatalogService
                 brand                   = excluded.brand,
                 model                   = excluded.model,
                 serial                  = excluded.serial,
+                family                  = excluded.family,
                 updated_at              = excluded.updated_at
             """;
         cmd.Parameters.AddWithValue("$id",      d.Id);
@@ -958,6 +1072,7 @@ public sealed class CatalogService
         cmd.Parameters.AddWithValue("$serial",  NullIfEmpty(d.Serial));
         cmd.Parameters.AddWithValue("$created", d.CreatedAt.ToString("o"));
         cmd.Parameters.AddWithValue("$updated", d.UpdatedAt.ToString("o"));
+        cmd.Parameters.AddWithValue("$family",  d.Family);
         cmd.ExecuteNonQuery();
     }
 
@@ -1018,6 +1133,7 @@ public sealed class CatalogService
         Serial                = r.IsDBNull(7) ? "" : r.GetString(7),
         CreatedAt             = DateTime.Parse(r.GetString(8)),
         UpdatedAt             = DateTime.Parse(r.GetString(9)),
+        Family                = r.IsDBNull(10) ? "core" : r.GetString(10),
     };
 
     // ── Dashboard aggregates ──────────────────────────────────────────────────
@@ -1587,6 +1703,49 @@ public sealed class CatalogService
         cmd.CommandText = "DELETE FROM volumes WHERE id = $vid";
         cmd.Parameters.Clear();
         cmd.Parameters.AddWithValue("$vid", volumeId);
+        cmd.ExecuteNonQuery();
+
+        tx.Commit();
+    }
+
+    // ── Disk Deletion ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns true if any volume whose current location is this disk is not yet marked lost.
+    /// Used to gate Delete Disk — the disk may only be removed once all such volumes are lost.
+    /// </summary>
+    public bool HasActiveDiskVolumes(string diskId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(*)
+            FROM volume_locations vl
+            JOIN volumes v ON v.id = vl.volume_id
+            WHERE vl.disk_id = $diskId AND vl.is_current = 1
+              AND v.status != 'lost'
+            """;
+        cmd.Parameters.AddWithValue("$diskId", diskId);
+        return (long)(cmd.ExecuteScalar() ?? 0L) > 0;
+    }
+
+    /// <summary>
+    /// Removes all volume_locations rows referencing this disk, then the disk record itself.
+    /// Volumes and their artifacts are intentionally left untouched.
+    /// </summary>
+    public void DeleteDisk(string diskId)
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+        using var cmd  = conn.CreateCommand();
+
+        cmd.CommandText = "DELETE FROM volume_locations WHERE disk_id = $id";
+        cmd.Parameters.AddWithValue("$id", diskId);
+        cmd.ExecuteNonQuery();
+
+        cmd.CommandText = "DELETE FROM disks WHERE id = $id";
+        cmd.Parameters.Clear();
+        cmd.Parameters.AddWithValue("$id", diskId);
         cmd.ExecuteNonQuery();
 
         tx.Commit();

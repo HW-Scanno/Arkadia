@@ -16,6 +16,8 @@
           "Microsoft.Data.Sqlite": "8.0.14",
           "Semi.Avalonia": "11.3.7.3",
           "SharpCompress": "0.38.0",
+          "SkiaSharp": "2.88.9",
+          "SkiaSharp.NativeAssets.Win32": "2.88.9",
           "System.Management": "8.0.0"
         },
         "runtime": {
