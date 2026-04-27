@@ -19,4 +19,5 @@ public sealed record DatLineInfo(
     string? CatalogPlatformId     = null,
     int     Outdated              = 0,
     string  TransformStrategyType = "none",
-    string  FolderTransformId     = "");
+    string  FolderTransformId     = "",
+    string  FileHandling          = "archives_pre_extraction");

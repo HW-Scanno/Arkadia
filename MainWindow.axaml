@@ -302,22 +302,50 @@
                 </StackPanel>
 
                 <StackPanel DockPanel.Dock="Top" Margin="8,0" Spacing="2">
+
+                    <!-- ── Group 1: Dashboard · Analytics ─────────────────── -->
                     <Button x:Name="NavDashboard" Classes="nav active" Tag="Dashboard" Click="OnNavClick">
                         <StackPanel Orientation="Horizontal" Spacing="10">
                             <PathIcon Width="14" Height="14" Data="M0 0H6V6H0Z M8 0H14V6H8Z M0 8H6V14H0Z M8 8H14V14H8Z"/>
                             <TextBlock Text="Dashboard" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="NavSystems" Classes="nav" Tag="Systems" Click="OnNavClick">
+                    <Button x:Name="NavAnalytics" Classes="nav" Tag="Analytics" Click="OnNavClick">
                         <StackPanel Orientation="Horizontal" Spacing="10">
-                            <PathIcon Width="14" Height="14" Data="M0 0H14V4H0Z M0 5H6V9H0Z M8 5H14V9H8Z M0 10H6V14H0Z M8 10H14V14H8Z"/>
-                            <TextBlock Text="Systems" VerticalAlignment="Center"/>
+                            <PathIcon Width="14" Height="14" Data="M0 10H2V14H0Z M3 7H5V14H3Z M6 4H8V14H6Z M9 1H11V14H9Z M12 5H14V14H12Z"/>
+                            <TextBlock Text="Analytics" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="NavPending" Classes="nav" Tag="Pending" Click="OnNavClick">
+
+                    <Border Height="1" Margin="4,5,4,5" Background="{DynamicResource ArkSurfaceAlt}"/>
+
+                    <!-- ── Group 2: Providers · Platforms · Transforms ────── -->
+                    <Button x:Name="NavProviders" Classes="nav" Tag="Providers" Click="OnNavClick">
                         <StackPanel Orientation="Horizontal" Spacing="10">
-                            <PathIcon Width="14" Height="14" Data="F1 M7 1A6 6 0 1 0 7 13A6 6 0 1 0 7 1Z M7 4V7.5L9.5 9"/>
-                            <TextBlock Text="Pending" VerticalAlignment="Center"/>
+                            <PathIcon Width="14" Height="14" Data="M0 0H14V4H0Z M2 5H12V9H2Z M4 10H10V14H4Z"/>
+                            <TextBlock Text="Providers" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="NavSystems" Classes="nav" Tag="Platforms" Click="OnNavClick">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <PathIcon Width="14" Height="14" Data="M0 0H14V4H0Z M0 5H6V9H0Z M8 5H14V9H8Z M0 10H6V14H0Z M8 10H14V14H8Z"/>
+                            <TextBlock Text="Platforms" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="NavOperations" Classes="nav" Tag="Transforms" Click="OnNavClick">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <PathIcon Width="14" Height="14" Data="M0 0H4V4H0Z M6 1H14V3H6Z M0 5H4V9H0Z M6 6H14V8H6Z M0 10H4V14H0Z M6 11H14V13H6Z"/>
+                            <TextBlock Text="Transforms" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+
+                    <Border Height="1" Margin="4,5,4,5" Background="{DynamicResource ArkSurfaceAlt}"/>
+
+                    <!-- ── Group 3: Library · Staging · Pending ───────────── -->
+                    <Button x:Name="NavLibrary" Classes="nav" Tag="Library" Click="OnNavClick">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <PathIcon Width="14" Height="14" Data="M0 1H14V3H0Z M0 6H14V8H0Z M0 11H14V13H0Z"/>
+                            <TextBlock Text="Library" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="NavStaging" Classes="nav" Tag="Staging" Click="OnNavClick">
@@ -326,12 +354,16 @@
                             <TextBlock Text="Staging" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="NavLibrary" Classes="nav" Tag="Library" Click="OnNavClick">
+                    <Button x:Name="NavPending" Classes="nav" Tag="Pending" Click="OnNavClick">
                         <StackPanel Orientation="Horizontal" Spacing="10">
-                            <PathIcon Width="14" Height="14" Data="M0 1H14V3H0Z M0 6H14V8H0Z M0 11H14V13H0Z"/>
-                            <TextBlock Text="Library" VerticalAlignment="Center"/>
+                            <PathIcon Width="14" Height="14" Data="F1 M7 1A6 6 0 1 0 7 13A6 6 0 1 0 7 1Z M7 4V7.5L9.5 9"/>
+                            <TextBlock Text="Pending" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
+
+                    <Border Height="1" Margin="4,5,4,5" Background="{DynamicResource ArkSurfaceAlt}"/>
+
+                    <!-- ── Group 4: Volumes · Disks ───────────────────────── -->
                     <Button x:Name="NavVolumes" Classes="nav" Tag="Volumes" Click="OnNavClick">
                         <StackPanel Orientation="Horizontal" Spacing="10">
                             <PathIcon Width="14" Height="14" Data="M2 3C2 1.9 4.2 1 7 1 9.8 1 12 1.9 12 3L12 11C12 12.1 9.8 13 7 13 4.2 13 2 12.1 2 11Z M2 3C2 4.1 4.2 5 7 5 9.8 5 12 4.1 12 3"/>
@@ -344,18 +376,7 @@
                             <TextBlock Text="Disks" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button x:Name="NavOperations" Classes="nav" Tag="Operations" Click="OnNavClick">
-                        <StackPanel Orientation="Horizontal" Spacing="10">
-                            <PathIcon Width="14" Height="14" Data="M0 0H4V4H0Z M6 1H14V3H6Z M0 5H4V9H0Z M6 6H14V8H6Z M0 10H4V14H0Z M6 11H14V13H6Z"/>
-                            <TextBlock Text="Operations" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                    <Button x:Name="NavAnalytics" Classes="nav" Tag="Analytics" Click="OnNavClick">
-                        <StackPanel Orientation="Horizontal" Spacing="10">
-                            <PathIcon Width="14" Height="14" Data="M0 10H2V14H0Z M3 7H5V14H3Z M6 4H8V14H6Z M9 1H11V14H9Z M12 5H14V14H12Z"/>
-                            <TextBlock Text="Analytics" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
+
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -596,6 +617,10 @@
                                 Margin="10,2" VerticalAlignment="Stretch"/>
                         <Button x:Name="SysActIngestFiles" Classes="view-toggle"
                                 Content="Ingest Files"  Click="OnSysIngestFiles"/>
+                        <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
+                                Margin="10,2" VerticalAlignment="Stretch"/>
+                        <Button Classes="view-toggle"
+                                Content="DAT Downloader" Click="OnOpenDatDownloader"/>
                     </StackPanel>
                 </Border>
 
@@ -1990,9 +2015,9 @@
                                                VerticalAlignment="Center"/>
                                 </Grid>
 
-                                <!-- transform type -->
-                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,16">
-                                    <TextBlock Grid.Column="0" Text="Type"
+                                <!-- processor type -->
+                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,10">
+                                    <TextBlock Grid.Column="0" Text="Processor Type"
                                                FontSize="10" FontWeight="SemiBold" Foreground="#555566"
                                                VerticalAlignment="Center"/>
                                     <ComboBox x:Name="TransformTypeBox"
@@ -2000,8 +2025,39 @@
                                               Background="#0D0D1A" Foreground="#CCCCDD"
                                               BorderBrush="#2A2A3C" BorderThickness="1"
                                               FontSize="12">
+                                        <ComboBoxItem Content="File-oriented"   Tag="file_oriented"/>
+                                        <ComboBoxItem Content="Folder-oriented" Tag="folder_oriented"/>
+                                    </ComboBox>
+                                </Grid>
+
+                                <!-- output kind -->
+                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,16">
+                                    <TextBlock Grid.Column="0" Text="Output Kind"
+                                               FontSize="10" FontWeight="SemiBold" Foreground="#555566"
+                                               VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="TransformOutputKindBox"
+                                              Grid.Column="1"
+                                              Background="#0D0D1A" Foreground="#CCCCDD"
+                                              BorderBrush="#2A2A3C" BorderThickness="1"
+                                              FontSize="12">
                                         <ComboBoxItem Content="File"   Tag="file"/>
                                         <ComboBoxItem Content="Folder" Tag="folder"/>
+                                    </ComboBox>
+                                </Grid>
+
+                                <!-- archive tier -->
+                                <Grid ColumnDefinitions="90,*" Margin="0,0,0,16">
+                                    <TextBlock Grid.Column="0" Text="Archive Tier"
+                                               FontSize="10" FontWeight="SemiBold" Foreground="#555566"
+                                               VerticalAlignment="Center"/>
+                                    <ComboBox x:Name="TransformArchiveTierBox"
+                                              Grid.Column="1"
+                                              Background="#0D0D1A" Foreground="#CCCCDD"
+                                              BorderBrush="#2A2A3C" BorderThickness="1"
+                                              FontSize="12">
+                                        <ComboBoxItem Content="Tier A — Source-equivalent" Tag="A"/>
+                                        <ComboBoxItem Content="Tier B — Lossless transform" Tag="B"/>
+                                        <ComboBoxItem Content="Tier C — Lossy transform"    Tag="C"/>
                                     </ComboBox>
                                 </Grid>
 
@@ -2426,6 +2482,323 @@
 
                 </StackPanel>
             </ScrollViewer><!-- /ViewAnalytics -->
+
+            <!-- ── Providers view ── -->
+            <ScrollViewer x:Name="ViewProviders"
+                          Grid.Row="1"
+                          IsVisible="False"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="28,24,28,32" Spacing="0">
+
+                    <!-- Page header -->
+                    <StackPanel Spacing="4" Margin="0,0,0,28">
+                        <TextBlock Text="Providers"
+                                   FontSize="22" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource ArkTextPrimary}"/>
+                        <TextBlock Text="Choose a source for DAT files and related archive data."
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ArkTextSecondary}"/>
+                    </StackPanel>
+
+                    <!-- Category tabs -->
+                    <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,0,0,24">
+                        <Button x:Name="ProvidersTabRomDats"
+                                Classes="view-toggle active"
+                                Content="ROM DATs"
+                                Click="OnProviderCategoryRomDats"/>
+                        <Button x:Name="ProvidersTabRomScrapers"
+                                Classes="view-toggle"
+                                Content="ROM Scrapers"
+                                Click="OnProviderCategoryRomScrapers"/>
+                    </StackPanel>
+
+                    <!-- ── ROM DATs panel ── -->
+                    <StackPanel x:Name="ProvidersRomDatsPanel" IsVisible="True" Spacing="12">
+
+                        <!-- Row 0: Redump | TOSEC -->
+                        <Grid ColumnDefinitions="*,12,*">
+
+                            <!-- Redump card -->
+                            <Border Grid.Column="0"
+                                    CornerRadius="8" Padding="20,18" MinHeight="165"
+                                    Background="{DynamicResource ArkSurface}"
+                                    BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                    BorderThickness="1">
+                                <Grid RowDefinitions="Auto,*,Auto">
+                                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                                        <StackPanel Grid.Column="0" Spacing="3">
+                                            <TextBlock Text="REDUMP"
+                                                       FontSize="10" FontWeight="SemiBold"
+                                                       LetterSpacing="1.8"
+                                                       Foreground="{DynamicResource ArkAccent}"/>
+                                            <TextBlock Text="Optical disc preservation"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource ArkTextPrimary}"/>
+                                        </StackPanel>
+                                        <Border Grid.Column="1" VerticalAlignment="Top"
+                                                Background="#142314" CornerRadius="4" Padding="8,3">
+                                            <TextBlock Text="AUTO"
+                                                       FontSize="9" FontWeight="SemiBold"
+                                                       LetterSpacing="1.5" Foreground="#4CAF50"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Grid.Row="1" Spacing="10">
+                                        <TextBlock
+                                            Text="Verified DATs for disc-based systems such as PlayStation, Saturn and Dreamcast."
+                                            FontSize="12"
+                                            Foreground="{DynamicResource ArkTextSecondary}"
+                                            TextWrapping="Wrap"/>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="✔ Auto download"
+                                                       FontSize="11" Foreground="#555566"/>
+                                            <TextBlock Text="✔ Auto extract"
+                                                       FontSize="11" Foreground="#555566"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <Button Grid.Row="2" Content="Open"
+                                            HorizontalAlignment="Right" Margin="0,16,0,0"
+                                            Background="{DynamicResource ArkAccent}" Foreground="#FFFFFF"
+                                            BorderThickness="0" CornerRadius="5"
+                                            Padding="16,7" FontSize="12"
+                                            Click="OnProviderRedumpOpen"/>
+                                </Grid>
+                            </Border>
+
+                            <!-- TOSEC card -->
+                            <Border Grid.Column="2"
+                                    CornerRadius="8" Padding="20,18" MinHeight="165"
+                                    Background="{DynamicResource ArkSurface}"
+                                    BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                    BorderThickness="1">
+                                <Grid RowDefinitions="Auto,*,Auto">
+                                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                                        <StackPanel Grid.Column="0" Spacing="3">
+                                            <TextBlock Text="TOSEC"
+                                                       FontSize="10" FontWeight="SemiBold"
+                                                       LetterSpacing="1.8"
+                                                       Foreground="{DynamicResource ArkAccent}"/>
+                                            <TextBlock Text="Legacy systems and computers"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource ArkTextPrimary}"/>
+                                        </StackPanel>
+                                        <Border Grid.Column="1" VerticalAlignment="Top"
+                                                Background="#142314" CornerRadius="4" Padding="8,3">
+                                            <TextBlock Text="AUTO"
+                                                       FontSize="9" FontWeight="SemiBold"
+                                                       LetterSpacing="1.5" Foreground="#4CAF50"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Grid.Row="1" Spacing="10">
+                                        <TextBlock
+                                            Text="Large community DAT collection covering computers, consoles and obscure systems."
+                                            FontSize="12"
+                                            Foreground="{DynamicResource ArkTextSecondary}"
+                                            TextWrapping="Wrap"/>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="✔ Pack download"
+                                                       FontSize="11" Foreground="#555566"/>
+                                            <TextBlock Text="✔ Auto extract"
+                                                       FontSize="11" Foreground="#555566"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <Button Grid.Row="2" Content="Open"
+                                            HorizontalAlignment="Right" Margin="0,16,0,0"
+                                            Background="{DynamicResource ArkAccent}" Foreground="#FFFFFF"
+                                            BorderThickness="0" CornerRadius="5"
+                                            Padding="16,7" FontSize="12"
+                                            Click="OnProviderTosecOpen"/>
+                                </Grid>
+                            </Border>
+
+                        </Grid>
+
+                        <!-- Row 1: No-Intro | future placeholder -->
+                        <Grid ColumnDefinitions="*,12,*">
+
+                            <!-- No-Intro card -->
+                            <Border Grid.Column="0"
+                                    CornerRadius="8" Padding="20,18" MinHeight="165"
+                                    Background="{DynamicResource ArkSurface}"
+                                    BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                    BorderThickness="1">
+                                <Grid RowDefinitions="Auto,*,Auto">
+                                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                                        <StackPanel Grid.Column="0" Spacing="3">
+                                            <TextBlock Text="NO-INTRO"
+                                                       FontSize="10" FontWeight="SemiBold"
+                                                       LetterSpacing="1.8"
+                                                       Foreground="{DynamicResource ArkAccent}"/>
+                                            <TextBlock Text="Cartridge and digital console sets"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource ArkTextPrimary}"/>
+                                        </StackPanel>
+                                        <Border Grid.Column="1" VerticalAlignment="Top"
+                                                Background="#281C10" CornerRadius="4" Padding="8,3">
+                                            <TextBlock Text="MANUAL"
+                                                       FontSize="9" FontWeight="SemiBold"
+                                                       LetterSpacing="1.5" Foreground="#FFA726"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Grid.Row="1" Spacing="10">
+                                        <TextBlock
+                                            Text="High-quality DATs with a manual DAT-o-MATIC workflow."
+                                            FontSize="12"
+                                            Foreground="{DynamicResource ArkTextSecondary}"
+                                            TextWrapping="Wrap"/>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="✔ Official source"
+                                                       FontSize="11" Foreground="#555566"/>
+                                            <TextBlock Text="✗ Manual step required"
+                                                       FontSize="11" Foreground="#555566"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <Button Grid.Row="2" Content="Guide"
+                                            HorizontalAlignment="Right" Margin="0,16,0,0"
+                                            Background="{DynamicResource ArkAccent}" Foreground="#FFFFFF"
+                                            BorderThickness="0" CornerRadius="5"
+                                            Padding="16,7" FontSize="12"
+                                            Click="OnProviderNoIntroOpen"/>
+                                </Grid>
+                            </Border>
+
+                            <!-- Eggmansworld card -->
+                            <Border Grid.Column="2"
+                                    CornerRadius="8" Padding="20,18" MinHeight="165"
+                                    Background="{DynamicResource ArkSurface}"
+                                    BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                    BorderThickness="1">
+                                <Grid RowDefinitions="Auto,*,Auto">
+                                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                                        <StackPanel Grid.Column="0" Spacing="3">
+                                            <TextBlock Text="EGGMANSWORLD"
+                                                       FontSize="10" FontWeight="SemiBold"
+                                                       LetterSpacing="1.8"
+                                                       Foreground="{DynamicResource ArkAccent}"/>
+                                            <TextBlock Text="Curated DAT releases"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource ArkTextPrimary}"/>
+                                        </StackPanel>
+                                        <Border Grid.Column="1" VerticalAlignment="Top"
+                                                Background="#142314" CornerRadius="4" Padding="8,3">
+                                            <TextBlock Text="AUTO"
+                                                       FontSize="9" FontWeight="SemiBold"
+                                                       LetterSpacing="1.5" Foreground="#4CAF50"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Grid.Row="1" Spacing="10">
+                                        <TextBlock
+                                            Text="Community-maintained DAT packs published through GitHub Releases."
+                                            FontSize="12"
+                                            Foreground="{DynamicResource ArkTextSecondary}"
+                                            TextWrapping="Wrap"/>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="✔ Release list"
+                                                       FontSize="11" Foreground="#555566"/>
+                                            <TextBlock Text="✔ Batch download"
+                                                       FontSize="11" Foreground="#555566"/>
+                                            <TextBlock Text="✔ Auto extract archives"
+                                                       FontSize="11" Foreground="#555566"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <Button Grid.Row="2" Content="Open"
+                                            HorizontalAlignment="Right" Margin="0,16,0,0"
+                                            Background="{DynamicResource ArkAccent}" Foreground="#FFFFFF"
+                                            BorderThickness="0" CornerRadius="5"
+                                            Padding="16,7" FontSize="12"
+                                            Click="OnProviderEggmansworldOpen"/>
+                                </Grid>
+                            </Border>
+
+                        </Grid>
+
+                        <!-- Row 2: MAME | placeholder -->
+                        <Grid ColumnDefinitions="*,12,*">
+
+                            <!-- MAME card -->
+                            <Border Grid.Column="0"
+                                    CornerRadius="8" Padding="20,18" MinHeight="165"
+                                    Background="{DynamicResource ArkSurface}"
+                                    BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                    BorderThickness="1">
+                                <Grid RowDefinitions="Auto,*,Auto">
+                                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+                                        <StackPanel Grid.Column="0" Spacing="3">
+                                            <TextBlock Text="MAME"
+                                                       FontSize="10" FontWeight="SemiBold"
+                                                       LetterSpacing="1.8"
+                                                       Foreground="{DynamicResource ArkAccent}"/>
+                                            <TextBlock Text="Official machine database"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource ArkTextPrimary}"/>
+                                        </StackPanel>
+                                        <Border Grid.Column="1" VerticalAlignment="Top"
+                                                Background="#142314" CornerRadius="4" Padding="8,3">
+                                            <TextBlock Text="AUTO"
+                                                       FontSize="9" FontWeight="SemiBold"
+                                                       LetterSpacing="1.5" Foreground="#4CAF50"/>
+                                        </Border>
+                                    </Grid>
+                                    <StackPanel Grid.Row="1" Spacing="10">
+                                        <TextBlock
+                                            Text="Download official MAME releases and generate listxml for versioned local cache."
+                                            FontSize="12"
+                                            Foreground="{DynamicResource ArkTextSecondary}"
+                                            TextWrapping="Wrap"/>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="✔ Official source"
+                                                       FontSize="11" Foreground="#555566"/>
+                                            <TextBlock Text="✔ Versioned cache"
+                                                       FontSize="11" Foreground="#555566"/>
+                                            <TextBlock Text="✔ listxml generation"
+                                                       FontSize="11" Foreground="#555566"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                    <Button Grid.Row="2" Content="Open"
+                                            HorizontalAlignment="Right" Margin="0,16,0,0"
+                                            Background="{DynamicResource ArkAccent}" Foreground="#FFFFFF"
+                                            BorderThickness="0" CornerRadius="5"
+                                            Padding="16,7" FontSize="12"
+                                            Click="OnProviderMameOpen"/>
+                                </Grid>
+                            </Border>
+
+                            <!-- Placeholder -->
+                            <Border Grid.Column="2"
+                                    CornerRadius="8" Padding="20,18" MinHeight="165"
+                                    Background="Transparent"
+                                    BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                    BorderThickness="1"
+                                    Opacity="0.35">
+                                <StackPanel VerticalAlignment="Center" Spacing="6">
+                                    <TextBlock Text="MORE PROVIDERS"
+                                               FontSize="10" FontWeight="SemiBold"
+                                               LetterSpacing="1.8"
+                                               Foreground="{DynamicResource ArkTextSecondary}"/>
+                                    <TextBlock Text="Additional DAT sources coming in future releases."
+                                               FontSize="12"
+                                               Foreground="{DynamicResource ArkTextSecondary}"
+                                               TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Border>
+
+                        </Grid>
+
+                    </StackPanel>
+
+                    <!-- ── ROM Scrapers panel ── -->
+                    <Border x:Name="ProvidersRomScrapersPanel"
+                            IsVisible="False"
+                            Background="{DynamicResource ArkSurface}"
+                            CornerRadius="8" Padding="24"
+                            BorderBrush="{DynamicResource ArkSurfaceAlt}" BorderThickness="1">
+                        <TextBlock Text="Not implemented yet."
+                                   FontSize="13"
+                                   Foreground="{DynamicResource ArkTextSecondary}"/>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer><!-- /ViewProviders -->
 
         </Grid>
     </Grid>

@@ -17,12 +17,23 @@ public partial class ConfigureDatLineDialog : Window
     private readonly string         _dataDir;
 
     // Controls populated by PopulateContent — read back in OnSave
+    private ComboBox                         _fhBox         = null!;
     private ComboBox                         _stratBox      = null!;
     private ComboBox                         _folderBox     = null!;
     private Dictionary<string, ComboBox>     _extActionBoxes = new(StringComparer.OrdinalIgnoreCase);
     private List<TransformRecord>            _fileXforms    = [];
     private List<TransformRecord>            _folderXforms  = [];
+    private readonly string[]                _fileHandlingValues = ["archives_pre_extraction", "all_files"];
     private readonly string[]                _stratValues   = ["none", "file_extension", "release_folder"];
+
+    // Live-feedback panels (built in PopulateContent, updated by RefreshLivePanels)
+    private StackPanel _modelInfoPanel  = null!;
+    private StackPanel _happenPanel     = null!;
+    private StackPanel _validationPanel = null!;
+    private bool       _isConfigInvalid = false;
+
+    // "single" | "multi" | "mixed" | "unknown"
+    private string _releaseShape = "unknown";
 
     public ConfigureDatLineDialog() : this(
         new DatLineInfo("", 0, ""), new CatalogService(""), "") { }
@@ -74,12 +85,75 @@ public partial class ConfigureDatLineDialog : Window
                                    .ThenBy(kv => kv.Key)
                                    .Select(kv => (kv.Key, kv.Value))
                                    .ToList();
+
+                if (allFiles.Count > 0)
+                {
+                    int singles = allFiles.Values.Count(f => f.Count == 1);
+                    int multis  = allFiles.Values.Count(f => f.Count > 1);
+                    _releaseShape = (singles, multis) switch
+                    {
+                        ( > 0, 0)   => "single",
+                        (0,   > 0)  => "multi",
+                        ( > 0, > 0) => "mixed",
+                        _           => "unknown",
+                    };
+                }
             }
         }
 
         var dim     = new SolidColorBrush(Color.Parse("#555566"));
         var text    = new SolidColorBrush(Color.Parse("#CCCCDD"));
         var warn    = new SolidColorBrush(Color.Parse("#E8A000"));
+
+        // ── Section 0: File Handling ──────────────────────────────────────────
+        ContentPanel.Children.Add(new TextBlock
+        {
+            Text       = "FILE HANDLING",
+            FontSize   = 9,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = dim,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 6),
+        });
+
+        var fhLabels = new[] { "Archives Pre-Extraction", "All Files" };
+        _fhBox = new ComboBox
+        {
+            ItemsSource     = fhLabels,
+            SelectedIndex   = _d.FileHandling == "all_files" ? 1 : 0,
+            Background      = new SolidColorBrush(Color.Parse("#0D0D1A")),
+            Foreground      = text,
+            BorderBrush     = new SolidColorBrush(Color.Parse("#2A2A3C")),
+            BorderThickness = new Avalonia.Thickness(1),
+            FontSize        = 12,
+            Margin          = new Avalonia.Thickness(0, 0, 0, 6),
+        };
+        ContentPanel.Children.Add(_fhBox);
+
+        var fhNote = new TextBlock
+        {
+            FontSize     = 11,
+            Foreground   = dim,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Margin       = new Avalonia.Thickness(0, 0, 0, 4),
+        };
+
+        void UpdateFhNote()
+        {
+            fhNote.Text = _fhBox.SelectedIndex == 1
+                ? "All files in the incoming folder are matched directly — no archive extraction is performed."
+                : "Archives (.zip, .7z, .rar) are extracted before matching; the originals are deleted on success.";
+        }
+
+        UpdateFhNote();
+        _fhBox.SelectionChanged += (_, _) => UpdateFhNote();
+        ContentPanel.Children.Add(fhNote);
+
+        ContentPanel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Color.Parse("#1A1A2C")),
+            Margin     = new Avalonia.Thickness(0, 10, 0, 16),
+        });
 
         // ── Section 1: Strategy type ──────────────────────────────────────────
         ContentPanel.Children.Add(new TextBlock
@@ -307,21 +381,305 @@ public partial class ConfigureDatLineDialog : Window
         }
         folderPanel.Children.Add(_folderBox);
 
-        // Strategy change → show/hide sub-panels
+        // Strategy change → show/hide sub-panels + refresh live sections
         _stratBox.SelectionChanged += (_, _) =>
         {
             var idx = _stratBox.SelectedIndex;
             var val = idx >= 0 && idx < _stratValues.Length ? _stratValues[idx] : "none";
             fileExtPanel.IsVisible = val == "file_extension";
             folderPanel.IsVisible  = val == "release_folder";
+            RefreshLivePanels();
         };
+
+        _folderBox.SelectionChanged += (_, _) => RefreshLivePanels();
+
+        // ── Section 4: Release Shape (static) ────────────────────────────────
+        ContentPanel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Color.Parse("#1A1A2C")),
+            Margin     = new Avalonia.Thickness(0, 16, 0, 16),
+        });
+        ContentPanel.Children.Add(new TextBlock
+        {
+            Text       = "RELEASE SHAPE",
+            FontSize   = 9,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = dim,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 6),
+        });
+        var shapeText = _releaseShape switch
+        {
+            "single"  => "Single-file \u2014 all releases contain exactly one file",
+            "multi"   => "Multi-file \u2014 all releases contain multiple files",
+            "mixed"   => "Mixed \u2014 some releases have one file, others have multiple",
+            _         => "Unknown \u2014 no data store found for this DAT line",
+        };
+        ContentPanel.Children.Add(new TextBlock
+        {
+            Text         = shapeText,
+            FontSize     = 11,
+            Foreground   = text,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Margin       = new Avalonia.Thickness(0, 0, 0, 4),
+        });
+        string? recText = _releaseShape switch
+        {
+            "single" => "This DAT contains only single-file releases. A file-oriented model is recommended.",
+            "multi"  => "This DAT contains multi-file releases. A folder-oriented model is required.",
+            "mixed"  => "This DAT contains both single-file and multi-file releases. A folder-oriented model is required.",
+            _        => null,
+        };
+        if (recText is not null)
+            ContentPanel.Children.Add(new TextBlock
+            {
+                Text         = recText,
+                FontSize     = 11,
+                Foreground   = _releaseShape == "single" ? text : warn,
+                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                Margin       = new Avalonia.Thickness(0, 0, 0, 4),
+            });
+
+        // ── Section 5: Selected Model (live) ─────────────────────────────────
+        ContentPanel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Color.Parse("#1A1A2C")),
+            Margin     = new Avalonia.Thickness(0, 12, 0, 16),
+        });
+        ContentPanel.Children.Add(new TextBlock
+        {
+            Text       = "SELECTED MODEL",
+            FontSize   = 9,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = dim,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 6),
+        });
+        _modelInfoPanel = new StackPanel { Spacing = 2 };
+        ContentPanel.Children.Add(_modelInfoPanel);
+
+        // ── Section 6: What Will Happen (live) ───────────────────────────────
+        ContentPanel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Color.Parse("#1A1A2C")),
+            Margin     = new Avalonia.Thickness(0, 12, 0, 16),
+        });
+        ContentPanel.Children.Add(new TextBlock
+        {
+            Text       = "WHAT WILL HAPPEN",
+            FontSize   = 9,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = dim,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 6),
+        });
+        _happenPanel = new StackPanel { Spacing = 4 };
+        ContentPanel.Children.Add(_happenPanel);
+
+        // ── Section 7: Validation (live) ─────────────────────────────────────
+        ContentPanel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Color.Parse("#1A1A2C")),
+            Margin     = new Avalonia.Thickness(0, 12, 0, 16),
+        });
+        ContentPanel.Children.Add(new TextBlock
+        {
+            Text       = "VALIDATION",
+            FontSize   = 9,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = dim,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 6),
+        });
+        _validationPanel = new StackPanel { Spacing = 4 };
+        ContentPanel.Children.Add(_validationPanel);
+
+        // Auto-suggest: preselect release_folder when DAT is unconfigured and shape demands it.
+        // Must run AFTER all live panels are built so RefreshLivePanels() (triggered by
+        // SelectionChanged) finds non-null panel references.
+        if (_d.TransformStrategyType == "none" && _releaseShape is "multi" or "mixed")
+            _stratBox.SelectedIndex = 2;
+
+        // Initial render of live panels
+        RefreshLivePanels();
+    }
+
+    // ── Live panel refresh ────────────────────────────────────────────────────
+
+    private void RefreshLivePanels()
+    {
+        if (_modelInfoPanel is null || _happenPanel is null || _validationPanel is null) return;
+
+        var textBrush  = new SolidColorBrush(Color.Parse("#CCCCDD"));
+        var dimBrush   = new SolidColorBrush(Color.Parse("#555566"));
+        var warnBrush  = new SolidColorBrush(Color.Parse("#E8A000"));
+        var validBrush = new SolidColorBrush(Color.Parse("#44BB66"));
+        var errorBrush = new SolidColorBrush(Color.Parse("#CC4444"));
+
+        var stratIdx = _stratBox.SelectedIndex;
+        var stratVal = stratIdx >= 0 && stratIdx < _stratValues.Length ? _stratValues[stratIdx] : "none";
+
+        TransformRecord? folderXform = null;
+        if (stratVal == "release_folder" && _folderXforms.Count > 0 && _folderBox.SelectedIndex >= 0)
+            folderXform = _folderXforms[_folderBox.SelectedIndex];
+
+        // ── Selected Model ────────────────────────────────────────────────────
+        _modelInfoPanel.Children.Clear();
+
+        var stratDisplay = stratIdx switch { 1 => "Per file extension", 2 => "Per release folder", _ => "None" };
+        AddModelRow(_modelInfoPanel, "Strategy", stratDisplay, textBrush, dimBrush);
+
+        if (stratVal == "release_folder")
+        {
+            if (folderXform != null)
+            {
+                AddModelRow(_modelInfoPanel, "Transform", folderXform.Name,                                                  textBrush, dimBrush);
+                AddModelRow(_modelInfoPanel, "Processor",  folderXform.IsFileOriented ? "File-oriented" : "Folder-oriented", textBrush, dimBrush);
+                AddModelRow(_modelInfoPanel, "Output",     folderXform.OutputIsFile    ? "File"          : "Folder",          textBrush, dimBrush);
+            }
+            else if (_folderXforms.Count == 0)
+            {
+                _modelInfoPanel.Children.Add(new TextBlock
+                {
+                    Text = "No folder-oriented transforms are defined.", FontSize = 11, Foreground = errorBrush,
+                });
+            }
+        }
+
+        // ── What Will Happen ──────────────────────────────────────────────────
+        _happenPanel.Children.Clear();
+
+        string happenText;
+        IBrush happenBrush = textBrush;
+
+        if (stratVal == "none")
+        {
+            happenText  = "Releases will be ingested without any transform. Source files are kept as-is in the source folder.";
+            happenBrush = warnBrush;
+        }
+        else if (stratVal == "file_extension")
+        {
+            if (_releaseShape is "multi" or "mixed")
+            {
+                happenText  = "Per-extension mapping treats each file individually and cannot process a release as a unit. This configuration is invalid for this DAT.";
+                happenBrush = errorBrush;
+            }
+            else
+            {
+                happenText = "Each file will be matched to a transform by its extension. Files mapped to 'Discard' will be skipped.";
+            }
+        }
+        else // release_folder
+        {
+            if (folderXform == null)
+            {
+                happenText  = "No folder transform is selected. Save is blocked until a valid transform is chosen.";
+                happenBrush = errorBrush;
+            }
+            else if (folderXform.IsFileOriented)
+            {
+                happenText  = $"\"{folderXform.Name}\" is a file-oriented transform. The 'Per release folder' strategy requires a folder-oriented transform. This configuration is invalid.";
+                happenBrush = errorBrush;
+            }
+            else
+            {
+                happenText = $"Each release folder will be processed as a unit using \"{folderXform.Name}\". The entire folder will be passed to the transform command.";
+            }
+        }
+
+        _happenPanel.Children.Add(new TextBlock
+        {
+            Text         = happenText,
+            FontSize     = 11,
+            Foreground   = happenBrush,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+        });
+
+        // ── Validation ────────────────────────────────────────────────────────
+        _validationPanel.Children.Clear();
+        _isConfigInvalid = false;
+
+        string validStatus;
+        string validDetail;
+        IBrush validColor;
+
+        if (stratVal == "release_folder" && (folderXform == null || folderXform.IsFileOriented))
+        {
+            _isConfigInvalid = true;
+            validStatus = "INVALID";
+            validDetail = folderXform == null
+                ? "No folder-oriented transform is selected. Choose a folder-oriented transform to proceed."
+                : $"\"{folderXform.Name}\" is file-oriented. The release folder strategy requires a folder-oriented transform.";
+            validColor = errorBrush;
+        }
+        else if (stratVal == "file_extension" && _releaseShape is "multi" or "mixed")
+        {
+            _isConfigInvalid = true;
+            validStatus = "INVALID";
+            validDetail = _releaseShape == "multi"
+                ? "This DAT contains multi-file releases. A file-oriented model cannot handle releases correctly. Switch to a folder-oriented model."
+                : "This DAT contains mixed releases. A file-oriented model cannot handle all releases correctly. Switch to a folder-oriented model.";
+            validColor = errorBrush;
+        }
+        else if (stratVal == "none")
+        {
+            validStatus = "WARNING";
+            validDetail = "No transform is configured. Releases will be ingested without any processing.";
+            validColor  = warnBrush;
+        }
+        else if (stratVal == "release_folder" && folderXform != null && _releaseShape == "single")
+        {
+            validStatus = "WARNING";
+            validDetail = "This DAT contains only single-file releases. A folder-oriented model is heavier than necessary but is safe to use.";
+            validColor  = warnBrush;
+        }
+        else
+        {
+            validStatus = "VALID";
+            validDetail = "This configuration is ready for ingestion.";
+            validColor  = validBrush;
+        }
+
+        _validationPanel.Children.Add(new TextBlock
+        {
+            Text       = validStatus,
+            FontSize   = 12,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = validColor,
+            Margin     = new Avalonia.Thickness(0, 0, 0, 4),
+        });
+        _validationPanel.Children.Add(new TextBlock
+        {
+            Text         = validDetail,
+            FontSize     = 11,
+            Foreground   = textBrush,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+        });
+
+        SaveBtn.IsEnabled = !_isConfigInvalid;
+    }
+
+    private static void AddModelRow(StackPanel panel, string label, string value, IBrush valueBrush, IBrush labelBrush)
+    {
+        var grid = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions("110,*"),
+            Margin            = new Avalonia.Thickness(0, 1, 0, 1),
+        };
+        var lbl = new TextBlock { Text = label, FontSize = 11, Foreground = labelBrush, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+        var val = new TextBlock { Text = value, FontSize = 11, Foreground = valueBrush, VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+        Grid.SetColumn(lbl, 0);
+        Grid.SetColumn(val, 1);
+        grid.Children.Add(lbl);
+        grid.Children.Add(val);
+        panel.Children.Add(grid);
     }
 
     // ── Footer handlers ───────────────────────────────────────────────────────
 
     private void OnSave(object? sender, RoutedEventArgs e)
     {
-        if (_d.CatalogId is null) { Close(false); return; }
+        if (_isConfigInvalid || _d.CatalogId is null) { Close(false); return; }
 
         var idx      = _stratBox.SelectedIndex;
         var stratVal = idx >= 0 && idx < _stratValues.Length ? _stratValues[idx] : "none";
@@ -330,6 +688,8 @@ public partial class ConfigureDatLineDialog : Window
         if (stratVal == "release_folder" && _folderXforms.Count > 0 && _folderBox.SelectedIndex >= 0)
             folderTransformId = _folderXforms[_folderBox.SelectedIndex].Id;
 
+        var fhVal = _fhBox.SelectedIndex == 1 ? "all_files" : "archives_pre_extraction";
+        _catalog.SaveDatLineFileHandling(_d.CatalogId, fhVal);
         _catalog.SaveDatLineTransformStrategy(_d.CatalogId, stratVal, folderTransformId);
 
         if (stratVal == "file_extension" && _extActionBoxes.Count > 0)

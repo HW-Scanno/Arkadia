@@ -100,6 +100,3 @@ D:\Projects\Arkadia\bin\Release\net8.0\System.Management.dll
 D:\Projects\Arkadia\bin\Release\net8.0\runtimes\win\lib\net8.0\System.Management.dll
 D:\Projects\Arkadia\bin\Release\net8.0\SharpCompress.dll
 D:\Projects\Arkadia\bin\Release\net8.0\ZstdSharp.dll
-D:\Projects\Arkadia\bin\Release\net8.0\Avalonia.Controls.ColorPicker.dll
-D:\Projects\Arkadia\bin\Release\net8.0\Avalonia.Diagnostics.dll
-D:\Projects\Arkadia\bin\Release\net8.0\Avalonia.Themes.Simple.dll

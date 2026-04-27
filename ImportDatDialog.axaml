@@ -3,7 +3,7 @@
         xmlns:data="using:Arkadia.Data"
         x:Class="Arkadia.ImportDatDialog"
         Title="Import DAT"
-        Width="560" Height="660"
+        Width="560" Height="850" MinHeight="660"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="#0F0F14"

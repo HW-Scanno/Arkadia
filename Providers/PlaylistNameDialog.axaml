@@ -1,0 +1,47 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.PlaylistNameDialog"
+        Title="Save Playlist"
+        Width="340" Height="148"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Grid RowDefinitions="*,Auto">
+
+        <StackPanel Grid.Row="0" Margin="20,18,20,8" Spacing="5">
+            <TextBlock Text="Playlist Name"
+                       FontSize="11" Foreground="#888899"/>
+            <TextBox x:Name="NameBox"
+                     Watermark="e.g. My Arcade Set"
+                     Background="#1A1A24" Foreground="#E8E8F0"
+                     BorderBrush="#2A2A3C" BorderThickness="1"
+                     CornerRadius="4" FontSize="12" Padding="8,6"
+                     TextChanged="OnNameChanged"/>
+        </StackPanel>
+
+        <Border Grid.Row="1"
+                Padding="20,10,20,14"
+                BorderBrush="#181826" BorderThickness="0,1,0,0"
+                Background="#0F0F14">
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Spacing="8">
+                <Button Content="Cancel"
+                        Background="#242433" Foreground="#AAAACC"
+                        BorderBrush="#2A2A3C" BorderThickness="1"
+                        CornerRadius="4" Padding="16,6" FontSize="11"
+                        Click="OnCancel"/>
+                <Button x:Name="SaveButton"
+                        Content="Save"
+                        Background="#7B68EE" Foreground="#FFFFFF"
+                        BorderThickness="0"
+                        CornerRadius="4" Padding="16,6" FontSize="11"
+                        IsEnabled="False"
+                        Click="OnSave"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

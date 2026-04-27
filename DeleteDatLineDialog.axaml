@@ -42,7 +42,7 @@
                    FontSize="12" Foreground="#E07040" TextWrapping="Wrap" Margin="0,0,0,18"/>
 
         <!-- Confirmation input -->
-        <TextBlock Text="Type the DAT line name to confirm:"
+        <TextBlock Text="Type DELETE to confirm:"
                    FontSize="12" Foreground="#888899" Margin="0,0,0,6"/>
         <TextBox x:Name="ConfirmInput"
                  FontSize="12"

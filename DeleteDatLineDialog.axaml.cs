@@ -5,8 +5,6 @@ namespace Arkadia;
 
 public partial class DeleteDatLineDialog : Window
 {
-    private readonly string _requiredName;
-
     // Parameterless ctor required by Avalonia XAML compiler
     public DeleteDatLineDialog() : this(string.Empty, string.Empty, string.Empty, 0) { }
 
@@ -18,8 +16,6 @@ public partial class DeleteDatLineDialog : Window
     {
         InitializeComponent();
 
-        _requiredName = datLineName;
-
         DlgPlatform.Text  = platformName;
         DlgName.Text      = datLineName;
         DlgAuthority.Text = authority;
@@ -27,7 +23,8 @@ public partial class DeleteDatLineDialog : Window
     }
 
     private void OnConfirmInputChanged(object? sender, TextChangedEventArgs e)
-        => DeleteButton.IsEnabled = ConfirmInput.Text == _requiredName;
+        => DeleteButton.IsEnabled =
+            string.Equals(ConfirmInput.Text, "DELETE", System.StringComparison.OrdinalIgnoreCase);
 
     private void OnDelete(object? sender, RoutedEventArgs e)
         => Close(true);

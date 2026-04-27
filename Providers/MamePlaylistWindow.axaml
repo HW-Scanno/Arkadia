@@ -1,0 +1,444 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.MamePlaylistWindow"
+        Title="Arkadia - MAME Playlist Generator"
+        Width="1380" Height="880"
+        MinWidth="960" MinHeight="660"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.tool">
+            <Setter Property="Background"      Value="#1E1E2E"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Padding"         Value="10,4"/>
+            <Setter Property="FontSize"        Value="11"/>
+        </Style>
+        <Style Selector="Button.tool:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#252540"/>
+        </Style>
+        <Style Selector="Button.tool:disabled">
+            <Setter Property="Opacity" Value="0.38"/>
+        </Style>
+        <Style Selector="Button.card-action">
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="Foreground"      Value="#7B68EE"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="3"/>
+            <Setter Property="Padding"         Value="7,2"/>
+            <Setter Property="FontSize"        Value="10"/>
+        </Style>
+        <Style Selector="Button.card-action:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#1A1A2E"/>
+        </Style>
+        <Style Selector="Button.card-excl">
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="Foreground"      Value="#888899"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="3"/>
+            <Setter Property="Padding"         Value="7,2"/>
+            <Setter Property="FontSize"        Value="10"/>
+        </Style>
+        <Style Selector="Button.card-excl:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#1C1A1A"/>
+            <Setter Property="Foreground" Value="#EF5350"/>
+        </Style>
+    </Window.Styles>
+
+    <!--
+        Row 0 Auto  — header
+        Row 1 *     — body
+        Row 2 120   — log
+        Row 3 Auto  — footer
+    -->
+    <Grid RowDefinitions="Auto,*,120,Auto">
+
+        <!-- ══ Header ══════════════════════════════════════════════════════════ -->
+        <Border Grid.Row="0"
+                Padding="24,14,24,12"
+                BorderBrush="#181826" BorderThickness="0,0,0,1"
+                Background="#0F0F14">
+            <StackPanel Spacing="3">
+                <TextBlock Text="MAME Playlist Generator"
+                           FontSize="15" FontWeight="SemiBold" Foreground="#F0F0F0"/>
+                <TextBlock Text="Explore drivers, build families, exclude unwanted pools — ordered rules claim machines; Other.dat gets the rest."
+                           FontSize="11" Foreground="#888899"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ══ Body ════════════════════════════════════════════════════════════ -->
+        <!--
+            Col 0 200   — version selector
+            Col 1 1     — divider
+            Col 2 360   — driver explorer
+            Col 3 1     — divider
+            Col 4 *     — family rules
+            Col 5 1     — divider
+            Col 6 260   — output options
+        -->
+        <Grid Grid.Row="1" ColumnDefinitions="200,1,360,1,*,1,260">
+
+            <!-- Left: version selector ──────────────────────────────────────── -->
+            <Grid Grid.Column="0" RowDefinitions="Auto,*" Background="#0D0D13">
+
+                <Border Grid.Row="0"
+                        Padding="12,10"
+                        BorderBrush="#181826" BorderThickness="0,0,0,1">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="CACHED VERSIONS"
+                                   FontSize="10" FontWeight="SemiBold"
+                                   LetterSpacing="1.5" Foreground="#666677"/>
+                        <TextBlock x:Name="VersionCountLabel"
+                                   FontSize="10" Foreground="#555566"
+                                   Text="Scanning…"/>
+                    </StackPanel>
+                </Border>
+
+                <ScrollViewer Grid.Row="1"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="VersionsPanel" Spacing="0"/>
+                </ScrollViewer>
+
+            </Grid>
+
+            <!-- Divider -->
+            <Border Grid.Column="1" Background="#181826"/>
+
+            <!-- Driver Explorer ─────────────────────────────────────────────── -->
+            <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*" Background="#0A0A10">
+
+                <!-- Explorer header -->
+                <Border Grid.Row="0"
+                        Padding="12,10"
+                        BorderBrush="#181826" BorderThickness="0,0,0,1"
+                        Background="#0D0D13">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="3">
+                            <TextBlock Text="DRIVER EXPLORER"
+                                       FontSize="10" FontWeight="SemiBold"
+                                       LetterSpacing="1.5" Foreground="#666677"/>
+                            <TextBlock x:Name="DriverCountLabel"
+                                       FontSize="10" Foreground="#555566"
+                                       TextWrapping="Wrap"
+                                       Text="No version loaded."/>
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                x:Name="ExcludedButton"
+                                Classes="tool"
+                                Content="Excluded (0)"
+                                VerticalAlignment="Center"
+                                Click="OnShowExcluded"/>
+                    </Grid>
+                </Border>
+
+                <!-- Driver search -->
+                <Border Grid.Row="1"
+                        Padding="8,6"
+                        BorderBrush="#181826" BorderThickness="0,0,0,1"
+                        Background="#0A0A10">
+                    <TextBox x:Name="DriverSearchBox"
+                             Watermark="Filter drivers…"
+                             Background="#131320" Foreground="#E0E0F0"
+                             BorderBrush="#252535" BorderThickness="1"
+                             CornerRadius="4" FontSize="11" Padding="7,4"
+                             TextChanged="OnDriverSearchChanged"/>
+                </Border>
+
+                <!-- Driver cards -->
+                <ScrollViewer Grid.Row="2"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="DriverCardsPanel" Spacing="0"/>
+                </ScrollViewer>
+
+            </Grid>
+
+            <!-- Divider -->
+            <Border Grid.Column="3" Background="#181826"/>
+
+            <!-- Center: rule list ────────────────────────────────────────────── -->
+            <Grid Grid.Column="4" RowDefinitions="Auto,*,Auto,Auto" Background="#0F0F14">
+
+                <Border Grid.Row="0"
+                        Padding="16,10"
+                        BorderBrush="#181826" BorderThickness="0,0,0,1"
+                        Background="#0D0D13">
+                    <StackPanel Spacing="3">
+                        <TextBlock Text="FAMILY RULES"
+                                   FontSize="10" FontWeight="SemiBold"
+                                   LetterSpacing="1.5" Foreground="#666677"/>
+                        <TextBlock x:Name="RuleCountLabel"
+                                   FontSize="10" Foreground="#555566"
+                                   Text="No rules defined. Click &#x201C;+ Add Rule&#x201D; to begin."/>
+                    </StackPanel>
+                </Border>
+
+                <ScrollViewer Grid.Row="1"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="RulesPanel" Spacing="0"/>
+                </ScrollViewer>
+
+                <!-- Rule toolbar -->
+                <Border Grid.Row="2"
+                        Padding="12,8"
+                        BorderBrush="#181826" BorderThickness="0,1,0,0"
+                        Background="#0D0D13">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Button x:Name="AddRuleButton"
+                                Classes="tool"
+                                Content="+ Add Rule"
+                                Foreground="#9988EE"
+                                Click="OnAddRule"/>
+                        <Button x:Name="EditRuleButton"
+                                Classes="tool"
+                                Content="Edit"
+                                IsEnabled="False"
+                                Click="OnEditRule"/>
+                        <Button x:Name="DeleteRuleButton"
+                                Classes="tool"
+                                Content="Delete"
+                                IsEnabled="False"
+                                Click="OnDeleteRule"/>
+                        <Border Width="1" Background="#2A2A3C" Margin="2,0"/>
+                        <Button x:Name="MoveUpButton"
+                                Classes="tool"
+                                Content="↑"
+                                IsEnabled="False"
+                                Click="OnMoveUp"/>
+                        <Button x:Name="MoveDownButton"
+                                Classes="tool"
+                                Content="↓"
+                                IsEnabled="False"
+                                Click="OnMoveDown"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- Preview panel (Row 3) — shown when a rule is selected -->
+                <Border Grid.Row="3"
+                        x:Name="PreviewBorder"
+                        MaxHeight="180"
+                        BorderBrush="#181826" BorderThickness="0,1,0,0"
+                        Background="#090910"
+                        IsVisible="False">
+                    <Grid RowDefinitions="Auto,*">
+                        <Border Grid.Row="0"
+                                Padding="12,5,12,5"
+                                Background="#0D0D13">
+                            <TextBlock x:Name="PreviewHeader"
+                                       FontSize="10" FontWeight="SemiBold"
+                                       LetterSpacing="1.2" Foreground="#7B68EE"/>
+                        </Border>
+                        <ScrollViewer Grid.Row="1"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="PreviewNamesPanel"
+                                        Margin="12,4,12,6" Spacing="0"/>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+
+            </Grid>
+
+            <!-- Divider -->
+            <Border Grid.Column="5" Background="#181826"/>
+
+            <!-- Right: output options ────────────────────────────────────────── -->
+            <Grid Grid.Column="6" RowDefinitions="Auto,*" Background="#0D0D13">
+
+                <Border Grid.Row="0"
+                        Padding="16,10"
+                        BorderBrush="#181826" BorderThickness="0,0,0,1">
+                    <TextBlock Text="OUTPUT OPTIONS"
+                               FontSize="10" FontWeight="SemiBold"
+                               LetterSpacing="1.5" Foreground="#666677"/>
+                </Border>
+
+                <ScrollViewer Grid.Row="1"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="16,14,16,16" Spacing="16">
+
+                        <!-- Set layout -->
+                        <StackPanel Spacing="5">
+                            <TextBlock Text="Set Layout"
+                                       FontSize="11" Foreground="#888899"/>
+                            <ComboBox x:Name="SetLayoutBox"
+                                      SelectedIndex="0"
+                                      FontSize="11"
+                                      Background="#1A1A24"
+                                      BorderBrush="#2A2A3C" BorderThickness="1"
+                                      HorizontalAlignment="Stretch">
+                                <ComboBoxItem Content="Non-merged (all sets)"/>
+                                <ComboBoxItem Content="Split (parents only)"/>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <Border Height="1" Background="#1E1E2E"/>
+
+                        <!-- Filters -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Filters"
+                                       FontSize="11" Foreground="#888899"/>
+                            <CheckBox x:Name="ArcadeOnlyCheck"
+                                      Content="Arcade only"
+                                      IsChecked="False"
+                                      FontSize="11"
+                                      Foreground="#CCCCDD"/>
+                            <CheckBox x:Name="ExcludeDevicesCheck"
+                                      Content="Exclude devices"
+                                      IsChecked="True"
+                                      FontSize="11"
+                                      Foreground="#CCCCDD"/>
+                            <CheckBox x:Name="ExcludeMechanicalCheck"
+                                      Content="Exclude mechanical"
+                                      IsChecked="True"
+                                      FontSize="11"
+                                      Foreground="#CCCCDD"/>
+                            <CheckBox x:Name="RunnableOnlyCheck"
+                                      Content="Runnable only"
+                                      IsChecked="False"
+                                      FontSize="11"
+                                      Foreground="#CCCCDD"/>
+                            <CheckBox x:Name="IncludeBiosCheck"
+                                      Content="Include BIOS entries"
+                                      IsChecked="True"
+                                      FontSize="11"
+                                      Foreground="#CCCCDD"/>
+                        </StackPanel>
+
+                        <Border Height="1" Background="#1E1E2E"/>
+
+                        <!-- Arcade filter note -->
+                        <StackPanel Spacing="5">
+                            <TextBlock x:Name="ArcadeFilterNote"
+                                       FontSize="10" Foreground="#555566"
+                                       TextWrapping="Wrap"/>
+                            <Button x:Name="DownloadCategoryIniButton"
+                                    Classes="tool"
+                                    Content="Download category.ini"
+                                    HorizontalAlignment="Left"
+                                    Click="OnDownloadCategoryIni"/>
+                        </StackPanel>
+
+                        <Border Height="1" Background="#1E1E2E"/>
+
+                        <!-- Playlists -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Playlists"
+                                       FontSize="11" Foreground="#888899"/>
+                            <TextBlock x:Name="CurrentPlaylistLabel"
+                                       FontSize="10" Foreground="#7B68EE"
+                                       TextWrapping="Wrap"
+                                       Text="Current: (unsaved)"/>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button x:Name="SavePlaylistButton"
+                                        Classes="tool"
+                                        Content="Save"
+                                        Click="OnSavePlaylist"/>
+                                <Button x:Name="SaveAsPlaylistButton"
+                                        Classes="tool"
+                                        Content="Save As"
+                                        Click="OnSaveAsPlaylist"/>
+                                <Button x:Name="LoadPlaylistButton"
+                                        Classes="tool"
+                                        Content="Load"
+                                        Click="OnLoadPlaylist"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <Border Height="1" Background="#1E1E2E"/>
+
+                        <!-- Families -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Text="Families"
+                                       FontSize="11" Foreground="#888899"/>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button x:Name="LoadFamiliesButton"
+                                        Classes="tool"
+                                        Content="Load Families"
+                                        Click="OnLoadFamilies"/>
+                                <Button x:Name="SaveFamiliesButton"
+                                        Classes="tool"
+                                        Content="Save Families"
+                                        IsEnabled="False"
+                                        Click="OnSaveFamilies"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <Border Height="1" Background="#1E1E2E"/>
+
+                        <!-- Generate -->
+                        <StackPanel Spacing="8">
+                            <TextBlock x:Name="GenerateInfoText"
+                                       Text="Select a cached version and add at least one rule."
+                                       FontSize="11" Foreground="#7B68EE"
+                                       TextWrapping="Wrap"/>
+                            <Button x:Name="GenerateButton"
+                                    Content="Generate DATs"
+                                    Background="#7B68EE" Foreground="#FFFFFF"
+                                    BorderThickness="0"
+                                    CornerRadius="5" Padding="14,8" FontSize="12"
+                                    IsEnabled="False"
+                                    HorizontalAlignment="Stretch"
+                                    HorizontalContentAlignment="Center"
+                                    Click="OnGenerateDats"/>
+                        </StackPanel>
+
+                    </StackPanel>
+                </ScrollViewer>
+
+            </Grid>
+
+        </Grid>
+
+        <!-- ══ Log ═════════════════════════════════════════════════════════════ -->
+        <Grid Grid.Row="2" RowDefinitions="Auto,*">
+            <Border Grid.Row="0"
+                    Padding="16,6"
+                    BorderBrush="#181826" BorderThickness="0,1,0,0"
+                    Background="#0D0D13">
+                <TextBlock Text="LOG"
+                           FontSize="10" FontWeight="SemiBold"
+                           LetterSpacing="1.5" Foreground="#666677"/>
+            </Border>
+            <Border Grid.Row="1" Background="#090910">
+                <ScrollViewer x:Name="PlaylistLogScrollViewer"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="PlaylistLogPanel"
+                                Margin="16,6,16,6" Spacing="1"/>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <!-- ══ Footer ══════════════════════════════════════════════════════════ -->
+        <Border Grid.Row="3"
+                Padding="20,10,20,12"
+                BorderBrush="#181826" BorderThickness="0,1,0,0"
+                Background="#0F0F14">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0"
+                           x:Name="PlaylistStatusText"
+                           Text="No version selected."
+                           FontSize="11" Foreground="#666677"
+                           VerticalAlignment="Center"/>
+                <Button Grid.Column="1"
+                        Content="Close"
+                        Background="#242433" Foreground="#F0F0F0"
+                        BorderThickness="0"
+                        CornerRadius="5" Padding="14,7" FontSize="12"
+                        Click="OnClose"/>
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

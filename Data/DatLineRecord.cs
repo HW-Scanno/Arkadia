@@ -18,4 +18,6 @@ public sealed class DatLineRecord
     public string   TransformStrategyType { get; set; } = "none";
     /// <summary>FK to transforms.transform_id. Set when TransformStrategyType is "release_folder".</summary>
     public string   FolderTransformId     { get; set; } = "";
+    /// <summary>"archives_pre_extraction" | "all_files"</summary>
+    public string   FileHandling          { get; set; } = "archives_pre_extraction";
 }

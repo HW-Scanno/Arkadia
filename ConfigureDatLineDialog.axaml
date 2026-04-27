@@ -54,7 +54,7 @@
                 BorderBrush="#181826" BorderThickness="0,1,0,0">
             <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
                 <Button Classes="secondary" Content="Cancel" Click="OnClose"/>
-                <Button Classes="primary"   Content="Save"   Click="OnSave"/>
+                <Button Classes="primary"   Content="Save"   Click="OnSave" x:Name="SaveBtn"/>
             </StackPanel>
         </Border>
 

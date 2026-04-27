@@ -92,6 +92,7 @@ public sealed class DatLineStore
                 status               TEXT NOT NULL,
                 created_at_utc       TEXT NOT NULL,
                 verified_at_utc      TEXT,
+                archive_tier         TEXT NOT NULL DEFAULT 'B',
                 UNIQUE(content_identity_key, storage_strategy_id)
             );
 
@@ -187,9 +188,19 @@ public sealed class DatLineStore
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key, introduced_at_utc
-            FROM releases
-            ORDER BY name
+            SELECT r.id, r.dat_line_id, r.name, r.status,
+                   COALESCE(
+                       NULLIF(r.tier, ''),
+                       (SELECT da.archive_tier
+                        FROM release_content_links rcl
+                        JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                        WHERE rcl.release_id = r.id
+                        LIMIT 1),
+                       ''
+                   ) AS effective_tier,
+                   r.region, r.languages, r.format, r.size, r.release_content_key, r.introduced_at_utc
+            FROM releases r
+            ORDER BY r.name
             """;
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
@@ -802,7 +813,7 @@ public sealed class DatLineStore
             SELECT id, storage_strategy_id, source_artifact_id, content_identity_key,
                    file_name, relative_path, derived_size_bytes,
                    hashed_derived_sha1, hashed_derived_md5, hashed_derived_crc32,
-                   status, created_at_utc, verified_at_utc
+                   status, created_at_utc, verified_at_utc, archive_tier
             FROM derived_artifacts
             ORDER BY file_name
             """;
@@ -820,7 +831,7 @@ public sealed class DatLineStore
             SELECT id, storage_strategy_id, source_artifact_id, content_identity_key,
                    file_name, relative_path, derived_size_bytes,
                    hashed_derived_sha1, hashed_derived_md5, hashed_derived_crc32,
-                   status, created_at_utc, verified_at_utc
+                   status, created_at_utc, verified_at_utc, archive_tier
             FROM derived_artifacts
             WHERE content_identity_key = $ck
             LIMIT 1
@@ -896,6 +907,46 @@ public sealed class DatLineStore
     }
 
     /// <summary>
+    /// Returns source SHA1s that could satisfy the given content identity keys.
+    /// Combines hashed_source_sha1 from source_artifacts and dat_sha1 from content_identities.
+    /// Used by Repair Volumes Pass B to identify incoming source files eligible for Tier A rebuild.
+    /// </summary>
+    public HashSet<string> GetSourceSha1sForContentKeys(IEnumerable<string> contentKeys)
+    {
+        var keys = contentKeys as IList<string> ?? contentKeys.ToList();
+        if (keys.Count == 0) return [];
+
+        var result       = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var placeholders = string.Join(",", Enumerable.Range(0, keys.Count).Select(i => $"$k{i}"));
+        using var conn   = Open();
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"""
+                SELECT hashed_source_sha1 FROM source_artifacts
+                WHERE content_identity_key IN ({placeholders}) AND hashed_source_sha1 != ''
+                """;
+            for (int i = 0; i < keys.Count; i++) cmd.Parameters.AddWithValue($"$k{i}", keys[i]);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) result.Add(r.GetString(0));
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"""
+                SELECT dat_sha1 FROM content_identities
+                WHERE content_identity_key IN ({placeholders})
+                  AND dat_sha1 IS NOT NULL AND dat_sha1 != ''
+                """;
+            for (int i = 0; i < keys.Count; i++) cmd.Parameters.AddWithValue($"$k{i}", keys[i]);
+            using var r = cmd.ExecuteReader();
+            while (r.Read()) result.Add(r.GetString(0));
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// Returns the first source_artifact for a content identity, or null if none exists.
     /// </summary>
     public SourceArtifactRecord? GetSourceByContentKey(string contentIdentityKey)
@@ -940,7 +991,8 @@ public sealed class DatLineStore
         long    derivedSizeBytes,
         string  hashedDerivedSha1,
         string? hashedDerivedMd5   = null,
-        string? hashedDerivedCrc32 = null)
+        string? hashedDerivedCrc32 = null,
+        string  archiveTier        = "B")
     {
         var now       = DateTime.UtcNow;
         var candidateId = Guid.NewGuid().ToString("N");
@@ -952,18 +1004,19 @@ public sealed class DatLineStore
                 id, storage_strategy_id, source_artifact_id, content_identity_key,
                 file_name, relative_path, derived_size_bytes,
                 hashed_derived_sha1, hashed_derived_md5, hashed_derived_crc32,
-                status, created_at_utc, verified_at_utc)
+                status, created_at_utc, verified_at_utc, archive_tier)
             VALUES($id, $stratId, $srcArtId, $ck,
                    $fileName, $relPath, $size,
                    $drvSha1, $drvMd5, $drvCrc32,
-                   'present', $created, $created)
+                   'present', $created, $created, $tier)
             ON CONFLICT(content_identity_key, storage_strategy_id) DO UPDATE SET
                 source_artifact_id   = excluded.source_artifact_id,
                 hashed_derived_sha1  = excluded.hashed_derived_sha1,
                 hashed_derived_md5   = excluded.hashed_derived_md5,
                 hashed_derived_crc32 = excluded.hashed_derived_crc32,
                 status               = 'present',
-                verified_at_utc      = excluded.verified_at_utc
+                verified_at_utc      = excluded.verified_at_utc,
+                archive_tier         = excluded.archive_tier
             """;
         cmd.Parameters.AddWithValue("$id",       candidateId);
         cmd.Parameters.AddWithValue("$stratId",  storageStrategyId);
@@ -976,6 +1029,7 @@ public sealed class DatLineStore
         cmd.Parameters.AddWithValue("$drvMd5",   (object?)hashedDerivedMd5   ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$drvCrc32", (object?)hashedDerivedCrc32 ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$created",  now.ToString("o"));
+        cmd.Parameters.AddWithValue("$tier",     archiveTier.Length > 0 ? archiveTier : "B");
         cmd.ExecuteNonQuery();
 
         // Retrieve the actual id (may be different from candidateId on conflict).
@@ -1021,7 +1075,8 @@ public sealed class DatLineStore
                         rcl.release_id,
                         da.id, da.storage_strategy_id, da.source_artifact_id, da.content_identity_key,
                         da.file_name, da.relative_path, da.derived_size_bytes,
-                        da.hashed_derived_sha1, da.status, da.created_at_utc, da.verified_at_utc
+                        da.hashed_derived_sha1, da.status, da.created_at_utc, da.verified_at_utc,
+                        da.archive_tier
                     FROM release_content_links rcl
                     JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
                     ORDER BY rcl.release_id, da.file_name
@@ -1053,6 +1108,7 @@ public sealed class DatLineStore
                         Status             = r.GetString(9),
                         CreatedAtUtc       = DateTime.Parse(r.GetString(10)),
                         VerifiedAtUtc      = r.IsDBNull(11) ? null : DateTime.Parse(r.GetString(11)),
+                        ArchiveTier        = r.IsDBNull(12) ? "B"  : r.GetString(12),
                     };
 
                     if (!releaseToArtifacts.TryGetValue(releaseId, out var list))
@@ -1322,6 +1378,7 @@ public sealed class DatLineStore
         Status             = r.GetString(10),
         CreatedAtUtc       = DateTime.Parse(r.GetString(11)),
         VerifiedAtUtc      = r.IsDBNull(12) ? null : DateTime.Parse(r.GetString(12)),
+        ArchiveTier        = r.IsDBNull(13) ? "B"  : r.GetString(13),
     };
 
     // ── Analytics ─────────────────────────────────────────────────────────────

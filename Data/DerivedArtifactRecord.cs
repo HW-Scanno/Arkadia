@@ -26,4 +26,5 @@ public sealed class DerivedArtifactRecord
     public string    Status              { get; set; } = "";
     public DateTime  CreatedAtUtc        { get; set; }
     public DateTime? VerifiedAtUtc       { get; set; }
+    public string    ArchiveTier         { get; set; } = "B";
 }

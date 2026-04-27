@@ -78,6 +78,7 @@ public sealed class CatalogService
                 imported_at_utc          TEXT NOT NULL,
                 transform_strategy_type  TEXT NOT NULL DEFAULT 'none',
                 folder_transform_id      TEXT,
+                file_handling            TEXT NOT NULL DEFAULT 'archives_pre_extraction',
                 FOREIGN KEY(platform_id) REFERENCES platforms(id) ON DELETE CASCADE
             );
 
@@ -166,7 +167,10 @@ public sealed class CatalogService
                 command_template  TEXT NOT NULL DEFAULT '',
                 output_extension  TEXT NOT NULL DEFAULT '',
                 is_enabled        INTEGER NOT NULL DEFAULT 1,
-                transform_type    TEXT NOT NULL DEFAULT 'file_strategy'
+                transform_type    TEXT NOT NULL DEFAULT 'file_strategy',
+                processor_type    TEXT NOT NULL DEFAULT 'file_oriented',
+                output_kind       TEXT NOT NULL DEFAULT 'file',
+                archive_tier      TEXT NOT NULL DEFAULT 'A'
             );
 
             CREATE TABLE IF NOT EXISTS dat_line_extension_transforms (
@@ -175,6 +179,13 @@ public sealed class CatalogService
                 transform_id   TEXT,
                 is_discard     INTEGER NOT NULL DEFAULT 1,
                 PRIMARY KEY (dat_line_id, file_extension)
+            );
+
+            CREATE TABLE IF NOT EXISTS catalog_working_state (
+                item_id       TEXT NOT NULL PRIMARY KEY,
+                working_state TEXT NOT NULL DEFAULT 'unknown',
+                working_note  TEXT,
+                is_manual     INTEGER NOT NULL DEFAULT 0
             );
             """;
         cmd.ExecuteNonQuery();
@@ -205,8 +216,10 @@ public sealed class CatalogService
             using var toolSeed = conn.CreateCommand();
             toolSeed.CommandText = """
                 INSERT INTO tools(tool_id, folder_name, executable_name, is_bundled) VALUES
-                    ('chdman', 'chdman', 'chdman.exe', 1),
-                    ('7zip',   '7zip',   '7z.exe',     1);
+                    ('chdman',      'chdman',      'chdman.exe',      1),
+                    ('7zip',        '7zip',        '7z.exe',          1),
+                    ('dolphintool', 'dolphintool', 'DolphinTool.exe', 1),
+                    ('wudcompress', 'wudcompress', 'WudCompress.exe', 1);
                 """;
             toolSeed.ExecuteNonQuery();
         }
@@ -218,13 +231,18 @@ public sealed class CatalogService
         {
             using var txSeed = conn.CreateCommand();
             txSeed.CommandText = """
-                INSERT INTO transforms(transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type) VALUES
-                    ('no_compression',       'No Compression',          null,     '',                                         '',     1, 'file_strategy'),
-                    ('chd_cd_compression',   'CHD CD Compression',      'chdman', 'createcd -i "{input}" -o "{output}"',      '.chd', 1, 'file_strategy'),
-                    ('chd_dvd_compression',  'CHD DVD Compression',     'chdman', 'createdvd -i "{input}" -o "{output}"',     '.chd', 1, 'file_strategy'),
-                    ('chd_gd_compression',   'CHD GD Compression',      'chdman', 'createcd -i "{input}" -o "{output}"',      '.chd', 1, 'file_strategy'),
-                    ('zip_compression',      'ZIP Compression (Folder)', '7zip',   'a -tzip "{output}" "{input}"',             '.zip', 1, 'folder_strategy'),
-                    ('zip_file_compression', 'ZIP Compression (File)',  '7zip',   'a -tzip "{output}" "{input}"',             '.zip', 1, 'file_strategy');
+                INSERT INTO transforms(transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type, processor_type, output_kind, archive_tier) VALUES
+                    ('no_compression',           'No Compression (File)',       null,          '',                                                        '',     1, 'file_strategy',   'file_oriented',   'file',   'A'),
+                    ('no_compression_folder',    'No Compression (Folder)',     null,          '',                                                        '',     1, 'folder_strategy', 'folder_oriented', 'folder', 'A'),
+                    ('chd_cd_compression',       'CHD CD Compression',          'chdman',      'createcd -i "{input}" -o "{output}"',                    '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('chd_dvd_compression',      'CHD DVD Compression',         'chdman',      'createdvd -i "{input}" -o "{output}"',                   '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('chd_gd_compression',       'CHD GD Compression',          'chdman',      'createcd -i "{input}" -o "{output}"',                    '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('chd_psp_compression',      'CHD Compression (PSP)',        'chdman',      'createdvd -hs 2048 -c zstd -i "{input}" -o "{output}"', '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('chd_dreamcast_compression','CHD Compression (Dreamcast)',  'chdman',      'createcd -c zstd -i "{input}" -o "{output}"',            '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('zip_compression',          'ZIP Compression (Folder)',     '7zip',        'a -tzip "{output}" * -w"{input}"',                       '.zip', 1, 'folder_strategy', 'folder_oriented', 'file',   'A'),
+                    ('zip_file_compression',     'ZIP Compression (File)',       '7zip',        'a -tzip "{output}" "{input}"',                           '.zip', 1, 'file_strategy',   'file_oriented',   'file',   'A'),
+                    ('rvz_compression',          'RVZ Compression',             'dolphintool',  'convert -f rvz -c zstd -l 5 -i "{input}" -o "{output}"','.rvz', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('wux_compression',          'WUX Compression',             'wudcompress',  '-i "{input}" -o "{output}"',                             '.wux', 1, 'file_strategy',   'file_oriented',   'file',   'B');
                 """;
             txSeed.ExecuteNonQuery();
         }
@@ -581,12 +599,18 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type
+            SELECT transform_id, name, tool_id, command_template, output_extension, is_enabled,
+                   transform_type, processor_type, output_kind, archive_tier
             FROM transforms
             ORDER BY transform_id
             """;
         using var r = cmd.ExecuteReader();
         while (r.Read())
+        {
+            var transformType = r.IsDBNull(6) ? "file_strategy" : r.GetString(6);
+            var processorType = r.IsDBNull(7)
+                ? (transformType == "folder_strategy" ? "folder_oriented" : "file_oriented")
+                : r.GetString(7);
             list.Add(new TransformRecord
             {
                 Id              = r.GetString(0),
@@ -595,8 +619,12 @@ public sealed class CatalogService
                 CommandTemplate = r.GetString(3),
                 OutputExtension = r.GetString(4),
                 IsEnabled       = r.GetInt32(5) != 0,
-                TransformType   = r.IsDBNull(6) ? "file_strategy" : r.GetString(6),
+                TransformType   = transformType,
+                ProcessorType   = processorType,
+                OutputKind      = r.IsDBNull(8) ? "file" : r.GetString(8),
+                ArchiveTier     = r.IsDBNull(9) ? "A"    : r.GetString(9),
             });
+        }
         return list;
     }
 
@@ -605,23 +633,29 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO transforms(transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type)
-            VALUES($id, $name, $toolId, $cmd, $ext, $enabled, $type)
+            INSERT INTO transforms(transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type, processor_type, output_kind, archive_tier)
+            VALUES($id, $name, $toolId, $cmd, $ext, $enabled, $type, $processorType, $outputKind, $tier)
             ON CONFLICT(transform_id) DO UPDATE SET
                 name              = excluded.name,
                 tool_id           = excluded.tool_id,
                 command_template  = excluded.command_template,
                 output_extension  = excluded.output_extension,
                 is_enabled        = excluded.is_enabled,
-                transform_type    = excluded.transform_type
+                transform_type    = excluded.transform_type,
+                processor_type    = excluded.processor_type,
+                output_kind       = excluded.output_kind,
+                archive_tier      = excluded.archive_tier
             """;
-        cmd.Parameters.AddWithValue("$id",      t.Id);
-        cmd.Parameters.AddWithValue("$name",    t.Name);
-        cmd.Parameters.AddWithValue("$toolId",  t.ToolId.Length > 0 ? t.ToolId : DBNull.Value);
-        cmd.Parameters.AddWithValue("$cmd",     t.CommandTemplate);
-        cmd.Parameters.AddWithValue("$ext",     t.OutputExtension);
-        cmd.Parameters.AddWithValue("$enabled", t.IsEnabled ? 1 : 0);
-        cmd.Parameters.AddWithValue("$type",    t.TransformType);
+        cmd.Parameters.AddWithValue("$id",            t.Id);
+        cmd.Parameters.AddWithValue("$name",          t.Name);
+        cmd.Parameters.AddWithValue("$toolId",        t.ToolId.Length > 0 ? t.ToolId : DBNull.Value);
+        cmd.Parameters.AddWithValue("$cmd",           t.CommandTemplate);
+        cmd.Parameters.AddWithValue("$ext",           t.OutputExtension);
+        cmd.Parameters.AddWithValue("$enabled",       t.IsEnabled ? 1 : 0);
+        cmd.Parameters.AddWithValue("$type",          t.TransformType);
+        cmd.Parameters.AddWithValue("$processorType", t.ProcessorType);
+        cmd.Parameters.AddWithValue("$outputKind",    t.OutputKind);
+        cmd.Parameters.AddWithValue("$tier",          t.ArchiveTier.Length > 0 ? t.ArchiveTier : "A");
         cmd.ExecuteNonQuery();
     }
 
@@ -690,7 +724,7 @@ public sealed class CatalogService
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
             SELECT id, platform_id, name, authority, dat_category, version, storage_strategy_id, data_store_path, release_count, imported_at_utc,
-                   transform_strategy_type, folder_transform_id
+                   transform_strategy_type, folder_transform_id, file_handling
             FROM dat_lines
             ORDER BY imported_at_utc DESC
             """;
@@ -710,6 +744,7 @@ public sealed class CatalogService
                 ImportedAtUtc         = DateTime.Parse(reader.GetString(9)),
                 TransformStrategyType = reader.IsDBNull(10) ? "none" : reader.GetString(10),
                 FolderTransformId     = reader.IsDBNull(11) ? "" : reader.GetString(11),
+                FileHandling          = reader.GetString(12),
             });
         return list;
     }
@@ -787,6 +822,20 @@ public sealed class CatalogService
         cmd.Parameters.AddWithValue("$id",       datLineId);
         cmd.Parameters.AddWithValue("$type",     strategyType);
         cmd.Parameters.AddWithValue("$folderId", (object?)folderTransformId ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void SaveDatLineFileHandling(string datLineId, string fileHandling)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dat_lines
+            SET file_handling = $fileHandling
+            WHERE id = $id
+            """;
+        cmd.Parameters.AddWithValue("$id",           datLineId);
+        cmd.Parameters.AddWithValue("$fileHandling", fileHandling);
         cmd.ExecuteNonQuery();
     }
 
@@ -1822,6 +1871,74 @@ public sealed class CatalogService
     }
 
     // ── Connection ────────────────────────────────────────────────────────────
+
+    // ── Working state ─────────────────────────────────────────────────────────
+
+    /// <summary>Returns the working-state row for <paramref name="itemId"/>, or null if absent.</summary>
+    public WorkingStateRecord? GetWorkingState(string itemId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT item_id, working_state, working_note, is_manual
+            FROM catalog_working_state
+            WHERE item_id = $itemId
+            """;
+        cmd.Parameters.AddWithValue("$itemId", itemId);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new WorkingStateRecord(
+            r.GetString(0),
+            r.GetString(1),
+            r.IsDBNull(2) ? null : r.GetString(2),
+            r.GetInt32(3) != 0);
+    }
+
+    /// <summary>
+    /// Unconditional upsert — overwrites any existing row including manual ones.
+    /// Use only when the caller has explicit user intent (e.g. a manual edit UI).
+    /// </summary>
+    public void SetWorkingState(WorkingStateRecord record)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO catalog_working_state(item_id, working_state, working_note, is_manual)
+            VALUES($itemId, $state, $note, $isManual)
+            ON CONFLICT(item_id) DO UPDATE SET
+                working_state = excluded.working_state,
+                working_note  = excluded.working_note,
+                is_manual     = excluded.is_manual
+            """;
+        cmd.Parameters.AddWithValue("$itemId",   record.ItemId);
+        cmd.Parameters.AddWithValue("$state",    record.State);
+        cmd.Parameters.AddWithValue("$note",     (object?)record.Note ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$isManual", record.IsManual ? 1 : 0);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Automated upsert — inserts or updates the working state only when the existing row
+    /// is not manually curated (<c>is_manual = 0</c>). Safe to call from MAME imports
+    /// or any automated pipeline; never clobbers a user-managed entry.
+    /// </summary>
+    public void SetWorkingStateIfNotManual(string itemId, string state, string? note = null)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO catalog_working_state(item_id, working_state, working_note, is_manual)
+            VALUES($itemId, $state, $note, 0)
+            ON CONFLICT(item_id) DO UPDATE SET
+                working_state = excluded.working_state,
+                working_note  = excluded.working_note
+            WHERE is_manual = 0
+            """;
+        cmd.Parameters.AddWithValue("$itemId", itemId);
+        cmd.Parameters.AddWithValue("$state",  state);
+        cmd.Parameters.AddWithValue("$note",   (object?)note ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
 
     private SqliteConnection Open()
     {

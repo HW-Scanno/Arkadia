@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading.Tasks;
 using Arkadia.Startup;
 using Arkadia.Themes;
@@ -11,6 +13,7 @@ using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Avalonia.Threading;
 
 namespace Arkadia;
 
@@ -21,6 +24,9 @@ public partial class App : Application
 
     public override void Initialize()
     {
+        // ── Crash logging must be first — before any Avalonia or app code runs. ─
+        InitCrashLogging();
+
         AvaloniaXamlLoader.Load(this);
 
         // Capture the last-focused TextBox before the ContextMenu steals focus,
@@ -69,8 +75,8 @@ public partial class App : Application
     /// closes the splash, then fades MainWindow content in.
     ///
     /// The overlap in phases 2-3 prevents a zero-open-window gap that would trigger
-    /// OnLastWindowClose. Both windows stay fully opaque to the OS throughout — only
-    /// their root content panels have opacity animated, which avoids DWM flicker.
+    /// OnLastWindowClose. Both windows stay fully opaque to the OS — only their root
+    /// content panels have opacity animated, which avoids DWM flicker.
     /// </summary>
     private static async Task RunSplashThenShowMain(
         SplashWindow splash,
@@ -185,4 +191,108 @@ public partial class App : Application
         "textSecondary" => "ArkTextSecondary",
         _               => null,
     };
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // CRASH LOGGING
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private static void InitCrashLogging()
+    {
+        // 1 — Any thread that throws an unhandled exception.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+        {
+            var ex = e.ExceptionObject as Exception;
+            WriteCrashLog(ex, $"AppDomain.UnhandledException (IsTerminating: {e.IsTerminating})");
+            // No suppression — runtime terminates normally after this returns.
+        };
+
+        // 2 — Async Tasks whose exceptions were never observed via await/Result/Wait.
+        TaskScheduler.UnobservedTaskException += (_, e) =>
+        {
+            WriteCrashLog(e.Exception, "TaskScheduler.UnobservedTaskException");
+            // Do NOT call e.SetObserved() — let the exception propagate to AppDomain handler.
+        };
+
+        // 3 — Exceptions that escape Avalonia's UI-thread dispatch loop.
+        try
+        {
+            Dispatcher.UIThread.UnhandledException += (_, e) =>
+            {
+                WriteCrashLog(e.Exception, "Dispatcher.UIThread.UnhandledException");
+                e.Handled = false; // propagate — do not swallow
+            };
+        }
+        catch
+        {
+            // Dispatcher may not be ready in extremely early crash scenarios; ignore.
+        }
+    }
+
+    private static void WriteCrashLog(Exception? ex, string source)
+    {
+        try
+        {
+            var logDir  = Path.Combine(AppContext.BaseDirectory, "logs");
+            Directory.CreateDirectory(logDir);
+
+            var stamp   = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+            var logPath = Path.Combine(logDir, $"crash_{stamp}.txt");
+
+            var sb = new StringBuilder();
+            sb.AppendLine("Arkadia Crash Report");
+            sb.AppendLine("====================");
+            sb.AppendLine($"Timestamp : {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+            sb.AppendLine($"Source    : {source}");
+            sb.AppendLine($"OS        : {RuntimeInformation.OSDescription}");
+            sb.AppendLine($".NET      : {RuntimeInformation.FrameworkDescription}");
+            sb.AppendLine();
+
+            if (ex is null)
+            {
+                sb.AppendLine("(No exception object available)");
+            }
+            else
+            {
+                AppendException(sb, ex, depth: 0);
+            }
+
+            File.WriteAllText(logPath, sb.ToString());
+
+            // Console fallback — visible when running from a terminal; silent in GUI.
+            Console.Error.WriteLine($"[Arkadia] Crash logged → {logPath}");
+        }
+        catch
+        {
+            // WriteCrashLog must never itself throw.
+        }
+    }
+
+    private static void AppendException(StringBuilder sb, Exception ex, int depth)
+    {
+        var pad = depth == 0 ? "" : new string(' ', depth * 2) + "Inner: ";
+
+        sb.AppendLine($"{pad}Type       : {ex.GetType().FullName}");
+        sb.AppendLine($"{pad}Message    : {ex.Message}");
+        sb.AppendLine($"{pad}StackTrace :");
+
+        if (ex.StackTrace is { } st)
+            foreach (var line in st.Split('\n'))
+                sb.AppendLine(pad + line.TrimEnd());
+        else
+            sb.AppendLine($"{pad}(no stack trace)");
+
+        if (ex is AggregateException agg)
+        {
+            foreach (var inner in agg.InnerExceptions)
+            {
+                sb.AppendLine();
+                AppendException(sb, inner, depth + 1);
+            }
+        }
+        else if (ex.InnerException is { } inner2)
+        {
+            sb.AppendLine();
+            AppendException(sb, inner2, depth + 1);
+        }
+    }
 }

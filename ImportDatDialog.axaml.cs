@@ -38,7 +38,8 @@ public partial class ImportDatDialog : Window
         IReadOnlyList<PlatformRecord>  platforms,
         IReadOnlyList<DatLineRecord>   existingDatLines,
         CatalogService                 catalog,
-        string                         dataDir)
+        string                         dataDir,
+        string?                        preselectedPlatformId = null)
     {
         InitializeComponent();
 
@@ -55,6 +56,16 @@ public partial class ImportDatDialog : Window
         platformItems.AddRange(platforms);
         PlatformInput.ItemsSource   = platformItems;
         PlatformInput.SelectedIndex = 0;
+
+        if (preselectedPlatformId is { Length: > 0 })
+        {
+            var preselected = platformItems.FirstOrDefault(p => p.Id == preselectedPlatformId);
+            if (preselected is not null)
+            {
+                PlatformInput.SelectedItem = preselected;
+                PlatformInput.IsEnabled    = false;
+            }
+        }
 
         CategoryInput.ItemsSource = new[] { "Media", "Firmware", "BIOS", "eShop", "Other" };
 

@@ -43,8 +43,11 @@ public partial class MainWindow : Window
         _showDebugArtifactInfo = _catalog.GetBoolSetting("show_debug_artifact_info");
 
         _navButtons.AddRange([
-            NavDashboard, NavSystems, NavPending, NavStaging, NavLibrary, NavVolumes, NavDisks, NavOperations,
-            NavAnalytics, NavLogs, NavSettings,
+            NavDashboard, NavAnalytics,
+            NavProviders, NavSystems, NavOperations,
+            NavLibrary, NavStaging, NavPending,
+            NavVolumes, NavDisks,
+            NavLogs, NavSettings,
         ]);
 
         _views = new()
@@ -58,6 +61,7 @@ public partial class MainWindow : Window
             [NavVolumes]    = ViewVolumes,
             [NavOperations] = ViewOperations,
             [NavAnalytics]  = ViewAnalytics,
+            [NavProviders]  = ViewProviders,
             [NavLogs]       = ViewLogs,
             [NavSettings]   = ViewSettings,
         };
@@ -994,7 +998,8 @@ public partial class MainWindow : Window
                     CatalogId:             dl.Id,
                     CatalogPlatformId:     dl.PlatformId,
                     TransformStrategyType: dl.TransformStrategyType,
-                    FolderTransformId:     dl.FolderTransformId);
+                    FolderTransformId:     dl.FolderTransformId,
+                    FileHandling:          dl.FileHandling);
             })
             .ToList();
 
@@ -1034,6 +1039,58 @@ public partial class MainWindow : Window
     {
         if (_selectedDatLine is null) return;
         OnIngestDatLine(_selectedDatLine);
+    }
+
+    private void OnOpenDatDownloader(object? sender, RoutedEventArgs e) => SetActive(NavProviders);
+
+    // ── Providers view — category tabs ────────────────────────────────────────
+
+    private void OnProviderCategoryRomDats(object? sender, RoutedEventArgs e)
+    {
+        ProvidersTabRomDats.Classes.Set("active", true);
+        ProvidersTabRomScrapers.Classes.Set("active", false);
+        ProvidersRomDatsPanel.IsVisible    = true;
+        ProvidersRomScrapersPanel.IsVisible = false;
+    }
+
+    private void OnProviderCategoryRomScrapers(object? sender, RoutedEventArgs e)
+    {
+        ProvidersTabRomDats.Classes.Set("active", false);
+        ProvidersTabRomScrapers.Classes.Set("active", true);
+        ProvidersRomDatsPanel.IsVisible    = false;
+        ProvidersRomScrapersPanel.IsVisible = true;
+    }
+
+    // ── Providers view — provider CTA buttons ─────────────────────────────────
+
+    private async void OnProviderRedumpOpen(object? sender, RoutedEventArgs e)
+    {
+        var win = new RedumpProviderWindow();
+        await win.ShowDialog(this);
+    }
+
+    private async void OnProviderTosecOpen(object? sender, RoutedEventArgs e)
+    {
+        var win = new TosecProviderWindow();
+        await win.ShowDialog(this);
+    }
+
+    private async void OnProviderNoIntroOpen(object? sender, RoutedEventArgs e)
+    {
+        var win = new NoIntroProviderWindow();
+        await win.ShowDialog(this);
+    }
+
+    private async void OnProviderEggmansworldOpen(object? sender, RoutedEventArgs e)
+    {
+        var win = new EggmansworldProviderWindow();
+        await win.ShowDialog(this);
+    }
+
+    private async void OnProviderMameOpen(object? sender, RoutedEventArgs e)
+    {
+        var win = new MameProviderWindow(_catalog);
+        await win.ShowDialog(this);
     }
 
     private void NavigateToLibrary(string platform, string datLine)
@@ -2825,11 +2882,60 @@ public partial class MainWindow : Window
             }
         }
 
+        // ── Pass B: Source SHA1 matching for Tier A targets ───────────────
+        // For targets not yet resolved by preAvailable or Pass A (direct derived match),
+        // check whether incoming-repair holds source files whose SHA1 matches a Tier A
+        // content identity. These can be rebuilt via the normal ingestion pipeline.
+        var sourceSha1sForTierA = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int passBCount = 0;
+        {
+            var unresolvedForPassB = repairTargets
+                .Where(vi => !preAvailable.ContainsKey(vi.DerivedArtifactId)
+                          && !incomingMatches.ContainsKey(vi.DerivedArtifactId))
+                .Select(vi => vi.DerivedArtifactId)
+                .ToList();
+
+            if (unresolvedForPassB.Count > 0)
+            {
+                var derivedMap = store.GetDerivedArtifacts()
+                    .ToDictionary(da => da.Id, StringComparer.Ordinal);
+
+                var tierAContentKeys = unresolvedForPassB
+                    .Where(id => derivedMap.TryGetValue(id, out var da) && da.ArchiveTier == "A")
+                    .Select(id => derivedMap[id].ContentIdentityKey)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList();
+
+                if (tierAContentKeys.Count > 0)
+                {
+                    sourceSha1sForTierA = store.GetSourceSha1sForContentKeys(tierAContentKeys);
+
+                    if (sourceSha1sForTierA.Count > 0 && Directory.Exists(repairIncomingDir))
+                    {
+                        var alreadyMatchedPaths = new HashSet<string>(
+                            incomingMatches.Values, StringComparer.OrdinalIgnoreCase);
+
+                        foreach (var f in Directory.EnumerateFiles(
+                            repairIncomingDir, "*", SearchOption.AllDirectories))
+                        {
+                            if (alreadyMatchedPaths.Contains(f)) continue;
+                            try
+                            {
+                                if (sourceSha1sForTierA.Contains(ComputeFileSha1(f)))
+                                    passBCount++;
+                            }
+                            catch { }
+                        }
+                    }
+                }
+            }
+        }
+
         // ── Preview counts ─────────────────────────────────────────────────
         int totalTargets       = repairTargets.Count;
         int preAvailableCount  = preAvailable.Count;
         int incomingCount      = incomingMatches.Count;
-        int recoverableNow     = preAvailableCount + incomingCount;
+        int recoverableNow     = preAvailableCount + incomingCount + passBCount;
         int stillMissing       = totalTargets - recoverableNow;
 
         if (recoverableNow == 0)
@@ -2853,11 +2959,13 @@ public partial class MainWindow : Window
         previewLines.AppendLine($"  Status:               {entry.StatusLabel}");
         previewLines.AppendLine($"  Location:             {locationType}");
         previewLines.AppendLine();
-        previewLines.AppendLine("  Missing/Invalid:      " + totalTargets);
-        previewLines.AppendLine("  Already in archive:   " + preAvailableCount);
-        previewLines.AppendLine("  Found in incoming-repair: " + incomingCount);
-        previewLines.AppendLine("  Recoverable now:      " + recoverableNow);
-        previewLines.AppendLine("  Still unrecoverable:  " + stillMissing);
+        previewLines.AppendLine("  Missing/Invalid:        " + totalTargets);
+        previewLines.AppendLine("  Already in archive:     " + preAvailableCount);
+        previewLines.AppendLine("  Found in incoming (Pass A): " + incomingCount);
+        if (passBCount > 0)
+            previewLines.AppendLine("  Source rebuild (Pass B, Tier A): " + passBCount);
+        previewLines.AppendLine("  Recoverable now:        " + recoverableNow);
+        previewLines.AppendLine("  Still unrecoverable:    " + stillMissing);
         if (stillMissing > 0)
         {
             previewLines.AppendLine();
@@ -2891,7 +2999,8 @@ public partial class MainWindow : Window
             {
                 await RunVolumeRepairAsync(repairDialog, entry, store, volumeRoot,
                     platformId, rawDatLineId, storageStrategyId,
-                    repairTargets, preAvailable, incomingMatches, neededSha1s);
+                    repairTargets, preAvailable, incomingMatches, neededSha1s,
+                    sourceSha1sForTierA);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
@@ -2912,9 +3021,10 @@ public partial class MainWindow : Window
         string                             rawDatLineId,
         string                             storageStrategyId,
         List<Data.ArtifactVerifyInfo>      repairTargets,
-        Dictionary<string, string>         preAvailable,    // daId → archive or source path
-        Dictionary<string, string>         incomingMatches, // daId → incoming file path
-        HashSet<string>                    neededSha1s)     // SHA1s of all repair targets
+        Dictionary<string, string>         preAvailable,        // daId → archive or source path
+        Dictionary<string, string>         incomingMatches,     // daId → incoming file path (Pass A)
+        HashSet<string>                    neededSha1s,         // derived SHA1s of all repair targets
+        HashSet<string>                    sourceSha1sForTierA) // Pass B: source SHA1s for Tier A rebuild
     {
         var appRoot        = AppContext.BaseDirectory;
         bool exportRepairLog = _catalog.GetBoolSetting("auto_export_repair_logs", defaultValue: true);
@@ -2936,11 +3046,20 @@ public partial class MainWindow : Window
         int totalTargets = repairTargets.Count;
 
         // ── INGEST PHASE ───────────────────────────────────────────────────
-        // Source files in incoming-repair are ingested through the normal pipeline
-        // (extract → transform → derive). Derived files are copied directly in the
-        // Reintegration phase and deleted from incoming-repair after verify.
+        // Pass A: derived files in incoming-repair are ingested when their SHA1 matches
+        //   a known derived SHA1 (neededSha1s). For Tier A no_compression artifacts the
+        //   derived SHA1 equals the source SHA1, so they also satisfy the sha1Index match
+        //   and are fully processed. Tier B/C derived files do not match the sha1Index and
+        //   are handled by the direct reintegration phase instead.
+        // Pass B: source files whose SHA1 matches a Tier A content identity
+        //   (sourceSha1sForTierA) are ingested through the normal transform pipeline to
+        //   rebuild the derived artifact. Only Tier A targets are eligible.
+        // Both passes share a single RunIngestionWork call with a combined shouldIngest
+        // predicate so that Pass B source files are not prematurely moved to incoming-skip
+        // by the Phase 8 unmatched-file handler.
         var repairIncomingDir = Path.Combine(appRoot, "incoming-repair", platformId);
-        if (incomingMatches.Count > 0)
+        bool hasIngestWork = incomingMatches.Count > 0 || sourceSha1sForTierA.Count > 0;
+        if (hasIngestWork)
         {
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
             {
@@ -2958,15 +3077,23 @@ public partial class MainWindow : Window
                             p.NewOperation.Object, p.NewOperation.Destination);
                 }));
 
+            // Combined filter: Pass A accepts derived SHA1 matches (neededSha1s);
+            // Pass B additionally accepts source SHA1s for Tier A rebuild targets.
+            // Files matching neither filter are moved to incoming-skip by ingestion Phase 8.
+            var repairFileHandling = _catalog.LoadDatLines()
+                .FirstOrDefault(dl => dl.Id == rawDatLineId)?.FileHandling ?? "archives_pre_extraction";
             var ingestResult = RunIngestionWork(
                 platformId, rawDatLineId, entry.DbPath, storageStrategyId, ingestProgress,
-                shouldIngest: sha1 => neededSha1s.Contains(sha1),
-                incomingDirOverride: repairIncomingDir);
+                shouldIngest: sha1 => neededSha1s.Contains(sha1) || sourceSha1sForTierA.Contains(sha1),
+                incomingDirOverride: repairIncomingDir,
+                fileHandling: repairFileHandling);
 
-            log.AppendLine("── Ingest Summary ───────────────────────────────────────────");
-            log.AppendLine($"  Scanned:  {ingestResult.FilesScanned}");
-            log.AppendLine($"  Matched:  {ingestResult.FilesMatched}");
-            log.AppendLine($"  Releases: {ingestResult.ReleasesPresent}");
+            log.AppendLine("── Ingest Summary (Pass A + Pass B) ─────────────────────────");
+            log.AppendLine($"  Scanned:              {ingestResult.FilesScanned}");
+            log.AppendLine($"  Matched:              {ingestResult.FilesMatched}");
+            log.AppendLine($"  Releases ingested:    {ingestResult.ReleasesPresent}");
+            log.AppendLine($"  Pass A (derived SHA1s):  {neededSha1s.Count} targets");
+            log.AppendLine($"  Pass B (source SHA1s):   {sourceSha1sForTierA.Count} Tier A SHA1s eligible");
             if (ingestResult.Error is not null)
                 log.AppendLine($"  Error:    {ingestResult.Error}");
             log.AppendLine();
@@ -7168,6 +7295,10 @@ public partial class MainWindow : Window
             Rejected        = rejected,
         });
 
+        foreach (var game in games)
+            if (game.WorkingState.Length > 0)
+                _catalog.SetWorkingStateIfNotManual(game.Name, game.WorkingState);
+
         return reconResult;
     }
 
@@ -7204,6 +7335,12 @@ public partial class MainWindow : Window
     {
         if (info.CatalogId is null || info.CatalogPlatformId is null || info.DataStorePath.Length == 0)
             return;
+
+        if (info.TransformStrategyType == "none")
+        {
+            await new InfoDialog("Ingest Files", "Configure this DAT first.").ShowDialog(this);
+            return;
+        }
 
         var platformId        = info.CatalogPlatformId;
         var datLineId         = info.CatalogId;
@@ -7253,8 +7390,10 @@ public partial class MainWindow : Window
         var progress       = new Progress<IngestionProgress>(p => progressDialog.Update(p));
         IngestionResult? ingestResult = null;
 
+        var fileHandling = datLineRecord?.FileHandling ?? "archives_pre_extraction";
         var workTask = System.Threading.Tasks.Task.Run(() =>
-            ingestResult = RunIngestionWork(platformId, datLineId, absDbPath, storageStrategyId, progress));
+            ingestResult = RunIngestionWork(platformId, datLineId, absDbPath, storageStrategyId, progress,
+                fileHandling: fileHandling));
 
         _ = workTask.ContinueWith(t =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -7298,8 +7437,9 @@ public partial class MainWindow : Window
         string                       absDbPath,
         string                       storageStrategyId,
         IProgress<IngestionProgress> progress,
-        Func<string, bool>?          shouldIngest = null,
-        string?                      incomingDirOverride = null)
+        Func<string, bool>?          shouldIngest        = null,
+        string?                      incomingDirOverride = null,
+        string                       fileHandling        = "archives_pre_extraction")
     {
         var result  = new IngestionResult();
         var appRoot = AppContext.BaseDirectory;
@@ -7314,22 +7454,12 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(sourceRoot);
         Directory.CreateDirectory(skipDir);
 
-        // ── Guard: check transform strategy before doing any real work ─────────
-        {
-            var dlRecord = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
-            if (dlRecord?.TransformStrategyType == "release_folder")
-            {
-                const string msg = "Release-folder transform strategy is not yet implemented for runtime ingest. " +
-                                   "Change the DAT line's Transform Strategy to 'None' or 'Per file extension' to proceed.";
-                result.Error = msg;
-                result.Operations.Add(new IngestionOperation("(all files)", "aborted-release-folder-not-implemented", msg));
-                return result;
-            }
-        }
-
         // ── Pre-Ingest: Extract archives ──────────────────────────────────────
-        progress.Report(new IngestionProgress { PhaseText = "Pre-ingest: extracting archives…" });
-        RunPreIngest(incomingDir, result, progress);
+        if (fileHandling == "archives_pre_extraction")
+        {
+            progress.Report(new IngestionProgress { PhaseText = "Pre-ingest: extracting archives…" });
+            RunPreIngest(incomingDir, result, progress);
+        }
 
         // ── Phase 1: Scan ─────────────────────────────────────────────────────
         progress.Report(new IngestionProgress { PhaseText = "Scanning incoming files…" });
@@ -7654,9 +7784,11 @@ public partial class MainWindow : Window
                          ?? new TransformRecord { Id = "no_compression", Name = "No Compression", CommandTemplate = "" };
         var activeTool    = allTools.FirstOrDefault(t => t.Id == activeXform.ToolId);
 
-        // Load transform strategy for this DAT line (file_extension dispatch)
+        // Load transform strategy for this DAT line (file_extension / release_folder dispatch)
         var datLineStrategyType = "none";
         var extMappingDict      = new Dictionary<string, ExtensionTransformMapping>(StringComparer.OrdinalIgnoreCase);
+        TransformRecord? folderXform = null;
+        ToolRecord?      folderTool  = null;
         {
             var dlRecord = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
             if (dlRecord?.TransformStrategyType == "file_extension")
@@ -7664,6 +7796,15 @@ public partial class MainWindow : Window
                 datLineStrategyType = "file_extension";
                 foreach (var m in _catalog.LoadExtensionMappings(datLineId))
                     extMappingDict[m.FileExtension] = m;
+            }
+            else if (dlRecord?.TransformStrategyType == "release_folder" &&
+                     dlRecord.FolderTransformId.Length > 0)
+            {
+                datLineStrategyType = "release_folder";
+                folderXform = allTransforms.FirstOrDefault(t => t.Id == dlRecord.FolderTransformId);
+                folderTool  = folderXform?.ToolId.Length > 0
+                    ? allTools.FirstOrDefault(t => t.Id == folderXform.ToolId)
+                    : null;
             }
         }
 
@@ -7708,204 +7849,45 @@ public partial class MainWindow : Window
 
             if (!sourceOk) continue;
 
-            // ── Per-file: verify source + persist provenance + transform ─────
-            foreach (var f in expectedFiles)
+            // ── Dispatch: file-oriented or folder-oriented processor ──────────
+            if (datLineStrategyType == "release_folder")
             {
-                // ── Strategy dispatch: resolve effective transform for this file ──
-                TransformRecord effectiveXform;
-                ToolRecord?     effectiveTool;
-                string          effectiveStratId;
-                // isDiscarded = true means the file's source hashes ARE computed and saved,
-                // but no derived artifact is produced (the file is covered by another file's transform).
-                bool   isDiscarded   = false;
-                string discardReason = "";
-
-                if (datLineStrategyType == "file_extension")
+                if (folderXform is { IsFolderOriented: true, OutputIsFile: true })
                 {
-                    var fileExt = Path.GetExtension(f.RomName).ToLowerInvariant();
-                    if (fileExt.Length == 0) fileExt = "(no ext)";
-
-                    if (!extMappingDict.TryGetValue(fileExt, out var mapping))
-                    {
-                        var skipOp = new IngestionOperation(f.RomName, "skipped-no-strategy",
-                            $"No transform mapping for extension {fileExt}");
-                        result.Operations.Add(skipOp);
-                        progress.Report(new IngestionProgress { NewOperation = skipOp });
-                        continue;
-                    }
-
-                    if (mapping.IsDiscard)
-                    {
-                        // Flag for discard — do NOT continue yet; source hashes are still computed
-                        // and persisted so SOURCE ✔ can be evaluated in the Library detail pane.
-                        isDiscarded      = true;
-                        discardReason    = $"Extension {fileExt} is set to Discard";
-                        effectiveXform   = new TransformRecord();   // unused for discard path
-                        effectiveTool    = null;
-                        effectiveStratId = "none";
-                    }
-                    else
-                    {
-                        var mappedXform = allTransforms.FirstOrDefault(t => t.Id == mapping.TransformId);
-                        if (mappedXform == null)
-                        {
-                            var skipOp = new IngestionOperation(f.RomName, "skipped-transform-missing",
-                                $"Mapped transform '{mapping.TransformId}' not found for extension {fileExt}");
-                            result.Operations.Add(skipOp);
-                            progress.Report(new IngestionProgress { NewOperation = skipOp });
-                            continue;
-                        }
-
-                        effectiveXform   = mappedXform;
-                        effectiveTool    = allTools.FirstOrDefault(t => t.Id == mappedXform.ToolId);
-                        effectiveStratId = mappedXform.Id == "no_compression" ? "none" : mappedXform.Id;
-                    }
+                    ProcessFolderOrientedRelease(
+                        releaseId, safeFolder, sourceDir,
+                        folderXform, folderTool,
+                        appRoot, platformId, datLineId,
+                        now, store, result, progress, transformFailedReleases);
+                }
+                else if (folderXform is { IsFolderOriented: true, OutputIsFolder: true })
+                {
+                    ProcessFolderOrientedFolderRelease(
+                        releaseId, safeFolder, sourceDir, expectedFiles,
+                        folderXform,
+                        appRoot, platformId, datLineId,
+                        now, store, result, progress, transformFailedReleases);
                 }
                 else
                 {
-                    effectiveXform   = activeXform;
-                    effectiveTool    = activeTool;
-                    effectiveStratId = storageStrategyId.Length > 0 ? storageStrategyId : "none";
-                }
-
-                var sourceFilePath = Path.Combine(sourceDir, f.RomName);
-                long fileSize      = 0;
-                try { fileSize = new FileInfo(sourceFilePath).Length; } catch { }
-
-                // content_identity_key = DAT-declared logical identity (never from hashing)
-                var ck = f.Sha1.Length > 0 ? $"sha1:{f.Sha1}"
-                       : f.Md5.Length  > 0 ? $"md5:{f.Md5}"
-                       : "";
-
-                if (ck.Length == 0)
-                {
-                    // No DAT checksum — cannot establish logical identity; skip this file.
-                    var skipOp = new IngestionOperation(f.RomName, "skipped-no-checksum", "DAT provides no SHA1 or MD5");
-                    result.Operations.Add(skipOp);
-                    progress.Report(new IngestionProgress { NewOperation = skipOp });
-                    continue;
-                }
-
-                try
-                {
-                    // ── 1. Ensure content identity row (DAT-declared layer) ────
-                    store.EnsureContentIdentity(new Data.ContentIdentityRecord
-                    {
-                        ContentIdentityKey = ck,
-                        DatSha1            = f.Sha1.Length > 0 ? f.Sha1 : null,
-                        DatMd5             = f.Md5.Length  > 0 ? f.Md5  : null,
-                        DatCrc32           = f.Crc.Length  > 0 ? f.Crc  : null,
-                        CreatedAtUtc       = now,
-                    });
-
-                    // ── 2. Hash source file physically (SHA1 + MD5 + CRC32 in one pass) ──
-                    var (hashedSha1, hashedMd5, hashedCrc32) = ComputeSourceHashes(sourceFilePath);
-
-                    // Verify: if DAT has SHA1, hashed must match.
-                    // If DAT has only MD5/CRC32, SHA1 is still recorded as physical proof.
-                    if (f.Sha1.Length > 0 &&
-                        !string.Equals(hashedSha1, f.Sha1, StringComparison.OrdinalIgnoreCase))
-                    {
-                        var failOp = new IngestionOperation(f.RomName, "verify-failed",
-                            $"SHA1 mismatch: expected {f.Sha1[..8]}… got {hashedSha1[..8]}…");
-                        result.Operations.Add(failOp);
-                        progress.Report(new IngestionProgress { NewOperation = failOp });
-                        continue;
-                    }
-
-                    // ── 3. Persist source artifact as provenance proof ─────────
-                    var srcArtifactId = Guid.NewGuid().ToString("N");
-                    store.SaveSourceArtifact(new Data.SourceArtifactRecord
-                    {
-                        Id                 = srcArtifactId,
-                        ContentIdentityKey = ck,
-                        SourceSizeBytes    = fileSize,
-                        HashedSourceSha1   = hashedSha1,
-                        HashedSourceMd5    = hashedMd5,
-                        HashedSourceCrc32  = hashedCrc32,
-                        VerifiedAtUtc      = now,
-                    });
-
-                    // Resolve actual source artifact id (INSERT OR IGNORE means existing id wins)
-                    srcArtifactId = store.GetSourceArtifactIdByContentKey(ck) ?? srcArtifactId;
-
-                    // Discarded files: source provenance is now recorded; skip transform entirely.
-                    if (isDiscarded)
-                    {
-                        var discardOp = new IngestionOperation(f.RomName, "discarded-by-strategy", discardReason);
-                        result.Operations.Add(discardOp);
-                        progress.Report(new IngestionProgress { NewOperation = discardOp });
-                        continue;
-                    }
-
-                    // ── 4. Transform: produce derived archive file ────────────
-                    var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId, safeFolder);
-                    Directory.CreateDirectory(archiveDir);
-                    var outputExt = effectiveXform.OutputExtension.Length > 0 ? effectiveXform.OutputExtension : "";
-                    var destName  = outputExt.Length > 0
-                        ? Path.GetFileNameWithoutExtension(f.RomName) + outputExt
-                        : f.RomName;
-                    var destPath = Path.Combine(archiveDir, destName);
-                    var relPath  = $"archive/{platformId}/{datLineId}/{safeFolder}/{destName}";
-
-                    if (!File.Exists(destPath))
-                    {
-                        if (!TransformEngine.ExecuteTransform(effectiveXform, effectiveTool, appRoot, sourceFilePath, destPath, out var xformError))
-                            throw new InvalidOperationException($"Transform failed: {xformError}");
-                    }
-
-                    // Log transform step (skip no_compression — that's a plain copy, already captured)
-                    if (effectiveXform.Id != "no_compression")
-                    {
-                        var xformOp = new IngestionOperation(f.RomName, "transform", $"{effectiveXform.Name} → {destName}");
-                        result.Operations.Add(xformOp);
-                        progress.Report(new IngestionProgress { NewOperation = xformOp });
-                    }
-
-                    // ── 5. Hash derived file independently (single pass: SHA1 + MD5 + CRC32) ─
-                    // Physical hashes of the stored derived file; never compared to DAT hashes.
-                    var (hashedDerivedSha1, hashedDerivedMd5, hashedDerivedCrc32) =
-                        ComputeSourceHashes(destPath);
-
-                    // ── 6. Persist/upsert derived artifact ────────────────────
-                    var derivedSizeBytes = new FileInfo(destPath).Length;
-                    store.IngestDerivedArtifact(
-                        contentIdentityKey: ck,
-                        sourceArtifactId:   srcArtifactId,
-                        storageStrategyId:  effectiveStratId,
-                        fileName:           destName,
-                        relativePath:       relPath,
-                        derivedSizeBytes:   derivedSizeBytes,
-                        hashedDerivedSha1:  hashedDerivedSha1,
-                        hashedDerivedMd5:   hashedDerivedMd5,
-                        hashedDerivedCrc32: hashedDerivedCrc32);
-
-                    // ── 7. Link release → content identity ────────────────────
-                    store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord
-                    {
-                        Id                 = Guid.NewGuid().ToString("N"),
-                        ReleaseId          = releaseId,
-                        ContentIdentityKey = ck,
-                        CreatedAtUtc       = now,
-                    });
-
-                    // ── 8. Remove source file — derived artifact is valid ──────
-                    // Only delete when the derived artifact was actually produced
-                    // with non-zero size; leave the source intact on any failure path.
-                    if (derivedSizeBytes > 0)
-                    {
-                        try { File.Delete(sourceFilePath); }
-                        catch { /* best-effort; leave file if OS denies deletion */ }
-                    }
-                }
-                catch (Exception ex) when (ex is not OutOfMemoryException)
-                {
-                    // Transform failures must never block the rest of ingestion.
                     transformFailedReleases.Add(releaseId);
-                    var failOp = new IngestionOperation(f.RomName, "transform-failed", ex.Message);
+                    var failOp = new IngestionOperation(release.Name, "transform-config-error",
+                        folderXform is null
+                            ? "No folder-oriented transform is configured for this DAT line."
+                            : $"Transform '{folderXform.Name}' is not folder-oriented.");
                     result.Operations.Add(failOp);
                     progress.Report(new IngestionProgress { NewOperation = failOp });
                 }
+            }
+            else
+            {
+                // ── Per-file: verify source + persist provenance + transform ──
+                ProcessFileOrientedRelease(
+                    releaseId, safeFolder, sourceDir, expectedFiles,
+                    datLineStrategyType, extMappingDict,
+                    activeXform, activeTool, allTransforms, allTools, storageStrategyId,
+                    appRoot, platformId, datLineId,
+                    now, store, result, progress, transformFailedReleases);
             }
 
             if (!transformFailedReleases.Contains(releaseId))
@@ -7997,6 +7979,472 @@ public partial class MainWindow : Window
         return result;
     }
 
+    // ── File-oriented release processor ──────────────────────────────────────
+    // Processes one release worth of files: strategy dispatch, source hashing,
+    // transform execution, artifact ingestion, and source cleanup.
+    // Called from the outer release loop in RunIngestionWork.
+    // Future: a parallel FolderOrientedRelease processor will be plugged in at
+    // the same call site when the release_folder strategy is implemented.
+
+    private void ProcessFileOrientedRelease(
+        string                                        releaseId,
+        string                                        safeFolder,
+        string                                        sourceDir,
+        List<ReleaseFileRecord>                       expectedFiles,
+        string                                        datLineStrategyType,
+        Dictionary<string, ExtensionTransformMapping> extMappingDict,
+        TransformRecord                               activeXform,
+        ToolRecord?                                   activeTool,
+        List<TransformRecord>                         allTransforms,
+        List<ToolRecord>                              allTools,
+        string                                        storageStrategyId,
+        string                                        appRoot,
+        string                                        platformId,
+        string                                        datLineId,
+        DateTime                                      now,
+        DatLineStore                                  store,
+        IngestionResult                               result,
+        IProgress<IngestionProgress>                  progress,
+        HashSet<string>                               transformFailedReleases)
+    {
+        foreach (var f in expectedFiles)
+        {
+            // ── Strategy dispatch: resolve effective transform for this file ──
+            TransformRecord effectiveXform;
+            ToolRecord?     effectiveTool;
+            string          effectiveStratId;
+            // isDiscarded = true means the file's source hashes ARE computed and saved,
+            // but no derived artifact is produced (the file is covered by another file's transform).
+            bool   isDiscarded   = false;
+            string discardReason = "";
+
+            if (datLineStrategyType == "file_extension")
+            {
+                var fileExt = Path.GetExtension(f.RomName).ToLowerInvariant();
+                if (fileExt.Length == 0) fileExt = "(no ext)";
+
+                if (!extMappingDict.TryGetValue(fileExt, out var mapping))
+                {
+                    var skipOp = new IngestionOperation(f.RomName, "skipped-no-strategy",
+                        $"No transform mapping for extension {fileExt}");
+                    result.Operations.Add(skipOp);
+                    progress.Report(new IngestionProgress { NewOperation = skipOp });
+                    continue;
+                }
+
+                if (mapping.IsDiscard)
+                {
+                    // Flag for discard — do NOT continue yet; source hashes are still computed
+                    // and persisted so SOURCE ✔ can be evaluated in the Library detail pane.
+                    isDiscarded      = true;
+                    discardReason    = $"Extension {fileExt} is set to Discard";
+                    effectiveXform   = new TransformRecord();   // unused for discard path
+                    effectiveTool    = null;
+                    effectiveStratId = "none";
+                }
+                else
+                {
+                    var mappedXform = allTransforms.FirstOrDefault(t => t.Id == mapping.TransformId);
+                    if (mappedXform == null)
+                    {
+                        var skipOp = new IngestionOperation(f.RomName, "skipped-transform-missing",
+                            $"Mapped transform '{mapping.TransformId}' not found for extension {fileExt}");
+                        result.Operations.Add(skipOp);
+                        progress.Report(new IngestionProgress { NewOperation = skipOp });
+                        continue;
+                    }
+
+                    effectiveXform   = mappedXform;
+                    effectiveTool    = allTools.FirstOrDefault(t => t.Id == mappedXform.ToolId);
+                    effectiveStratId = mappedXform.Id == "no_compression" ? "none" : mappedXform.Id;
+                }
+            }
+            else
+            {
+                effectiveXform   = activeXform;
+                effectiveTool    = activeTool;
+                effectiveStratId = storageStrategyId.Length > 0 ? storageStrategyId : "none";
+            }
+
+            var sourceFilePath = Path.Combine(sourceDir, f.RomName);
+            long fileSize      = 0;
+            try { fileSize = new FileInfo(sourceFilePath).Length; } catch { }
+
+            // content_identity_key = DAT-declared logical identity (never from hashing)
+            var ck = f.Sha1.Length > 0 ? $"sha1:{f.Sha1}"
+                   : f.Md5.Length  > 0 ? $"md5:{f.Md5}"
+                   : "";
+
+            if (ck.Length == 0)
+            {
+                // No DAT checksum — cannot establish logical identity; skip this file.
+                var skipOp = new IngestionOperation(f.RomName, "skipped-no-checksum", "DAT provides no SHA1 or MD5");
+                result.Operations.Add(skipOp);
+                progress.Report(new IngestionProgress { NewOperation = skipOp });
+                continue;
+            }
+
+            try
+            {
+                // ── 1. Ensure content identity row (DAT-declared layer) ────
+                store.EnsureContentIdentity(new Data.ContentIdentityRecord
+                {
+                    ContentIdentityKey = ck,
+                    DatSha1            = f.Sha1.Length > 0 ? f.Sha1 : null,
+                    DatMd5             = f.Md5.Length  > 0 ? f.Md5  : null,
+                    DatCrc32           = f.Crc.Length  > 0 ? f.Crc  : null,
+                    CreatedAtUtc       = now,
+                });
+
+                // ── 2. Hash source file physically (SHA1 + MD5 + CRC32 in one pass) ──
+                var (hashedSha1, hashedMd5, hashedCrc32) = ComputeSourceHashes(sourceFilePath);
+
+                // Verify: if DAT has SHA1, hashed must match.
+                // If DAT has only MD5/CRC32, SHA1 is still recorded as physical proof.
+                if (f.Sha1.Length > 0 &&
+                    !string.Equals(hashedSha1, f.Sha1, StringComparison.OrdinalIgnoreCase))
+                {
+                    var failOp = new IngestionOperation(f.RomName, "verify-failed",
+                        $"SHA1 mismatch: expected {f.Sha1[..8]}… got {hashedSha1[..8]}…");
+                    result.Operations.Add(failOp);
+                    progress.Report(new IngestionProgress { NewOperation = failOp });
+                    continue;
+                }
+
+                // ── 3. Persist source artifact as provenance proof ─────────
+                var srcArtifactId = Guid.NewGuid().ToString("N");
+                store.SaveSourceArtifact(new Data.SourceArtifactRecord
+                {
+                    Id                 = srcArtifactId,
+                    ContentIdentityKey = ck,
+                    SourceSizeBytes    = fileSize,
+                    HashedSourceSha1   = hashedSha1,
+                    HashedSourceMd5    = hashedMd5,
+                    HashedSourceCrc32  = hashedCrc32,
+                    VerifiedAtUtc      = now,
+                });
+
+                // Resolve actual source artifact id (INSERT OR IGNORE means existing id wins)
+                srcArtifactId = store.GetSourceArtifactIdByContentKey(ck) ?? srcArtifactId;
+
+                // Discarded files: source provenance is now recorded; skip transform entirely.
+                if (isDiscarded)
+                {
+                    var discardOp = new IngestionOperation(f.RomName, "discarded-by-strategy", discardReason);
+                    result.Operations.Add(discardOp);
+                    progress.Report(new IngestionProgress { NewOperation = discardOp });
+                    continue;
+                }
+
+                // ── 4. Transform: produce derived archive file ────────────
+                var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId, safeFolder);
+                Directory.CreateDirectory(archiveDir);
+                var outputExt = effectiveXform.OutputExtension.Length > 0 ? effectiveXform.OutputExtension : "";
+                var destName  = outputExt.Length > 0
+                    ? Path.GetFileNameWithoutExtension(f.RomName) + outputExt
+                    : f.RomName;
+                var destPath = Path.Combine(archiveDir, destName);
+                var relPath  = $"archive/{platformId}/{datLineId}/{safeFolder}/{destName}";
+
+                if (!File.Exists(destPath))
+                {
+                    if (!TransformEngine.ExecuteTransform(effectiveXform, effectiveTool, appRoot, sourceFilePath, destPath, out var xformError))
+                        throw new InvalidOperationException($"Transform failed: {xformError}");
+                }
+
+                // Log transform step (skip no_compression — that's a plain copy, already captured)
+                if (effectiveXform.Id != "no_compression")
+                {
+                    var xformOp = new IngestionOperation(f.RomName, "transform", $"{effectiveXform.Name} → {destName}");
+                    result.Operations.Add(xformOp);
+                    progress.Report(new IngestionProgress { NewOperation = xformOp });
+                }
+
+                // ── 5. Hash derived file independently (single pass: SHA1 + MD5 + CRC32) ─
+                // Physical hashes of the stored derived file; never compared to DAT hashes.
+                var (hashedDerivedSha1, hashedDerivedMd5, hashedDerivedCrc32) =
+                    ComputeSourceHashes(destPath);
+
+                // ── 6. Persist/upsert derived artifact ────────────────────
+                var derivedSizeBytes = new FileInfo(destPath).Length;
+                store.IngestDerivedArtifact(
+                    contentIdentityKey: ck,
+                    sourceArtifactId:   srcArtifactId,
+                    storageStrategyId:  effectiveStratId,
+                    fileName:           destName,
+                    relativePath:       relPath,
+                    derivedSizeBytes:   derivedSizeBytes,
+                    hashedDerivedSha1:  hashedDerivedSha1,
+                    hashedDerivedMd5:   hashedDerivedMd5,
+                    hashedDerivedCrc32: hashedDerivedCrc32,
+                    archiveTier:        effectiveXform.ArchiveTier);
+
+                // ── 7. Link release → content identity ────────────────────
+                store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord
+                {
+                    Id                 = Guid.NewGuid().ToString("N"),
+                    ReleaseId          = releaseId,
+                    ContentIdentityKey = ck,
+                    CreatedAtUtc       = now,
+                });
+
+                // ── 8. Remove source file — derived artifact is valid ──────
+                // Only delete when the derived artifact was actually produced
+                // with non-zero size; leave the source intact on any failure path.
+                if (derivedSizeBytes > 0)
+                {
+                    try { File.Delete(sourceFilePath); }
+                    catch { /* best-effort; leave file if OS denies deletion */ }
+                }
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                // Transform failures must never block the rest of ingestion.
+                transformFailedReleases.Add(releaseId);
+                var failOp = new IngestionOperation(f.RomName, "transform-failed", ex.Message);
+                result.Operations.Add(failOp);
+                progress.Report(new IngestionProgress { NewOperation = failOp });
+            }
+        }
+    }
+
+    // ── Folder-oriented release processor — output_kind = file ──────────────
+    // Processes one promoted release folder as a single unit:
+    //   source/{platform}/{datLine}/{safeFolder}/ → archive/.../{safeFolder}{ext}
+    // Provenance: content_identity_key = "release:{releaseId}", source_artifact_id = "".
+    // Called from the outer release loop when datLineStrategyType == "release_folder"
+    // and the configured folder transform has output_kind = "file" (e.g. ZIP Compression).
+
+    private void ProcessFolderOrientedRelease(
+        string                       releaseId,
+        string                       safeFolder,
+        string                       sourceDir,
+        TransformRecord              folderXform,
+        ToolRecord?                  folderTool,
+        string                       appRoot,
+        string                       platformId,
+        string                       datLineId,
+        DateTime                     now,
+        DatLineStore                 store,
+        IngestionResult              result,
+        IProgress<IngestionProgress> progress,
+        HashSet<string>              transformFailedReleases)
+    {
+        var ck = $"release:{releaseId}";
+
+        try
+        {
+            // ── 1. Ensure release-level content identity (hash fields null) ────
+            store.EnsureContentIdentity(new Data.ContentIdentityRecord
+            {
+                ContentIdentityKey = ck,
+                DatSha1            = null,
+                DatMd5             = null,
+                DatCrc32           = null,
+                CreatedAtUtc       = now,
+            });
+
+            // ── 2. Build derived artifact destination path ─────────────────────
+            var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId);
+            Directory.CreateDirectory(archiveDir);
+            var outputExt = folderXform.OutputExtension.Length > 0 ? folderXform.OutputExtension : ".zip";
+            var destName  = safeFolder + outputExt;
+            var destPath  = Path.Combine(archiveDir, destName);
+            var relPath   = $"archive/{platformId}/{datLineId}/{destName}";
+
+            // ── 3. Transform: source folder → derived file ────────────────────
+            if (!File.Exists(destPath))
+            {
+                if (!TransformEngine.ExecuteTransform(folderXform, folderTool, appRoot, sourceDir, destPath, out var xformError))
+                    throw new InvalidOperationException($"Transform failed: {xformError}");
+            }
+
+            // ── 4. Log transform step ─────────────────────────────────────────
+            var xformOp = new IngestionOperation(safeFolder, "transform", $"{folderXform.Name} → {destName}");
+            result.Operations.Add(xformOp);
+            progress.Report(new IngestionProgress { NewOperation = xformOp });
+
+            // ── 5. Hash derived file (SHA1 + MD5 + CRC32 in one pass) ──────────
+            var (hashedDerivedSha1, hashedDerivedMd5, hashedDerivedCrc32) =
+                ComputeSourceHashes(destPath);
+
+            // ── 6. Persist derived artifact ───────────────────────────────────
+            var derivedSizeBytes = new FileInfo(destPath).Length;
+            store.IngestDerivedArtifact(
+                contentIdentityKey: ck,
+                sourceArtifactId:   "",
+                storageStrategyId:  folderXform.Id,
+                fileName:           destName,
+                relativePath:       relPath,
+                derivedSizeBytes:   derivedSizeBytes,
+                hashedDerivedSha1:  hashedDerivedSha1,
+                hashedDerivedMd5:   hashedDerivedMd5,
+                hashedDerivedCrc32: hashedDerivedCrc32,
+                archiveTier:        folderXform.ArchiveTier);
+
+            // ── 7. Link release → release-level content identity ──────────────
+            store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord
+            {
+                Id                 = Guid.NewGuid().ToString("N"),
+                ReleaseId          = releaseId,
+                ContentIdentityKey = ck,
+                CreatedAtUtc       = now,
+            });
+
+            // ── 8. Remove source folder — all DB writes succeeded ─────────────
+            // Delete the promoted release folder only after the derived artifact
+            // is validated (non-zero size) and all provenance rows are written.
+            if (derivedSizeBytes > 0)
+            {
+                try { Directory.Delete(sourceDir, recursive: true); }
+                catch { /* best-effort; leave folder if OS denies deletion */ }
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            // Transform failures must never block the rest of ingestion.
+            transformFailedReleases.Add(releaseId);
+            var failOp = new IngestionOperation(safeFolder, "transform-failed", ex.Message);
+            result.Operations.Add(failOp);
+            progress.Report(new IngestionProgress { NewOperation = failOp });
+        }
+    }
+
+    // ── Folder-oriented release processor — output_kind = folder ─────────────
+    // Processes one promoted release folder as a single unit where the derived
+    // artifact is itself a folder (no external compression):
+    //   source/{platform}/{datLine}/{safeFolder}/ → archive/.../{safeFolder}/
+    // Provenance: content_identity_key = "release:{releaseId}", source_artifact_id = "".
+    // Called from the outer release loop when datLineStrategyType == "release_folder"
+    // and the configured folder transform has output_kind = "folder" (No Compression (Folder)).
+    // derived_size_bytes = sum of all contained file sizes.
+
+    private void ProcessFolderOrientedFolderRelease(
+        string                       releaseId,
+        string                       safeFolder,
+        string                       sourceDir,
+        List<ReleaseFileRecord>      expectedFiles,
+        TransformRecord              folderXform,
+        string                       appRoot,
+        string                       platformId,
+        string                       datLineId,
+        DateTime                     now,
+        DatLineStore                 store,
+        IngestionResult              result,
+        IProgress<IngestionProgress> progress,
+        HashSet<string>              transformFailedReleases)
+    {
+        var ck = $"release:{releaseId}";
+
+        try
+        {
+            // ── 1. Ensure release-level content identity (hash fields null) ────
+            store.EnsureContentIdentity(new Data.ContentIdentityRecord
+            {
+                ContentIdentityKey = ck,
+                DatSha1            = null,
+                DatMd5             = null,
+                DatCrc32           = null,
+                CreatedAtUtc       = now,
+            });
+
+            // ── 2. Build derived folder destination path ───────────────────────
+            var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId);
+            Directory.CreateDirectory(archiveDir);
+            var destPath = Path.Combine(archiveDir, safeFolder);   // folder, no extension
+            var relPath  = $"archive/{platformId}/{datLineId}/{safeFolder}";
+
+            // ── 3. Copy source folder → derived folder (no compression) ────────
+            // Only transforms with an empty command template are supported for folder
+            // output — those use a direct recursive copy.  External-tool folder-output
+            // transforms are guarded here for future implementation.
+            if (!Directory.Exists(destPath))
+            {
+                if (folderXform.CommandTemplate.Length > 0)
+                    throw new InvalidOperationException(
+                        $"Folder-output transforms with a command template are not yet supported " +
+                        $"(transform: {folderXform.Name}).");
+                CopyFolderRecursive(sourceDir, destPath);
+            }
+
+            // ── 4. Validate output folder ─────────────────────────────────────
+            if (!Directory.Exists(destPath))
+                throw new InvalidOperationException($"Output folder absent after copy: {destPath}");
+
+            foreach (var f in expectedFiles)
+            {
+                var outFile = Path.Combine(destPath, f.RomName);
+                if (!File.Exists(outFile))
+                    throw new InvalidOperationException(
+                        $"Expected file missing from derived folder: {f.RomName}");
+
+                if (f.Sha1.Length > 0)
+                {
+                    var (actualSha1, _, _) = ComputeSourceHashes(outFile);
+                    if (!string.Equals(actualSha1, f.Sha1, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidOperationException(
+                            $"SHA1 mismatch for {f.RomName}: expected {f.Sha1[..8]}… got {actualSha1[..8]}…");
+                }
+            }
+
+            // ── 5. Log transform step ─────────────────────────────────────────
+            var xformOp = new IngestionOperation(safeFolder, "transform", $"{folderXform.Name} → {safeFolder}/");
+            result.Operations.Add(xformOp);
+            progress.Report(new IngestionProgress { NewOperation = xformOp });
+
+            // ── 6. Compute derived size (sum of all files in the derived folder) ─
+            var derivedSizeBytes = Directory
+                .EnumerateFiles(destPath, "*", SearchOption.AllDirectories)
+                .Sum(f => new FileInfo(f).Length);
+
+            // ── 7. Persist derived artifact ───────────────────────────────────
+            // hashed_derived_sha1 = "" — no single-file hash for a folder artifact.
+            store.IngestDerivedArtifact(
+                contentIdentityKey: ck,
+                sourceArtifactId:   "",
+                storageStrategyId:  folderXform.Id,
+                fileName:           safeFolder,
+                relativePath:       relPath,
+                derivedSizeBytes:   derivedSizeBytes,
+                hashedDerivedSha1:  "",
+                hashedDerivedMd5:   null,
+                hashedDerivedCrc32: null,
+                archiveTier:        folderXform.ArchiveTier);
+
+            // ── 8. Link release → release-level content identity ──────────────
+            store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord
+            {
+                Id                 = Guid.NewGuid().ToString("N"),
+                ReleaseId          = releaseId,
+                ContentIdentityKey = ck,
+                CreatedAtUtc       = now,
+            });
+
+            // ── 9. Remove source folder — all validation and DB writes succeeded ─
+            if (derivedSizeBytes > 0)
+            {
+                try { Directory.Delete(sourceDir, recursive: true); }
+                catch { /* best-effort; leave folder if OS denies deletion */ }
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            transformFailedReleases.Add(releaseId);
+            var failOp = new IngestionOperation(safeFolder, "transform-failed", ex.Message);
+            result.Operations.Add(failOp);
+            progress.Report(new IngestionProgress { NewOperation = failOp });
+        }
+    }
+
+    private static void CopyFolderRecursive(string source, string dest)
+    {
+        Directory.CreateDirectory(dest);
+        foreach (var file in Directory.GetFiles(source))
+            File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), overwrite: true);
+        foreach (var dir in Directory.GetDirectories(source))
+            CopyFolderRecursive(dir, Path.Combine(dest, Path.GetFileName(dir)));
+    }
+
     private static string SafeFileName(string name)
     {
         var invalid = Path.GetInvalidFileNameChars();
@@ -8066,7 +8514,8 @@ public partial class MainWindow : Window
             {
                 var ext = Path.GetExtension(f);
                 return string.Equals(ext, ".zip", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(ext, ".7z",  StringComparison.OrdinalIgnoreCase);
+                       string.Equals(ext, ".7z",  StringComparison.OrdinalIgnoreCase) ||
+                       string.Equals(ext, ".rar", StringComparison.OrdinalIgnoreCase);
             })
             .ToList();
 
@@ -8356,9 +8805,15 @@ public partial class MainWindow : Window
 
     private async void OnImportDat(object? sender, RoutedEventArgs e)
     {
+        if (string.IsNullOrEmpty(_selectedPlatformId))
+        {
+            await new InfoDialog("Import DAT", "Select a platform first.").ShowDialog(this);
+            return;
+        }
+
         var platforms        = _catalog.LoadPlatforms();
         var existingDatLines = _catalog.LoadDatLines();
-        var importDialog     = new ImportDatDialog(platforms, existingDatLines, _catalog, _dataDir);
+        var importDialog     = new ImportDatDialog(platforms, existingDatLines, _catalog, _dataDir, _selectedPlatformId);
         var ok               = await importDialog.ShowDialog<bool>(this);
         if (!ok) return;
 
@@ -8495,6 +8950,10 @@ public partial class MainWindow : Window
                     CurrentItem     = releases[i].Name,
                 });
         }
+
+        foreach (var game in parsedGames)
+            if (game.WorkingState.Length > 0)
+                _catalog.SetWorkingStateIfNotManual(game.Name, game.WorkingState);
 
         return releases.Count;
     }
@@ -9420,8 +9879,8 @@ public partial class MainWindow : Window
         TransformsListPanel.Children.Clear();
         _transformBorders.Clear();
 
-        var fileItems   = _transforms.Where(t => t.TransformType != "folder_strategy").ToList();
-        var folderItems = _transforms.Where(t => t.TransformType == "folder_strategy").ToList();
+        var fileItems   = _transforms.Where(t => t.ProcessorType != "folder_oriented").ToList();
+        var folderItems = _transforms.Where(t => t.ProcessorType == "folder_oriented").ToList();
 
         void AddGroupHeader(string label)
         {
@@ -9440,7 +9899,7 @@ public partial class MainWindow : Window
             var border = new Border { Background = Brushes.Transparent };
 
             // Badge
-            bool isFolder       = xform.IsFolderStrategy;
+            bool isFolder       = xform.IsFolderOriented;
             var badgeBg         = isFolder ? "#1E1800" : "#2A1030";
             var badgeFg         = isFolder ? "#C8A000" : "#C060C0";
             var badgeText       = isFolder ? "FOLDER"  : "FILE";
@@ -9521,12 +9980,14 @@ public partial class MainWindow : Window
         _selectedTransformBorder = border;
         _editingTransform        = t;
 
-        TransformNameBox.Text          = t.Name;
-        TransformIdText.Text           = t.Id;
-        TransformToolText.Text         = t.ToolId.Length > 0 ? t.ToolId : "(none)";
-        TransformTypeBox.SelectedIndex = t.TransformType == "folder_strategy" ? 1 : 0;
-        TransformCmdBox.Text           = t.CommandTemplate;
-        TransformOutputExtBox.Text     = t.OutputExtension;
+        TransformNameBox.Text              = t.Name;
+        TransformIdText.Text               = t.Id;
+        TransformToolText.Text             = t.ToolId.Length > 0 ? t.ToolId : "(none)";
+        TransformTypeBox.SelectedIndex       = t.ProcessorType == "folder_oriented" ? 1 : 0;
+        TransformOutputKindBox.SelectedIndex = t.OutputKind == "folder" ? 1 : 0;
+        TransformArchiveTierBox.SelectedIndex = t.ArchiveTier switch { "B" => 1, "C" => 2, _ => 0 };
+        TransformCmdBox.Text               = t.CommandTemplate;
+        TransformOutputExtBox.Text         = t.OutputExtension;
         TransformDeleteBtn.IsEnabled   = t.Id.StartsWith("custom_");
         TransformEditorPanel.IsVisible = true;
         UpdateCommandPreview();
@@ -9580,17 +10041,23 @@ public partial class MainWindow : Window
             return;
         }
 
-        var xformType = TransformTypeBox.SelectedIndex == 1 ? "folder_strategy" : "file_strategy";
+        var processorType = TransformTypeBox.SelectedIndex == 1 ? "folder_oriented" : "file_oriented";
+        var outputKind    = TransformOutputKindBox.SelectedIndex == 1 ? "folder" : "file";
+        var xformType     = processorType == "folder_oriented" ? "folder_strategy" : "file_strategy";
+        var archiveTier   = TransformArchiveTierBox.SelectedIndex switch { 1 => "B", 2 => "C", _ => "A" };
 
         var updated = new TransformRecord
         {
             Id              = t.Id,
             Name            = name,
             ToolId          = t.ToolId,
+            ProcessorType   = processorType,
+            OutputKind      = outputKind,
             TransformType   = xformType,
             CommandTemplate = cmd,
             OutputExtension = TransformOutputExtBox.Text?.Trim() ?? "",
             IsEnabled       = t.IsEnabled,
+            ArchiveTier     = archiveTier,
         };
 
         _catalog.SaveTransform(updated);
@@ -9608,7 +10075,10 @@ public partial class MainWindow : Window
             CommandTemplate = "",
             OutputExtension = "",
             IsEnabled       = true,
+            ProcessorType   = "file_oriented",
+            OutputKind      = "file",
             TransformType   = "file_strategy",
+            ArchiveTier     = "A",
         };
         _transforms.Add(draft);
         BuildTransformListPanel(draft.Id);

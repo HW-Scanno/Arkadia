@@ -78,7 +78,8 @@ public static class IntegrityValidator
             foreach (var da in derived)
             {
                 var archivePath  = Path.Combine(appRoot, da.RelativePath.Replace('/', pathSep));
-                var inArchive    = File.Exists(archivePath);
+                // File.Exists for file-output artifacts, Directory.Exists for folder-output artifacts.
+                var inArchive    = File.Exists(archivePath) || Directory.Exists(archivePath);
                 var inActive     = activeDaIds.Contains(da.Id);
                 var inLost       = lostDaIds.Contains(da.Id);
 

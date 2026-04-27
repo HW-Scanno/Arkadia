@@ -48,7 +48,14 @@ public static class DatParser
         /// Falls back to "md5:..." if SHA1 is absent.
         /// Empty string if no usable checksums are present.
         /// </summary>
-        public string           ContentKey  { get; init; } = "";
+        public string           ContentKey   { get; init; } = "";
+
+        /// <summary>
+        /// Parsed <c>arkadia:working_state</c> from an &lt;info&gt; element.
+        /// One of: <c>working</c>, <c>imperfect</c>, <c>not_working</c>, <c>unknown</c>.
+        /// Empty string when the element is absent or carries an unrecognized value.
+        /// </summary>
+        public string           WorkingState { get; init; } = "";
     }
 
     public static Result Parse(string path)
@@ -82,28 +89,41 @@ public static class DatParser
                 var gameName  = el.GetAttribute("name");
                 if (gameName.Length == 0) continue;
 
-                var roms = new List<ParsedRom>();
+                var roms         = new List<ParsedRom>();
+                var workingState = "";
+
                 foreach (XmlNode child in el.ChildNodes)
                 {
-                    if (child is not XmlElement rom) continue;
-                    if (rom.Name != "rom") continue;
-                    roms.Add(new ParsedRom
+                    if (child is not XmlElement ce) continue;
+
+                    if (ce.Name == "rom")
                     {
-                        Name = rom.GetAttribute("name"),
-                        Size = rom.GetAttribute("size"),
-                        Crc  = rom.GetAttribute("crc"),
-                        Md5  = rom.GetAttribute("md5"),
-                        Sha1 = rom.GetAttribute("sha1"),
-                    });
+                        roms.Add(new ParsedRom
+                        {
+                            Name = ce.GetAttribute("name"),
+                            Size = ce.GetAttribute("size"),
+                            Crc  = ce.GetAttribute("crc"),
+                            Md5  = ce.GetAttribute("md5"),
+                            Sha1 = ce.GetAttribute("sha1"),
+                        });
+                    }
+                    else if (ce.Name == "info" &&
+                             ce.GetAttribute("name") == "arkadia:working_state")
+                    {
+                        var v = ce.GetAttribute("value");
+                        if (IsValidWorkingState(v))
+                            workingState = v;
+                    }
                 }
 
                 games.Add(new ParsedGame
                 {
-                    Name       = gameName,
-                    Region     = ExtractRegion(gameName),
-                    Languages  = ExtractLanguages(gameName),
-                    Roms       = roms,
-                    ContentKey = ComputeContentKey(roms),
+                    Name         = gameName,
+                    Region       = ExtractRegion(gameName),
+                    Languages    = ExtractLanguages(gameName),
+                    Roms         = roms,
+                    ContentKey   = ComputeContentKey(roms),
+                    WorkingState = workingState,
                 });
             }
 
@@ -164,6 +184,10 @@ public static class DatParser
 
         return "";
     }
+
+    private static bool IsValidWorkingState(string v) =>
+        v is WorkingState.Unknown or WorkingState.Working or
+             WorkingState.Imperfect or WorkingState.NotWorking;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 

@@ -1,0 +1,198 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.TosecProviderWindow"
+        Title="Arkadia - TOSEC DAT Downloader"
+        Width="1060" Height="740"
+        MinWidth="820" MinHeight="540"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.action">
+            <Setter Property="Background"      Value="#1E1E2E"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Padding"         Value="10,4"/>
+            <Setter Property="FontSize"        Value="11"/>
+        </Style>
+        <Style Selector="Button.action:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#252540"/>
+        </Style>
+        <Style Selector="Button.action:disabled">
+            <Setter Property="Opacity" Value="0.38"/>
+        </Style>
+    </Window.Styles>
+
+    <!--
+        Row 0 Auto  — header
+        Row 1 *     — body (list | divider | right panel)
+        Row 2 Auto  — footer
+    -->
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- ══ Row 0: Header ════════════════════════════════════════════════ -->
+        <Border Grid.Row="0"
+                Padding="24,18,24,16"
+                BorderBrush="#181826" BorderThickness="0,0,0,1"
+                Background="#0F0F14">
+            <StackPanel Spacing="4">
+                <TextBlock Text="TOSEC"
+                           FontSize="16" FontWeight="SemiBold" Foreground="#F0F0F0"/>
+                <TextBlock Text="The Old School Emulation Center — download DAT packs directly into Arkadia"
+                           FontSize="12" Foreground="#888899"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ══ Row 1: Body ══════════════════════════════════════════════════ -->
+        <Grid Grid.Row="1" ColumnDefinitions="300,1,*">
+
+            <!-- Left: searchable pack list -->
+            <Grid Grid.Column="0" RowDefinitions="Auto,Auto,*" Background="#0D0D13">
+
+                <Border Grid.Row="0"
+                        Padding="10,8"
+                        BorderBrush="#181826" BorderThickness="0,0,0,1">
+                    <TextBox x:Name="TosecSearch"
+                             Watermark="Search packs…"
+                             FontSize="12"
+                             Background="#1A1A24" Foreground="#E8E8F0"
+                             BorderBrush="#2A2A3C" BorderThickness="1"
+                             Padding="8,6" CornerRadius="4"
+                             TextChanged="OnTosecSearchChanged"/>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Padding="10,6"
+                        BorderBrush="#181826" BorderThickness="0,0,0,1"
+                        Background="#0F0F14">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <Button Classes="action" Content="Select All" Click="OnSelectAll"/>
+                        <Button Classes="action" Content="Clear"      Click="OnClearAll"/>
+                        <TextBlock x:Name="TosecCountLabel"
+                                   FontSize="10" Foreground="#666677"
+                                   VerticalAlignment="Center" Margin="4,0,0,0"/>
+                    </StackPanel>
+                </Border>
+
+                <ScrollViewer Grid.Row="2"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="TosecPacksPanel" Spacing="0"/>
+                </ScrollViewer>
+
+            </Grid>
+
+            <!-- Divider -->
+            <Border Grid.Column="1" Background="#181826"/>
+
+            <!-- Right: provider info + progress + log -->
+            <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*">
+
+                <Border Grid.Row="0"
+                        Background="#1A1A24"
+                        BorderBrush="#1E1E2C" BorderThickness="0,0,0,1"
+                        Padding="20,12">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="3">
+                            <TextBlock Text="TOSEC — tosecdev.org"
+                                       FontSize="10" FontWeight="SemiBold"
+                                       LetterSpacing="1.8" Foreground="#7B68EE"/>
+                            <TextBlock Text="The Old School Emulation Center — DAT pack downloads from the official source."
+                                       FontSize="11" Foreground="#AAAABC"/>
+                            <TextBlock x:Name="TosecStatusText"
+                                       Text="Pack list not loaded.  Click  &#x201C;Load Packs&#x201D;  to begin."
+                                       FontSize="11" Foreground="#8888AA"/>
+                        </StackPanel>
+                        <TextBlock x:Name="TosecSelectedCount"
+                                   Grid.Column="1"
+                                   Text="0 selected"
+                                   FontSize="11" Foreground="#888899"
+                                   VerticalAlignment="Center"/>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="1"
+                        Background="#141420"
+                        BorderBrush="#1E1E2C" BorderThickness="0,0,0,1"
+                        Padding="20,8">
+                    <StackPanel Spacing="5">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <TextBlock x:Name="TosecProgressLabel"
+                                       Grid.Column="0"
+                                       FontSize="11"
+                                       FontFamily="Consolas,Courier New,monospace"
+                                       Foreground="#666677"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock x:Name="TosecProgressDetail"
+                                       Grid.Column="1"
+                                       FontSize="10"
+                                       FontFamily="Consolas,Courier New,monospace"
+                                       Foreground="#666677"/>
+                        </Grid>
+                        <ProgressBar x:Name="TosecDownloadProgress"
+                                     Height="4"
+                                     IsIndeterminate="False"
+                                     Value="0" Minimum="0" Maximum="100"
+                                     Foreground="#7B68EE"
+                                     Background="#242433"
+                                     CornerRadius="2"/>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="2" Background="#0D0D13">
+                    <ScrollViewer x:Name="TosecLogScrollViewer"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="TosecLogPanel" Margin="16,10,16,10" Spacing="1"/>
+                    </ScrollViewer>
+                </Border>
+
+            </Grid>
+        </Grid>
+
+        <!-- ══ Row 2: Footer ════════════════════════════════════════════════ -->
+        <Border Grid.Row="2"
+                Padding="20,11,20,13"
+                BorderBrush="#181826" BorderThickness="0,1,0,0"
+                Background="#0F0F14">
+            <Grid ColumnDefinitions="*,Auto">
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="RefreshButton"
+                            Content="Load Packs"
+                            Background="#242433" Foreground="#CCCCDD"
+                            BorderBrush="#2A2A3C" BorderThickness="1"
+                            CornerRadius="5" Padding="14,7" FontSize="12"
+                            Click="OnRefreshList"/>
+                    <Button x:Name="CancelButton"
+                            Content="Cancel"
+                            Background="#2A1218" Foreground="#EF5350"
+                            BorderBrush="#3A1C22" BorderThickness="1"
+                            CornerRadius="5" Padding="14,7" FontSize="12"
+                            IsVisible="False"
+                            Click="OnCancel"/>
+                    <Button x:Name="DownloadButton"
+                            Content="Download Selected"
+                            Background="#7B68EE" Foreground="#FFFFFF"
+                            BorderThickness="0"
+                            CornerRadius="5" Padding="14,7" FontSize="12"
+                            IsEnabled="False"
+                            Click="OnDownloadSelected"/>
+                </StackPanel>
+
+                <Button Grid.Column="1"
+                        Content="Close"
+                        Background="#242433" Foreground="#F0F0F0"
+                        BorderThickness="0"
+                        CornerRadius="5" Padding="14,7" FontSize="12"
+                        Click="OnClose"/>
+
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

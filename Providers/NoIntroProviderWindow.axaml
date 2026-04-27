@@ -1,0 +1,104 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.NoIntroProviderWindow"
+        Title="Arkadia - No-Intro DAT Downloader"
+        Width="700" Height="520"
+        MinWidth="560" MinHeight="400"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0D0D13"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <!--
+        Row 0 Auto  — header
+        Row 1 *     — manual helper (centred)
+        Row 2 160   — log area
+        Row 3 Auto  — footer
+    -->
+    <Grid RowDefinitions="Auto,*,160,Auto">
+
+        <!-- ══ Row 0: Header ════════════════════════════════════════════════ -->
+        <Border Grid.Row="0"
+                Padding="24,18,24,16"
+                BorderBrush="#181826" BorderThickness="0,0,0,1"
+                Background="#0F0F14">
+            <StackPanel Spacing="4">
+                <TextBlock Text="No-Intro"
+                           FontSize="16" FontWeight="SemiBold" Foreground="#F0F0F0"/>
+                <TextBlock Text="Manual browser mode — open DAT-o-MATIC and save downloaded DATs into today's folder"
+                           FontSize="12" Foreground="#888899"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ══ Row 1: Manual helper ══════════════════════════════════════ -->
+        <StackPanel Grid.Row="1"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    MaxWidth="560"
+                    Spacing="24"
+                    Margin="40,0">
+
+            <StackPanel Spacing="6">
+                <TextBlock Text="NO-INTRO — datomatic.no-intro.org"
+                           FontSize="10" FontWeight="SemiBold"
+                           LetterSpacing="1.8" Foreground="#7B68EE"/>
+                <TextBlock Text="High-quality DATs for cartridge and digital platforms — manual download required."
+                           FontSize="14" FontWeight="SemiBold" Foreground="#E8E8F0"
+                           TextWrapping="Wrap"/>
+                <TextBlock Text="This provider requires a manual step.  Open DAT-o-MATIC in your browser, download the DAT files, and save them into the folder below."
+                           FontSize="12" Foreground="#AAAABC"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <TextBlock x:Name="NoIntroFolderPath"
+                       FontSize="11"
+                       FontFamily="Consolas,Courier New,monospace"
+                       Foreground="#CCCCDD"
+                       TextWrapping="Wrap"/>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Create Today Folder"
+                        Background="#1E1E2E" Foreground="#AAAACC"
+                        BorderBrush="#2A2A3C" BorderThickness="1"
+                        CornerRadius="5" Padding="14,8" FontSize="12"
+                        Click="OnNiCreateFolder"/>
+                <Button Content="Open Today Folder"
+                        Background="#1E1E2E" Foreground="#AAAACC"
+                        BorderBrush="#2A2A3C" BorderThickness="1"
+                        CornerRadius="5" Padding="14,8" FontSize="12"
+                        Click="OnNiOpenFolder"/>
+                <Button Content="Open DAT-o-MATIC"
+                        Background="#7B68EE" Foreground="#FFFFFF"
+                        BorderThickness="0"
+                        CornerRadius="5" Padding="14,8" FontSize="12"
+                        Click="OnNiOpenBrowser"/>
+            </StackPanel>
+
+        </StackPanel>
+
+        <!-- ══ Row 2: Log area ══════════════════════════════════════════════ -->
+        <Border Grid.Row="2"
+                Background="#0A0A10"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <ScrollViewer x:Name="LogScrollViewer"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="LogPanel" Margin="16,8,16,8" Spacing="1"/>
+            </ScrollViewer>
+        </Border>
+
+        <!-- ══ Row 3: Footer ════════════════════════════════════════════════ -->
+        <Border Grid.Row="3"
+                Padding="20,11,20,13"
+                BorderBrush="#181826" BorderThickness="0,1,0,0"
+                Background="#0F0F14">
+            <Button HorizontalAlignment="Right"
+                    Content="Close"
+                    Background="#242433" Foreground="#F0F0F0"
+                    BorderThickness="0"
+                    CornerRadius="5" Padding="14,7" FontSize="12"
+                    Click="OnClose"/>
+        </Border>
+
+    </Grid>
+</Window>

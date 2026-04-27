@@ -1,0 +1,63 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.PlaylistListDialog"
+        Title="Load Playlist"
+        Width="340" Height="320"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <Border Grid.Row="0"
+                Padding="16,10"
+                BorderBrush="#181826" BorderThickness="0,0,0,1"
+                Background="#0D0D13">
+            <TextBlock Text="SAVED PLAYLISTS"
+                       FontSize="10" FontWeight="SemiBold"
+                       LetterSpacing="1.5" Foreground="#666677"/>
+        </Border>
+
+        <ListBox Grid.Row="1"
+                 x:Name="PlaylistList"
+                 Background="#0F0F14"
+                 BorderThickness="0"
+                 FontSize="12"
+                 Foreground="#CCCCDD"
+                 Padding="8,4"
+                 SelectionChanged="OnSelectionChanged"/>
+
+        <Border Grid.Row="2"
+                Padding="16,10,16,14"
+                BorderBrush="#181826" BorderThickness="0,1,0,0"
+                Background="#0F0F14">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <Button Grid.Column="0"
+                        x:Name="DeleteButton"
+                        Content="Delete"
+                        Background="#242433" Foreground="#EF5350"
+                        BorderBrush="#2A2A3C" BorderThickness="1"
+                        CornerRadius="4" Padding="12,6" FontSize="11"
+                        IsEnabled="False"
+                        Click="OnDelete"/>
+                <Button Grid.Column="2"
+                        Content="Cancel"
+                        Background="#242433" Foreground="#AAAACC"
+                        BorderBrush="#2A2A3C" BorderThickness="1"
+                        CornerRadius="4" Padding="12,6" FontSize="11"
+                        Margin="0,0,8,0"
+                        Click="OnCancel"/>
+                <Button Grid.Column="3"
+                        x:Name="LoadButton"
+                        Content="Load"
+                        Background="#7B68EE" Foreground="#FFFFFF"
+                        BorderThickness="0"
+                        CornerRadius="4" Padding="12,6" FontSize="11"
+                        IsEnabled="False"
+                        Click="OnLoad"/>
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>
