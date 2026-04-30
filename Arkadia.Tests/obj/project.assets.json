@@ -2830,8 +2830,8 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "projectReferences": {
-            "d:\\Projects\\Arkadia\\Arkadia.csproj": {
-              "projectPath": "d:\\Projects\\Arkadia\\Arkadia.csproj"
+            "D:\\Projects\\Arkadia\\Arkadia.csproj": {
+              "projectPath": "D:\\Projects\\Arkadia\\Arkadia.csproj"
             }
           }
         }

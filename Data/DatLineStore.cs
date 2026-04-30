@@ -127,6 +127,19 @@ public sealed class DatLineStore
             );
 
             CREATE INDEX IF NOT EXISTS idx_release_files_release_id ON release_files(release_id);
+
+            CREATE TABLE IF NOT EXISTS release_metadata (
+                release_id       TEXT PRIMARY KEY,
+                title            TEXT NOT NULL DEFAULT '',
+                original_title   TEXT NOT NULL DEFAULT '',
+                developer        TEXT NOT NULL DEFAULT '',
+                publisher        TEXT NOT NULL DEFAULT '',
+                year             TEXT NOT NULL DEFAULT '',
+                languages        TEXT NOT NULL DEFAULT '',
+                alternate_titles TEXT NOT NULL DEFAULT '',
+                description      TEXT NOT NULL DEFAULT '',
+                scraped_at_utc   TEXT NOT NULL DEFAULT ''
+            );
             """;
         cmd.ExecuteNonQuery();
 
@@ -476,6 +489,78 @@ public sealed class DatLineStore
                 Sha1      = reader.IsDBNull(6) ? "" : reader.GetString(6),
             });
         return list;
+    }
+
+    // ── Release metadata ─────────────────────────────────────────────────────
+
+    public Dictionary<string, ReleaseMetadataRecord> LoadReleaseMetadata()
+    {
+        var dict = new Dictionary<string, ReleaseMetadataRecord>(StringComparer.OrdinalIgnoreCase);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT release_id, title, original_title, developer, publisher, year, languages,
+                   alternate_titles, description, scraped_at_utc
+            FROM release_metadata
+            """;
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var id = reader.GetString(0);
+            dict[id] = new ReleaseMetadataRecord
+            {
+                ReleaseId       = id,
+                Title           = reader.IsDBNull(1) ? "" : reader.GetString(1),
+                OriginalTitle   = reader.IsDBNull(2) ? "" : reader.GetString(2),
+                Developer       = reader.IsDBNull(3) ? "" : reader.GetString(3),
+                Publisher       = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                Year            = reader.IsDBNull(5) ? "" : reader.GetString(5),
+                Languages       = reader.IsDBNull(6) ? "" : reader.GetString(6),
+                AlternateTitles = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                Description     = reader.IsDBNull(8) ? "" : reader.GetString(8),
+                ScrapedAtUtc    = reader.IsDBNull(9) ? "" : reader.GetString(9),
+            };
+        }
+        return dict;
+    }
+
+    /// <summary>
+    /// Upserts a metadata record for the given release.
+    /// Inserts a new row or fully replaces an existing one.
+    /// </summary>
+    public void SaveReleaseMetadata(ReleaseMetadataRecord m)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO release_metadata(
+                release_id, title, original_title, developer, publisher,
+                year, languages, alternate_titles, description, scraped_at_utc)
+            VALUES(
+                $id, $title, $origTitle, $dev, $pub,
+                $year, $langs, $alts, $desc, $scraped)
+            ON CONFLICT(release_id) DO UPDATE SET
+                title            = excluded.title,
+                original_title   = excluded.original_title,
+                developer        = excluded.developer,
+                publisher        = excluded.publisher,
+                year             = excluded.year,
+                languages        = excluded.languages,
+                alternate_titles = excluded.alternate_titles,
+                description      = excluded.description,
+                scraped_at_utc   = excluded.scraped_at_utc
+            """;
+        cmd.Parameters.AddWithValue("$id",       m.ReleaseId);
+        cmd.Parameters.AddWithValue("$title",    m.Title);
+        cmd.Parameters.AddWithValue("$origTitle", m.OriginalTitle);
+        cmd.Parameters.AddWithValue("$dev",      m.Developer);
+        cmd.Parameters.AddWithValue("$pub",      m.Publisher);
+        cmd.Parameters.AddWithValue("$year",     m.Year);
+        cmd.Parameters.AddWithValue("$langs",    m.Languages);
+        cmd.Parameters.AddWithValue("$alts",     m.AlternateTitles);
+        cmd.Parameters.AddWithValue("$desc",     m.Description);
+        cmd.Parameters.AddWithValue("$scraped",  m.ScrapedAtUtc);
+        cmd.ExecuteNonQuery();
     }
 
     // ── Status update ────────────────────────────────────────────────────────

@@ -95,13 +95,31 @@ build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 [d:/Projects/Arkadia/PlatformTypeManagerDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
+[d:/Projects/Arkadia/Providers/CategoryIniPromptDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
 [d:/Projects/Arkadia/Providers/EggmansworldProviderWindow.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[d:/Projects/Arkadia/Providers/ExcludedDriversDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[d:/Projects/Arkadia/Providers/FamilyRuleDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[d:/Projects/Arkadia/Providers/MamePlaylistWindow.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
 [d:/Projects/Arkadia/Providers/MameProviderWindow.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
 [d:/Projects/Arkadia/Providers/NoIntroProviderWindow.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[d:/Projects/Arkadia/Providers/PlaylistListDialog.axaml]
+build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
+
+[d:/Projects/Arkadia/Providers/PlaylistNameDialog.axaml]
 build_metadata.AdditionalFiles.SourceItemGroup = AvaloniaXaml
 
 [d:/Projects/Arkadia/Providers/RedumpProviderWindow.axaml]

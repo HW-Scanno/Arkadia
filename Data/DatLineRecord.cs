@@ -20,4 +20,8 @@ public sealed class DatLineRecord
     public string   FolderTransformId     { get; set; } = "";
     /// <summary>"archives_pre_extraction" | "all_files"</summary>
     public string   FileHandling          { get; set; } = "archives_pre_extraction";
+    /// <summary>Whether this DAT line appears in the Library view.</summary>
+    public bool     CatalogEnabled        { get; set; } = true;
+    /// <summary>"dat" | "catalog" — controls how display titles are resolved.</summary>
+    public string   LibraryTitleMode      { get; set; } = "dat";
 }

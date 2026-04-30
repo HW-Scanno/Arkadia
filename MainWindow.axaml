@@ -235,6 +235,29 @@
             <Setter Property="Background" Value="#232347"/>
         </Style>
 
+        <!-- CatalogList — same compact density as LibraryList -->
+        <Style Selector="ListBox#CatalogList ListBoxItem">
+            <Setter Property="Padding"         Value="0,8,0,8"/>
+            <Setter Property="Margin"          Value="0"/>
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="ListBox#CatalogList ListBoxItem /template/ ContentPresenter">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Padding"    Value="0"/>
+            <Setter Property="Margin"     Value="0"/>
+        </Style>
+        <Style Selector="ListBox#CatalogList ListBoxItem:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="{DynamicResource ArkSurfaceAlt}"/>
+        </Style>
+        <Style Selector="ListBox#CatalogList ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="#1E1E3A"/>
+        </Style>
+        <Style Selector="ListBox#CatalogList ListBoxItem:selected:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#232347"/>
+        </Style>
+
         <!-- VolumesList — zero horizontal theme padding so data grid aligns with header -->
         <Style Selector="ListBox#VolumesList ListBoxItem">
             <Setter Property="Padding"         Value="0,8"/>
@@ -346,6 +369,12 @@
                         <StackPanel Orientation="Horizontal" Spacing="10">
                             <PathIcon Width="14" Height="14" Data="M0 1H14V3H0Z M0 6H14V8H0Z M0 11H14V13H0Z"/>
                             <TextBlock Text="Library" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="NavCatalog" Classes="nav" Tag="Catalog" Click="OnNavClick">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <PathIcon Width="14" Height="14" Data="M1 1H13V3H1Z M1 5H9V7H1Z M1 9H11V11H1Z M11 5L14 7 11 9Z"/>
+                            <TextBlock Text="Catalog" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="NavStaging" Classes="nav" Tag="Staging" Click="OnNavClick">
@@ -768,7 +797,7 @@
                                                 <TextBlock Text="NEW" FontSize="9" FontWeight="SemiBold"
                                                            Foreground="#29B6F6" LetterSpacing="0.8"/>
                                             </Border>
-                                            <TextBlock Text="{Binding Name}"
+                                            <TextBlock Text="{Binding DisplayName}"
                                                        FontSize="13"
                                                        Foreground="{DynamicResource ArkTextPrimary}"
                                                        TextTrimming="CharacterEllipsis"
@@ -878,6 +907,11 @@
                                 <Grid ColumnDefinitions="*,Auto">
                                     <TextBlock Grid.Column="0" Classes="card-key" Text="Size"      Margin="0"/>
                                     <TextBlock Grid.Column="1" x:Name="DetailSize"     Classes="card-val" Margin="0"/>
+                                </Grid>
+                                <Grid x:Name="DetailDatNameRow" ColumnDefinitions="*,Auto" Margin="0,8,0,0" IsVisible="False">
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="DAT Name"  Margin="0"/>
+                                    <TextBlock Grid.Column="1" x:Name="DetailDatName" Classes="card-val" Margin="0"
+                                               TextTrimming="CharacterEllipsis" MaxWidth="180"/>
                                 </Grid>
 
                                 <!-- SOURCE FILES section -->
@@ -2787,18 +2821,572 @@
                     </StackPanel>
 
                     <!-- ── ROM Scrapers panel ── -->
-                    <Border x:Name="ProvidersRomScrapersPanel"
-                            IsVisible="False"
-                            Background="{DynamicResource ArkSurface}"
-                            CornerRadius="8" Padding="24"
-                            BorderBrush="{DynamicResource ArkSurfaceAlt}" BorderThickness="1">
-                        <TextBlock Text="Not implemented yet."
-                                   FontSize="13"
-                                   Foreground="{DynamicResource ArkTextSecondary}"/>
-                    </Border>
+                    <StackPanel x:Name="ProvidersRomScrapersPanel" IsVisible="False" Spacing="12">
+
+                        <!-- ScreenScraper card -->
+                        <Border CornerRadius="8" Padding="20,18" MinHeight="165"
+                                Background="{DynamicResource ArkSurface}"
+                                BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                                BorderThickness="1">
+                            <StackPanel Spacing="0">
+
+                                <!-- Header -->
+                                <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,14">
+                                    <StackPanel Grid.Column="0" Spacing="3">
+                                        <TextBlock Text="SCREENSCRAPER"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   LetterSpacing="1.8"
+                                                   Foreground="{DynamicResource ArkAccent}"/>
+                                        <TextBlock Text="Game metadata and media"
+                                                   FontSize="13" FontWeight="SemiBold"
+                                                   Foreground="{DynamicResource ArkTextPrimary}"/>
+                                    </StackPanel>
+                                    <Border Grid.Column="1" VerticalAlignment="Top"
+                                            Background="#1A1A2C" CornerRadius="4" Padding="8,3">
+                                        <TextBlock Text="MANUAL"
+                                                   FontSize="9" FontWeight="SemiBold"
+                                                   LetterSpacing="1.5"
+                                                   Foreground="{DynamicResource ArkTextSecondary}"/>
+                                    </Border>
+                                </Grid>
+
+                                <!-- Description -->
+                                <TextBlock Text="Scrapes titles, developer, publisher, release year, descriptions, covers, screenshots and videos. Triggered per-release from the Catalog hero panel."
+                                           FontSize="12"
+                                           Foreground="{DynamicResource ArkTextSecondary}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,20"/>
+
+                                <!-- Credentials -->
+                                <TextBlock Text="CREDENTIALS"
+                                           FontSize="9" FontWeight="SemiBold" LetterSpacing="1.4"
+                                           Foreground="#444455" Margin="0,0,0,12"/>
+
+                                <Grid ColumnDefinitions="*,16,*" RowDefinitions="Auto,Auto"
+                                      Margin="0,0,0,0">
+
+                                    <StackPanel Grid.Column="0" Grid.Row="0" Spacing="4" Margin="0,0,0,12">
+                                        <TextBlock Text="Username" FontSize="11" Foreground="#888899"/>
+                                        <TextBox x:Name="ScraperSSUsername"
+                                                 Watermark="screenscraper.fr username"
+                                                 FontSize="12"/>
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="2" Grid.Row="0" Spacing="4" Margin="0,0,0,12">
+                                        <TextBlock Text="Password" FontSize="11" Foreground="#888899"/>
+                                        <TextBox x:Name="ScraperSSPassword"
+                                                 Watermark="screenscraper.fr password"
+                                                 PasswordChar="●"
+                                                 FontSize="12"/>
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="0" Grid.Row="1" Spacing="4">
+                                        <TextBlock Text="API Dev ID" FontSize="11" Foreground="#888899"/>
+                                        <TextBox x:Name="ScraperSSDevId"
+                                                 Watermark="Developer ID"
+                                                 FontSize="12"/>
+                                    </StackPanel>
+
+                                    <StackPanel Grid.Column="2" Grid.Row="1" Spacing="4">
+                                        <TextBlock Text="API Dev Password" FontSize="11" Foreground="#888899"/>
+                                        <TextBox x:Name="ScraperSSDevPassword"
+                                                 Watermark="Developer password"
+                                                 PasswordChar="●"
+                                                 FontSize="12"/>
+                                    </StackPanel>
+
+                                </Grid>
+
+                                <TextBlock Text="All four fields are required. Register at screenscraper.fr to obtain your API developer credentials."
+                                           FontSize="11" Foreground="#444455"
+                                           Margin="0,10,0,16" TextWrapping="Wrap"/>
+
+                                <!-- Actions -->
+                                <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,0,0,0">
+                                    <Button Content="Save"
+                                            Background="{DynamicResource ArkAccent}" Foreground="#FFFFFF"
+                                            BorderThickness="0" CornerRadius="5"
+                                            Padding="16,7" FontSize="12"
+                                            Click="OnSaveScraperSettings"/>
+                                    <Button Content="Test Connection"
+                                            Background="#1A1A2C" Foreground="{DynamicResource ArkTextSecondary}"
+                                            BorderBrush="{DynamicResource ArkSurfaceAlt}" BorderThickness="1"
+                                            CornerRadius="5" Padding="16,7" FontSize="12"
+                                            x:Name="ScraperTestBtn"
+                                            Click="OnTestScraperConnection"/>
+                                </StackPanel>
+
+                                <!-- Test status -->
+                                <TextBlock x:Name="ScraperTestStatus"
+                                           IsVisible="False"
+                                           FontSize="11"
+                                           Margin="0,10,0,0"
+                                           TextWrapping="Wrap"/>
+
+                            </StackPanel>
+                        </Border>
+
+                    </StackPanel><!-- /ROM Scrapers panel -->
 
                 </StackPanel>
             </ScrollViewer><!-- /ViewProviders -->
+
+            <!-- ── Catalog view ── -->
+            <Grid x:Name="ViewCatalog"
+                  Grid.Row="1"
+                  IsVisible="False"
+                  RowDefinitions="Auto,*">
+
+                <!-- Toolbar -->
+                <Border Grid.Row="0"
+                        Padding="16,9"
+                        Background="{DynamicResource ArkSurface}"
+                        BorderBrush="{DynamicResource ArkSurfaceAlt}"
+                        BorderThickness="0,0,0,1">
+                    <DockPanel>
+                        <ComboBox x:Name="CatalogContextPlatform"
+                                  DockPanel.Dock="Left"
+                                  MinWidth="140" FontSize="13" Margin="0,0,8,0"
+                                  SelectionChanged="OnCatalogContextPlatformChanged"/>
+                        <ComboBox x:Name="CatalogContextDatLine"
+                                  DockPanel.Dock="Left"
+                                  MinWidth="190" FontSize="13" Margin="0,0,16,0"
+                                  SelectionChanged="OnCatalogContextDatLineChanged"/>
+
+                        <!-- Right controls -->
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6"
+                                    VerticalAlignment="Center">
+                            <TextBlock x:Name="CatalogCountText"
+                                       FontSize="11" VerticalAlignment="Center"
+                                       Foreground="{DynamicResource ArkTextSecondary}"
+                                       Margin="0,0,8,0"/>
+                            <ComboBox x:Name="CatalogStatusFilter"
+                                      MinWidth="120" FontSize="13"
+                                      SelectionChanged="OnCatalogFilterChanged"/>
+                            <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}" Margin="4,0"/>
+                            <Button x:Name="CatalogDetailBtn" Content="≡ List" Classes="view-toggle active" Click="OnCatalogDetailMode"/>
+                            <Button x:Name="CatalogGridBtn"   Content="⊞ Grid" Classes="view-toggle"       Click="OnCatalogGridMode"/>
+                        </StackPanel>
+
+                        <TextBox x:Name="CatalogSearch"
+                                 Watermark="Search by name…"
+                                 FontSize="13"
+                                 TextChanged="OnCatalogSearchChanged"/>
+                    </DockPanel>
+                </Border>
+
+                <!-- Body: list/grid (~30%) | jumplist (32px) | hero (~70%) -->
+                <Grid Grid.Row="1" ColumnDefinitions="300,1,32,1,*">
+
+                    <!-- Left: navigation list (reduced visual weight) -->
+                    <Panel Grid.Column="0">
+                        <ListBox x:Name="CatalogList"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 Padding="0"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                 SelectionChanged="OnCatalogSelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:DataType="lib:LibraryEntry">
+                                    <!-- Two-line row: CatalogTitle primary, Status + raw DAT name secondary -->
+                                    <StackPanel Margin="14,0,12,0" Spacing="2">
+                                        <TextBlock Text="{Binding CatalogTitle}"
+                                                   FontSize="12"
+                                                   Foreground="{DynamicResource ArkTextPrimary}"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <TextBlock Text="{Binding Status}"
+                                                       FontSize="10" FontWeight="SemiBold"
+                                                       Foreground="{Binding StatusBrush}"/>
+                                            <TextBlock Text="{Binding Name}"
+                                                       FontSize="10"
+                                                       Foreground="#3A3A50"
+                                                       TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <ScrollViewer x:Name="CatalogGridScroll"
+                                      IsVisible="False"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto">
+                            <WrapPanel x:Name="CatalogGridPanel"
+                                       Margin="10" Orientation="Horizontal"/>
+                        </ScrollViewer>
+                    </Panel>
+
+                    <!-- Divider -->
+                    <Border Grid.Column="1" Background="{DynamicResource ArkSurfaceAlt}"/>
+
+                    <!-- Jump list: A–Z + # -->
+                    <ScrollViewer Grid.Column="2"
+                                  VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="CatalogJumpPanel"
+                                    Margin="2,8,2,8"
+                                    Spacing="0"
+                                    HorizontalAlignment="Center"/>
+                    </ScrollViewer>
+
+                    <!-- Divider -->
+                    <Border Grid.Column="3" Background="{DynamicResource ArkSurfaceAlt}"/>
+
+                    <!-- Hero panel — two-row: [cover | content] / [media] -->
+                    <Grid Grid.Column="4">
+                        <Grid.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Offset="0" Color="#13131F"/>
+                                <GradientStop Offset="1" Color="#0A0A12"/>
+                            </LinearGradientBrush>
+                        </Grid.Background>
+
+                        <!-- Empty state -->
+                        <Border x:Name="CatalogHeroEmpty"
+                                VerticalAlignment="Center"
+                                HorizontalAlignment="Center">
+                            <TextBlock Text="Select an entry"
+                                       FontSize="13"
+                                       Foreground="{DynamicResource ArkTextSecondary}"/>
+                        </Border>
+
+                        <!-- Content: row 0 = cover | content — row 1 = media -->
+                        <ScrollViewer x:Name="CatalogHeroScroll"
+                                      IsVisible="False"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <Grid x:Name="CatalogHeroInnerGrid" ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto"
+                                  Margin="20,20,20,28">
+
+                                <!-- ── Cover — row 0, col 0 ── -->
+                                <StackPanel Grid.Row="0" Grid.Column="0"
+                                            Width="360"
+                                            VerticalAlignment="Top"
+                                            Margin="0,0,24,0">
+                                    <TextBlock Text="COVERS"
+                                               Foreground="#9FA4FF"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               LetterSpacing="1.5"/>
+                                    <Border Height="1" Background="#2A2A50" Margin="0,4,0,8"/>
+                                    <Border ClipToBounds="True" CornerRadius="6"
+                                            BorderBrush="#2A2A42" BorderThickness="1">
+                                        <Panel Width="360">
+                                            <Image x:Name="CatalogHeroCover"
+                                                   IsVisible="False"
+                                                   Stretch="Uniform"
+                                                   Width="360"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Top"/>
+                                            <Border x:Name="CatalogHeroNoCover"
+                                                    Width="360" Height="480"
+                                                    Background="#111120">
+                                                <TextBlock Text="No cover"
+                                                           FontSize="12"
+                                                           Foreground="#333344"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"/>
+                                            </Border>
+                                        </Panel>
+                                    </Border>
+                                </StackPanel>
+
+                                <!-- ── Content — row 0, col 1 ── -->
+                                <StackPanel Grid.Row="0" Grid.Column="1" Spacing="0" MaxWidth="760">
+
+                                    <!-- ─── Title block ─── -->
+                                    <Border BorderBrush="#407B68EE" BorderThickness="3,0,0,0"
+                                            Padding="10,0,0,0" Margin="0,0,0,4">
+                                        <TextBlock x:Name="CatalogHeroName"
+                                                   FontSize="44" FontWeight="ExtraBold"
+                                                   Foreground="{DynamicResource ArkTextPrimary}"
+                                                   TextWrapping="NoWrap"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   LineHeight="52"/>
+                                    </Border>
+                                    <TextBlock x:Name="CatalogHeroAlts"
+                                               IsVisible="False"
+                                               FontSize="13"
+                                               Foreground="#666677"
+                                               TextWrapping="Wrap"
+                                               Margin="0,0,0,6"/>
+                                    <!-- Language flags (v0: language-keyed; region flag TODO) -->
+                                    <StackPanel x:Name="CatalogHeroLangFlagsPanel"
+                                                Orientation="Horizontal"
+                                                Margin="0,0,0,6"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="0" Margin="0,0,0,20">
+                                        <TextBlock x:Name="CatalogQualityFilled"
+                                                   FontSize="26"
+                                                   FontFamily="Consolas,Courier New,monospace"
+                                                   LetterSpacing="2"
+                                                   Foreground="#4CAF50"/>
+                                        <TextBlock x:Name="CatalogQualityEmpty"
+                                                   FontSize="26"
+                                                   FontFamily="Consolas,Courier New,monospace"
+                                                   LetterSpacing="2"
+                                                   Foreground="#252538"/>
+                                    </StackPanel>
+
+                                    <!-- ─── Data card: Metadata + Checklist ─── -->
+                                    <Border CornerRadius="6" Padding="14,12" Margin="0,0,0,16"
+                                            BorderBrush="#2D2D44" BorderThickness="1"
+                                            BoxShadow="0 2 12 0 #30000000">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                <GradientStop Offset="0" Color="#181830"/>
+                                                <GradientStop Offset="1" Color="#131325"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                        <StackPanel Spacing="0">
+
+                                            <!-- Metadata — 2-row inline grid -->
+                                            <Grid ColumnDefinitions="64,92,64,92,80,*" RowDefinitions="Auto,Auto">
+                                                <TextBlock Grid.Row="0" Grid.Column="0"
+                                                           Text="Status" FontSize="12" Foreground="#666677"
+                                                           VerticalAlignment="Center"/>
+                                                <TextBlock x:Name="CatalogHeroStatus"
+                                                           Grid.Row="0" Grid.Column="1"
+                                                           FontSize="13" FontWeight="SemiBold"
+                                                           VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Row="0" Grid.Column="2"
+                                                           Text="Region" FontSize="12" Foreground="#666677"
+                                                           VerticalAlignment="Center"/>
+                                                <TextBlock x:Name="CatalogHeroRegion"
+                                                           Grid.Row="0" Grid.Column="3"
+                                                           FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
+                                                           VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Row="0" Grid.Column="4"
+                                                           Text="Languages" FontSize="12" Foreground="#666677"
+                                                           VerticalAlignment="Center"/>
+                                                <TextBlock x:Name="CatalogHeroLangs"
+                                                           Grid.Row="0" Grid.Column="5"
+                                                           FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
+                                                           VerticalAlignment="Center"/>
+                                                <TextBlock Grid.Row="1" Grid.Column="0"
+                                                           Text="Format" FontSize="12" Foreground="#666677"
+                                                           VerticalAlignment="Center" Margin="0,9,0,0"/>
+                                                <TextBlock x:Name="CatalogHeroFormat"
+                                                           Grid.Row="1" Grid.Column="1"
+                                                           FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
+                                                           VerticalAlignment="Center" Margin="0,9,0,0"/>
+                                                <TextBlock Grid.Row="1" Grid.Column="2"
+                                                           Text="Size" FontSize="12" Foreground="#666677"
+                                                           VerticalAlignment="Center" Margin="0,9,0,0"/>
+                                                <TextBlock x:Name="CatalogHeroSize"
+                                                           Grid.Row="1" Grid.Column="3"
+                                                           FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
+                                                           VerticalAlignment="Center" Margin="0,9,0,0"/>
+                                            </Grid>
+
+                                            <!-- Card divider -->
+                                            <Border Height="1" Background="#1A1A2C" Margin="0,12,0,12"/>
+
+                                            <!-- Checklist header -->
+                                            <TextBlock Text="CHECKLIST"
+                                                       FontSize="9" FontWeight="SemiBold" LetterSpacing="1.8"
+                                                       Foreground="#444455" Margin="0,0,0,8"/>
+
+                                            <!-- Checklist — 2-column grid -->
+                                            <Grid ColumnDefinitions="*,*">
+                                                <StackPanel Grid.Column="0" Spacing="7">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <TextBlock x:Name="CatalogChkTitleIcon"    FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                        <TextBlock Text="Title"          FontSize="13" Foreground="#888899"/>
+                                                    </StackPanel>
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <TextBlock x:Name="CatalogChkDevIcon"      FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                        <TextBlock Text="Developer"      FontSize="13" Foreground="#888899"/>
+                                                    </StackPanel>
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <TextBlock x:Name="CatalogChkYearIcon"     FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                        <TextBlock Text="Year"           FontSize="13" Foreground="#888899"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                                <StackPanel Grid.Column="1" Spacing="7">
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <TextBlock x:Name="CatalogChkOrigTitleIcon" FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                        <TextBlock Text="Original Title" FontSize="13" Foreground="#888899"/>
+                                                    </StackPanel>
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <TextBlock x:Name="CatalogChkPubIcon"      FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                        <TextBlock Text="Publisher"      FontSize="13" Foreground="#888899"/>
+                                                    </StackPanel>
+                                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                                        <TextBlock x:Name="CatalogChkLangsIcon"    FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                        <TextBlock Text="Languages"      FontSize="13" Foreground="#888899"/>
+                                                    </StackPanel>
+                                                </StackPanel>
+                                            </Grid>
+
+                                        </StackPanel>
+                                    </Border>
+
+                                    <!-- ─── Description ─── -->
+                                    <TextBlock Text="DESCRIPTION"
+                                               FontSize="9" FontWeight="SemiBold" LetterSpacing="1.8"
+                                               Foreground="#444455" Margin="0,0,0,6"/>
+                                    <TextBlock x:Name="CatalogHeroDesc"
+                                               FontSize="13"
+                                               Foreground="#666677"
+                                               TextWrapping="Wrap"
+                                               LineHeight="21"
+                                               Margin="0,0,0,16"
+                                               Text="No description available."/>
+
+                                    <!-- Section separator before actions -->
+                                    <Border Height="1" Background="#1A1A28" Margin="0,0,0,14"/>
+
+                                    <!-- Actions -->
+                                    <StackPanel Spacing="6" Margin="0,0,0,16">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Button Content="Open in Library"
+                                                    Background="#7B68EE" Foreground="#FFFFFF"
+                                                    BorderThickness="0"
+                                                    CornerRadius="4" Padding="14,7" FontSize="12"
+                                                    Click="OnCatalogOpenInLibrary"/>
+                                            <Button x:Name="CatalogScrapeBtn"
+                                                    Content="Scrape"
+                                                    Background="#1E2A1E" Foreground="#4CAF50"
+                                                    BorderBrush="#2A3D2A" BorderThickness="1"
+                                                    CornerRadius="4" Padding="14,7" FontSize="12"
+                                                    Click="OnCatalogScrape"/>
+                                        </StackPanel>
+                                        <TextBlock x:Name="CatalogScrapeStatus"
+                                                   IsVisible="False"
+                                                   FontSize="11"
+                                                   Foreground="#888899"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+
+                                    <!-- Technical identity — footnote -->
+                                    <Border Height="1" Background="#161622" Margin="0,0,0,10"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <TextBlock Text="DAT"
+                                                   FontSize="9" FontWeight="SemiBold" LetterSpacing="1.4"
+                                                   Foreground="#333344"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="CatalogHeroDatName"
+                                                   FontSize="10"
+                                                   Foreground="#333344"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   FontFamily="Consolas,Courier New,monospace"/>
+                                    </StackPanel>
+
+                                </StackPanel>
+
+                                <!-- ── Media compact — row 1, col 0 (≤1699px hero) ── -->
+                                <StackPanel x:Name="CatalogMediaCompact" Grid.Row="1" Grid.Column="0"
+                                            Width="360" VerticalAlignment="Top"
+                                            Margin="0,20,24,0">
+                                    <TextBlock Text="MEDIA"
+                                               Foreground="#9FA4FF"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               LetterSpacing="1.5"/>
+                                    <Border Height="1" Background="#2A2A50" Margin="0,4,0,8"/>
+                                    <Border Width="360" Height="203"
+                                            ClipToBounds="True"
+                                            CornerRadius="4"
+                                            BorderBrush="#252538" BorderThickness="1"
+                                            Margin="0,0,0,8">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                <GradientStop Offset="0" Color="#101020"/>
+                                                <GradientStop Offset="1" Color="#0D0D1A"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                        <Panel>
+                                            <TextBlock Text="No media"
+                                                       FontSize="12"
+                                                       Foreground="#252538"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"/>
+                                            <Image x:Name="CatalogScreenshotCompact"
+                                                   IsVisible="False"
+                                                   Stretch="UniformToFill"/>
+                                        </Panel>
+                                    </Border>
+                                    <StackPanel Orientation="Horizontal"
+                                                HorizontalAlignment="Center"
+                                                Spacing="5">
+                                        <TextBlock Text="●" FontSize="7" Foreground="#444455"/>
+                                        <TextBlock Text="●" FontSize="7" Foreground="#252538"/>
+                                        <TextBlock Text="●" FontSize="7" Foreground="#252538"/>
+                                    </StackPanel>
+                                </StackPanel>
+
+                                <!-- ── Catalog notes — row 1, col 1 (aligned with content) ── -->
+                                <Border Grid.Row="1" Grid.Column="1"
+                                        CornerRadius="6"
+                                        BorderBrush="#1E1E30" BorderThickness="1"
+                                        Padding="14,12"
+                                        Margin="0,20,0,0"
+                                        VerticalAlignment="Top">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Offset="0" Color="#101020"/>
+                                            <GradientStop Offset="1" Color="#0D0D1A"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <TextBlock Text="No additional catalog data available."
+                                               FontSize="12"
+                                               Foreground="#2E2E44"
+                                               TextWrapping="Wrap"/>
+                                </Border>
+
+                                <!-- ── Media wide — row 0, col 2 (≥1700px hero) ── -->
+                                <StackPanel x:Name="CatalogMediaWide"
+                                            Grid.Row="0" Grid.Column="2"
+                                            Width="340"
+                                            VerticalAlignment="Top"
+                                            Margin="24,0,0,0"
+                                            IsVisible="False"
+                                            Spacing="0">
+                                    <TextBlock Text="MEDIA"
+                                               Foreground="#9FA4FF"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               LetterSpacing="1.5"/>
+                                    <Border Height="1" Background="#2A2A50" Margin="0,4,0,8"/>
+                                    <Border Width="340" Height="191"
+                                            ClipToBounds="True"
+                                            CornerRadius="4"
+                                            BorderBrush="#252538" BorderThickness="1"
+                                            Margin="0,0,0,8">
+                                        <Border.Background>
+                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                                <GradientStop Offset="0" Color="#101020"/>
+                                                <GradientStop Offset="1" Color="#0D0D1A"/>
+                                            </LinearGradientBrush>
+                                        </Border.Background>
+                                        <Panel>
+                                            <TextBlock Text="No media"
+                                                       FontSize="12"
+                                                       Foreground="#252538"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"/>
+                                            <Image x:Name="CatalogScreenshotWide"
+                                                   IsVisible="False"
+                                                   Stretch="UniformToFill"/>
+                                        </Panel>
+                                    </Border>
+                                    <StackPanel Orientation="Horizontal"
+                                                HorizontalAlignment="Center"
+                                                Spacing="5">
+                                        <TextBlock Text="●" FontSize="7" Foreground="#444455"/>
+                                        <TextBlock Text="●" FontSize="7" Foreground="#252538"/>
+                                        <TextBlock Text="●" FontSize="7" Foreground="#252538"/>
+                                    </StackPanel>
+                                </StackPanel>
+
+                            </Grid>
+                        </ScrollViewer>
+                    </Grid><!-- /hero -->
+
+                </Grid><!-- /body columns -->
+
+            </Grid><!-- /ViewCatalog -->
 
         </Grid>
     </Grid>

@@ -8,8 +8,18 @@ namespace Arkadia.Library;
 
 public sealed class LibraryEntry
 {
-    public required string Name     { get; init; }
-    public required string Platform { get; init; }
+    public required string Name        { get; init; }
+    public string          DisplayName { get; init; } = "";
+    /// <summary>
+    /// Mutable display title used by the Catalog list and grid.
+    /// Set by the Catalog view before rendering based on the current title mode (DAT or META).
+    /// Defaults to Name on construction.
+    /// </summary>
+    public string          CatalogTitle { get; set; } = "";
+    public required string Platform    { get; init; }
+    public string          PlatformId  { get; init; } = "";
+    /// <summary>Catalog metadata for this release, if populated. Null when no metadata exists.</summary>
+    public ReleaseMetadataRecord? Metadata { get; set; }
 
     /// <summary>Human-readable status: "Present", "Pending", "Missing", "Lost", or "Outdated".</summary>
     public required string Status   { get; init; }

@@ -79,6 +79,8 @@ public sealed class CatalogService
                 transform_strategy_type  TEXT NOT NULL DEFAULT 'none',
                 folder_transform_id      TEXT,
                 file_handling            TEXT NOT NULL DEFAULT 'archives_pre_extraction',
+                catalog_enabled          INTEGER NOT NULL DEFAULT 1,
+                library_title_mode       TEXT NOT NULL DEFAULT 'dat',
                 FOREIGN KEY(platform_id) REFERENCES platforms(id) ON DELETE CASCADE
             );
 
@@ -724,7 +726,7 @@ public sealed class CatalogService
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
             SELECT id, platform_id, name, authority, dat_category, version, storage_strategy_id, data_store_path, release_count, imported_at_utc,
-                   transform_strategy_type, folder_transform_id, file_handling
+                   transform_strategy_type, folder_transform_id, file_handling, catalog_enabled, library_title_mode
             FROM dat_lines
             ORDER BY imported_at_utc DESC
             """;
@@ -745,6 +747,8 @@ public sealed class CatalogService
                 TransformStrategyType = reader.IsDBNull(10) ? "none" : reader.GetString(10),
                 FolderTransformId     = reader.IsDBNull(11) ? "" : reader.GetString(11),
                 FileHandling          = reader.GetString(12),
+                CatalogEnabled        = reader.IsDBNull(13) || reader.GetInt32(13) != 0,
+                LibraryTitleMode      = reader.IsDBNull(14) ? "dat" : reader.GetString(14),
             });
         return list;
     }
@@ -757,8 +761,8 @@ public sealed class CatalogService
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO dat_lines(id, platform_id, name, authority, dat_category, version, storage_strategy_id, data_store_path, release_count, imported_at_utc)
-                VALUES($id, $platformId, $name, $authority, $datCategory, $version, $storageStrategyId, $dataStorePath, $releaseCount, $importedAt)
+                INSERT INTO dat_lines(id, platform_id, name, authority, dat_category, version, storage_strategy_id, data_store_path, release_count, imported_at_utc, catalog_enabled, library_title_mode)
+                VALUES($id, $platformId, $name, $authority, $datCategory, $version, $storageStrategyId, $dataStorePath, $releaseCount, $importedAt, $catalogEnabled, $libraryTitleMode)
                 ON CONFLICT(id) DO UPDATE SET
                     name                 = excluded.name,
                     authority            = excluded.authority,
@@ -767,7 +771,9 @@ public sealed class CatalogService
                     storage_strategy_id  = excluded.storage_strategy_id,
                     data_store_path      = excluded.data_store_path,
                     release_count        = excluded.release_count,
-                    imported_at_utc      = excluded.imported_at_utc
+                    imported_at_utc      = excluded.imported_at_utc,
+                    catalog_enabled      = excluded.catalog_enabled,
+                    library_title_mode   = excluded.library_title_mode
                 """;
             cmd.Parameters.AddWithValue("$id",                dl.Id);
             cmd.Parameters.AddWithValue("$platformId",        dl.PlatformId);
@@ -779,6 +785,8 @@ public sealed class CatalogService
             cmd.Parameters.AddWithValue("$dataStorePath",     dl.DataStorePath);
             cmd.Parameters.AddWithValue("$releaseCount",      dl.ReleaseCount);
             cmd.Parameters.AddWithValue("$importedAt",        dl.ImportedAtUtc.ToString("o"));
+            cmd.Parameters.AddWithValue("$catalogEnabled",    dl.CatalogEnabled ? 1 : 0);
+            cmd.Parameters.AddWithValue("$libraryTitleMode",  dl.LibraryTitleMode);
             cmd.ExecuteNonQuery();
         }
         tx.Commit();
