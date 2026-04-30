@@ -14,14 +14,15 @@ public partial class ImportDatDialog : Window
     private string?              _filePath;
     private DatParser.Result?    _parseResult;
     private readonly HashSet<string> _existingDatLineIds;
-    private readonly CatalogService  _catalog;
+    private readonly CatalogService? _catalog;
     private readonly string          _dataDir;
+    private List<MediaTypeRecord>    _mediaTypes = [];
 
     public string? SelectedFilePath   { get; private set; }
-    public string? PlatformId         { get; private set; }
+    public string? HardwareFamilyId   { get; private set; }
     public string? Authority          { get; private set; }
     public AuthorityRecord? SelectedAuthority { get; private set; }
-    public string? DatCategory        { get; private set; }
+    public string? MediaTypeId        { get; private set; }
     public string? ParsedDate         { get; private set; }
     public string? Version            { get; private set; }
     public string? DatLineId          { get; private set; }
@@ -35,11 +36,11 @@ public partial class ImportDatDialog : Window
     public ImportDatDialog() : this([], [], null!, string.Empty) { }
 
     public ImportDatDialog(
-        IReadOnlyList<PlatformRecord>  platforms,
-        IReadOnlyList<DatLineRecord>   existingDatLines,
-        CatalogService                 catalog,
-        string                         dataDir,
-        string?                        preselectedPlatformId = null)
+        IReadOnlyList<HardwareFamilyRecord> platforms,
+        IReadOnlyList<DatLineRecord>        existingDatLines,
+        CatalogService                      catalog,
+        string                              dataDir,
+        string?                             preselectedHardwareFamilyId = null)
     {
         InitializeComponent();
 
@@ -49,25 +50,28 @@ public partial class ImportDatDialog : Window
 
         RefreshAuthorityList(null);
 
-        var platformItems = new List<PlatformRecord>(platforms.Count + 1)
+        var platformItems = new List<HardwareFamilyRecord>(platforms.Count + 1)
         {
             new() { Id = "", Name = "" }
         };
         platformItems.AddRange(platforms);
-        PlatformInput.ItemsSource   = platformItems;
-        PlatformInput.SelectedIndex = 0;
+        HardwareFamilyInput.ItemsSource   = platformItems;
+        HardwareFamilyInput.SelectedIndex = 0;
 
-        if (preselectedPlatformId is { Length: > 0 })
+        if (preselectedHardwareFamilyId is { Length: > 0 })
         {
-            var preselected = platformItems.FirstOrDefault(p => p.Id == preselectedPlatformId);
+            var preselected = platformItems.FirstOrDefault(p => p.Id == preselectedHardwareFamilyId);
             if (preselected is not null)
             {
-                PlatformInput.SelectedItem = preselected;
-                PlatformInput.IsEnabled    = false;
+                HardwareFamilyInput.SelectedItem = preselected;
+                HardwareFamilyInput.IsEnabled    = false;
             }
         }
 
-        CategoryInput.ItemsSource = new[] { "Media", "Firmware", "BIOS", "eShop", "Other" };
+        _mediaTypes = _catalog?.GetMediaTypes() ?? [];
+        MediaTypeInput.ItemsSource = _mediaTypes;
+        if (_mediaTypes.Count > 0)
+            MediaTypeInput.SelectedIndex = 0;
 
         ValidateForm();
     }
@@ -139,19 +143,14 @@ public partial class ImportDatDialog : Window
 
     private void UpdateDatLineId()
     {
-        var platformId = (PlatformInput.SelectedItem as PlatformRecord)?.Id ?? "";
-        var authority  = (AuthorityInput.SelectedItem as AuthorityRecord)?.Id ?? "";
-        var category   = CategoryInput.Text?.Trim() ?? "";
-        var slug       = CategorySlug(category);
+        var platformId  = (HardwareFamilyInput.SelectedItem as HardwareFamilyRecord)?.Id ?? "";
+        var authority   = (AuthorityInput.SelectedItem as AuthorityRecord)?.Id ?? "";
+        var mediaTypeId = (MediaTypeInput.SelectedItem as MediaTypeRecord)?.Id ?? "";
 
-        DatLineIdInput.Text = (platformId.Length > 0 && authority.Length > 0 && slug.Length > 0)
-            ? $"{platformId}-{authority}-{slug}"
+        DatLineIdInput.Text = (platformId.Length > 0 && authority.Length > 0 && mediaTypeId.Length > 0)
+            ? $"{platformId}-{authority}-{mediaTypeId}"
             : "";
     }
-
-    /// <summary>Strips non-alphanumeric chars and lowercases to produce a stable slug.</summary>
-    private static string CategorySlug(string category)
-        => new string(category.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
 
     // ── Event handlers ───────────────────────────────────────────────────────
 
@@ -167,7 +166,7 @@ public partial class ImportDatDialog : Window
         ValidateForm();
     }
 
-    private void OnCategoryChanged(object? sender, TextChangedEventArgs e)
+    private void OnMediaTypeChanged(object? sender, SelectionChangedEventArgs e)
     {
         UpdateDatLineId();
         ValidateForm();
@@ -187,6 +186,7 @@ public partial class ImportDatDialog : Window
 
     private async void OnManageAuthorities(object? sender, RoutedEventArgs e)
     {
+        if (_catalog is null) return;
         var prevId = (AuthorityInput.SelectedItem as AuthorityRecord)?.Id;
         var dialog = new AuthorityManagerDialog(_catalog, _dataDir);
         await dialog.ShowDialog<bool>(this);
@@ -199,18 +199,18 @@ public partial class ImportDatDialog : Window
 
     private void ValidateForm()
     {
-        var hasFile     = _filePath is not null;
-        var hasPlatform = (PlatformInput.SelectedItem as PlatformRecord)?.Id.Length > 0;
-        var hasAuth     = (AuthorityInput.SelectedItem as AuthorityRecord)?.Id.Length > 0;
-        var hasCategory = CategorySlug(CategoryInput.Text?.Trim() ?? "").Length > 0;
-        var hasDate     = ParsedDateInput.Text?.Trim().Length > 0;
-        var parseOk     = _parseResult?.Success == true;
+        var hasFile             = _filePath is not null;
+        var hasHardwareFamily   = (HardwareFamilyInput.SelectedItem as HardwareFamilyRecord)?.Id.Length > 0;
+        var hasAuth      = (AuthorityInput.SelectedItem as AuthorityRecord)?.Id.Length > 0;
+        var hasMediaType = (MediaTypeInput.SelectedItem as MediaTypeRecord)?.Id.Length > 0;
+        var hasDate      = ParsedDateInput.Text?.Trim().Length > 0;
+        var parseOk      = _parseResult?.Success == true;
 
         var datLineId   = DatLineIdInput.Text?.Trim() ?? "";
         var isDuplicate = datLineId.Length > 0 && _existingDatLineIds.Contains(datLineId);
 
         DatLineConflictText.IsVisible = isDuplicate;
-        ImportButton.IsEnabled = hasFile && hasPlatform && hasAuth && hasCategory
+        ImportButton.IsEnabled = hasFile && hasHardwareFamily && hasAuth && hasMediaType
                               && hasDate && parseOk && !isDuplicate;
     }
 
@@ -220,9 +220,9 @@ public partial class ImportDatDialog : Window
     {
         SelectedFilePath  = _filePath;
         SelectedAuthority = AuthorityInput.SelectedItem as AuthorityRecord;
-        PlatformId        = (PlatformInput.SelectedItem as PlatformRecord)?.Id ?? "";
+        HardwareFamilyId  = (HardwareFamilyInput.SelectedItem as HardwareFamilyRecord)?.Id ?? "";
         Authority         = SelectedAuthority?.Id ?? "";
-        DatCategory       = CategoryInput.Text?.Trim() ?? "";
+        MediaTypeId       = (MediaTypeInput.SelectedItem as MediaTypeRecord)?.Id ?? "";
         ParsedDate        = ParsedDateInput.Text?.Trim() ?? "";
         Version           = VersionInput.Text?.Trim() ?? "";
         DatLineId    = DatLineIdInput.Text?.Trim() ?? "";

@@ -20,16 +20,16 @@ public partial class UpdateDatDialog : Window
 
     public UpdateDatDialog(
         DatLineRecord datLine,
-        string        platformName,
+        string        hardwareFamilyName,
         string        authorityName,
         string        storageStrategyName)
     {
         InitializeComponent();
 
         InfoId.Text        = datLine.Id;
-        InfoPlatform.Text  = platformName;
+        InfoPlatform.Text  = hardwareFamilyName;
         InfoAuthority.Text = authorityName.Length > 0 ? authorityName : datLine.Authority;
-        InfoCategory.Text  = datLine.DatCategory;
+        InfoCategory.Text  = datLine.MediaTypeId;
         InfoStorage.Text   = storageStrategyName.Length > 0 ? storageStrategyName : "—";
     }
 

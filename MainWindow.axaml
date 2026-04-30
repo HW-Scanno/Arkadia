@@ -352,7 +352,7 @@
                     <Button x:Name="NavSystems" Classes="nav" Tag="Platforms" Click="OnNavClick">
                         <StackPanel Orientation="Horizontal" Spacing="10">
                             <PathIcon Width="14" Height="14" Data="M0 0H14V4H0Z M0 5H6V9H0Z M8 5H14V9H8Z M0 10H6V14H0Z M8 10H14V14H8Z"/>
-                            <TextBlock Text="Platforms" VerticalAlignment="Center"/>
+                            <TextBlock Text="Systems" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
                     <Button x:Name="NavOperations" Classes="nav" Tag="Transforms" Click="OnNavClick">
@@ -448,7 +448,7 @@
                         <!-- Platforms -->
                         <Border Classes="card">
                             <StackPanel Spacing="4">
-                                <TextBlock Classes="widget-title" Text="PLATFORMS"/>
+                                <TextBlock Classes="widget-title" Text="SYSTEMS"/>
                                 <TextBlock x:Name="DashPlatformsCount" Classes="card-value" Text="—"/>
                             </StackPanel>
                         </Border>
@@ -627,9 +627,11 @@
                         BorderThickness="0,0,0,1">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <Button x:Name="SysActCreatePlatform" Classes="view-toggle"
-                                Content="Create Platform" Click="OnCreatePlatform"/>
+                                Content="Create System" Click="OnCreatePlatform"/>
                         <Button x:Name="SysActEditPlatform"   Classes="view-toggle"
-                                Content="Edit Platform"   Click="OnEditPlatform"/>
+                                Content="Edit System"   Click="OnEditPlatform"/>
+                        <Button x:Name="SysActDeletePlatform" Classes="view-toggle danger"
+                                Content="Delete System" Click="OnDeletePlatform"/>
                         <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
                                 Margin="10,2" VerticalAlignment="Stretch"/>
                         <Button x:Name="SysActImportDat"    Classes="view-toggle"
@@ -670,7 +672,7 @@
                     <!-- Col 2: contextual read-only detail pane, 420px, built in code-behind -->
                     <Grid Grid.Column="2" Background="{DynamicResource ArkSurface}">
                         <TextBlock x:Name="SystemsDetailEmptyMsg"
-                                   Text="Select a platform to view details"
+                                   Text="Select a system to view details"
                                    TextAlignment="Center" TextWrapping="Wrap"
                                    FontSize="12" Foreground="{DynamicResource ArkTextSecondary}"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -873,7 +875,7 @@
 
                                 <!-- Metadata field rows -->
                                 <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Platform"  Margin="0"/>
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="System"  Margin="0"/>
                                     <TextBlock Grid.Column="1" x:Name="DetailPlatform" Classes="card-val" Margin="0"/>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,8">
@@ -1111,7 +1113,7 @@
                                     <TextBlock Grid.Column="1" x:Name="PendingDetailDatLine" Classes="card-val" Margin="0"/>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Platform" Margin="0"/>
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="System" Margin="0"/>
                                     <TextBlock Grid.Column="1" x:Name="PendingDetailPlatform" Classes="card-val" Margin="0"/>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,8">
@@ -1292,7 +1294,7 @@
                                 <Border Classes="card-divider" Margin="0,0,0,10"/>
 
                                 <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">
-                                    <TextBlock Grid.Column="0" Classes="card-key" Text="Platform" Margin="0"/>
+                                    <TextBlock Grid.Column="0" Classes="card-key" Text="System" Margin="0"/>
                                     <TextBlock Grid.Column="1" x:Name="StagingDetailPlatform" Classes="card-val" Margin="0"/>
                                 </Grid>
                                 <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,6">

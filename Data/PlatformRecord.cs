@@ -1,10 +1,11 @@
 namespace Arkadia.Data;
 
-public sealed class PlatformRecord
+public sealed class HardwareFamilyRecord
 {
     public string Id                { get; set; } = "";
     public string Name              { get; set; } = "";
     public string Manufacturer      { get; set; } = "";
+    public string EcosystemId       { get; set; } = "";
     public string HardwareTypeId    { get; set; } = "";
     public string YearOfRelease     { get; set; } = "";
     public string Media             { get; set; } = "";

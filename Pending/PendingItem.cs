@@ -27,7 +27,7 @@ public sealed class PendingItem
 
     // ── Context ───────────────────────────────────────────────────────────────
     public string   DatLineId          { get; init; } = "";
-    public string   DatLineName        { get; init; } = "";   // e.g. "Redump: Media"
+    public string   DatLineName        { get; init; } = "";   // e.g. "Redump · DVD"
     public string   PlatformId         { get; init; } = "";
     public string   PlatformName       { get; init; } = "";
 

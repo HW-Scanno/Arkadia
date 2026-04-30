@@ -25,7 +25,7 @@ public partial class CreatePlatformDialog : Window
     private bool _deleteLogoOnSave;
     private bool _deleteDetailsOnSave;
 
-    public PlatformRecord? CreatedPlatform { get; private set; }
+    public HardwareFamilyRecord? CreatedPlatform { get; private set; }
     public string? LogoImagePath           { get; private set; }
     public string? DetailsImagePath        { get; private set; }
     public bool DeleteLogoImage            { get; private set; }
@@ -41,7 +41,7 @@ public partial class CreatePlatformDialog : Window
     /// <param name="catalog">Catalog service — used to refresh platform types after manager closes.</param>
     public CreatePlatformDialog(
         IEnumerable<string>                 existingIds,
-        PlatformRecord?                     prefill,
+        HardwareFamilyRecord?               prefill,
         string                              imageDir,
         IReadOnlyList<HardwareTypeRecord>   hardwareTypes,
         CatalogService                      catalog)
@@ -268,7 +268,7 @@ public partial class CreatePlatformDialog : Window
 
     private void OnCreate(object? sender, RoutedEventArgs e)
     {
-        CreatedPlatform = new PlatformRecord
+        CreatedPlatform = new HardwareFamilyRecord
         {
             Id                = IdInput.Text!.Trim(),
             Name              = NameInput.Text!.Trim(),

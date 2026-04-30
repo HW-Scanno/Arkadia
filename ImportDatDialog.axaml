@@ -169,13 +169,13 @@
                                 </ComboBox>
                             </StackPanel>
 
-                            <!-- Platform -->
+                            <!-- System -->
                             <StackPanel Grid.Column="2" Spacing="4">
                                 <StackPanel Orientation="Horizontal" Spacing="4">
-                                    <TextBlock Text="Platform" FontSize="12" Foreground="#888899"/>
-                                    <TextBlock Text="*"        FontSize="12" Foreground="#E07040"/>
+                                    <TextBlock Text="System" FontSize="12" Foreground="#888899"/>
+                                    <TextBlock Text="*"              FontSize="12" Foreground="#E07040"/>
                                 </StackPanel>
-                                <ComboBox x:Name="PlatformInput"
+                                <ComboBox x:Name="HardwareFamilyInput"
                                           HorizontalAlignment="Stretch"
                                           FontSize="12"
                                           Background="#0D0D13"
@@ -183,7 +183,7 @@
                                           Padding="8,6"
                                           SelectionChanged="OnConfigChanged">
                                     <ComboBox.ItemTemplate>
-                                        <DataTemplate x:DataType="data:PlatformRecord">
+                                        <DataTemplate x:DataType="data:HardwareFamilyRecord">
                                             <TextBlock Text="{Binding Name}" FontSize="12"/>
                                         </DataTemplate>
                                     </ComboBox.ItemTemplate>
@@ -192,23 +192,25 @@
 
                         </Grid>
 
-                        <!-- DAT Category -->
+                        <!-- Media Type -->
                         <StackPanel Spacing="4">
                             <StackPanel Orientation="Horizontal" Spacing="4">
-                                <TextBlock Text="DAT Category" FontSize="12" Foreground="#888899"/>
-                                <TextBlock Text="*"            FontSize="12" Foreground="#E07040"/>
+                                <TextBlock Text="Media Type" FontSize="12" Foreground="#888899"/>
+                                <TextBlock Text="*"          FontSize="12" Foreground="#E07040"/>
                             </StackPanel>
-                            <AutoCompleteBox x:Name="CategoryInput"
-                                             HorizontalAlignment="Stretch"
-                                             FontSize="12"
-                                             Background="#0D0D13"
-                                             Foreground="#E8E8F0"
-                                             BorderBrush="#2A2A3C" BorderThickness="1"
-                                             Padding="8,7"
-                                             CornerRadius="4"
-                                             FilterMode="StartsWith"
-                                             Watermark="e.g. Media"
-                                             TextChanged="OnCategoryChanged"/>
+                            <ComboBox x:Name="MediaTypeInput"
+                                      HorizontalAlignment="Stretch"
+                                      FontSize="12"
+                                      Background="#0D0D13"
+                                      BorderBrush="#2A2A3C" BorderThickness="1"
+                                      Padding="8,6"
+                                      SelectionChanged="OnMediaTypeChanged">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate x:DataType="data:MediaTypeRecord">
+                                        <TextBlock Text="{Binding Name}" FontSize="12"/>
+                                    </DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
                         </StackPanel>
 
                     </StackPanel>
@@ -272,7 +274,7 @@
                                  Classes="id-display"
                                  Watermark="—"
                                  IsReadOnly="True"/>
-                        <TextBlock Text="Format: platform-authority-category"
+                        <TextBlock Text="format: hardware-authority-media"
                                    FontSize="11" Foreground="#333348"/>
                         <TextBlock x:Name="DatLineConflictText"
                                    Text="DAT line already exists. Use Update DAT instead."

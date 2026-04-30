@@ -16,8 +16,9 @@ public sealed class LibraryEntry
     /// Defaults to Name on construction.
     /// </summary>
     public string          CatalogTitle { get; set; } = "";
-    public required string Platform    { get; init; }
-    public string          PlatformId  { get; init; } = "";
+    public required string Platform          { get; init; }
+    public string          HardwareFamilyId { get; init; } = "";
+    public string          Authority        { get; init; } = "";
     /// <summary>Catalog metadata for this release, if populated. Null when no metadata exists.</summary>
     public ReleaseMetadataRecord? Metadata { get; set; }
 

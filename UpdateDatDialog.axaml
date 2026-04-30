@@ -94,7 +94,7 @@
                                        FontFamily="Consolas,Courier New,monospace"/>
                         </Grid>
                         <Grid ColumnDefinitions="120,*">
-                            <TextBlock Grid.Column="0" Text="Platform"          FontSize="12" Foreground="#888899"/>
+                            <TextBlock Grid.Column="0" Text="System"            FontSize="12" Foreground="#888899"/>
                             <TextBlock Grid.Column="1" x:Name="InfoPlatform"    FontSize="12" Foreground="#E8E8F0"/>
                         </Grid>
                         <Grid ColumnDefinitions="120,*">
@@ -102,7 +102,7 @@
                             <TextBlock Grid.Column="1" x:Name="InfoAuthority"   FontSize="12" Foreground="#E8E8F0"/>
                         </Grid>
                         <Grid ColumnDefinitions="120,*">
-                            <TextBlock Grid.Column="0" Text="DAT Category"      FontSize="12" Foreground="#888899"/>
+                            <TextBlock Grid.Column="0" Text="Media Type"        FontSize="12" Foreground="#888899"/>
                             <TextBlock Grid.Column="1" x:Name="InfoCategory"    FontSize="12" Foreground="#E8E8F0"/>
                         </Grid>
                         <Grid ColumnDefinitions="120,*">

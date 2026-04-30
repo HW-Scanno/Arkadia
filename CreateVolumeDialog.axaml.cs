@@ -10,7 +10,7 @@ namespace Arkadia;
 
 public partial class CreateVolumeDialog : Window
 {
-    private readonly List<PlatformRecord>  _platforms;
+    private readonly List<HardwareFamilyRecord>  _platforms;
     private readonly List<DatLineRecord>   _datLines;
     private readonly IReadOnlyList<string> _existingLabels;
     private readonly CatalogService        _catalog;
@@ -28,11 +28,11 @@ public partial class CreateVolumeDialog : Window
     public CreateVolumeDialog() : this([], [], [], null!, string.Empty) { }
 
     public CreateVolumeDialog(
-        List<PlatformRecord>  platforms,
-        List<DatLineRecord>   datLines,
-        IReadOnlyList<string> existingLabels,
-        CatalogService        catalog,
-        string                dataDir)
+        List<HardwareFamilyRecord> platforms,
+        List<DatLineRecord>        datLines,
+        IReadOnlyList<string>      existingLabels,
+        CatalogService             catalog,
+        string                     dataDir)
     {
         InitializeComponent();
 
@@ -50,7 +50,7 @@ public partial class CreateVolumeDialog : Window
         RefreshDatLines();
     }
 
-    private static string PlatformDisplay(PlatformRecord p) =>
+    private static string PlatformDisplay(HardwareFamilyRecord p) =>
         p.Manufacturer.Length > 0 ? $"{p.Manufacturer} \u2014 {p.Name}" : p.Name;
 
     // Called after construction to finish wiring (avoids chicken-and-egg in ctor)
@@ -60,7 +60,7 @@ public partial class CreateVolumeDialog : Window
         for (int i = 0; i < _platforms.Count; i++)
         {
             var pid  = _platforms[i].Id;
-            var list = _datLines.Where(d => d.PlatformId == pid).ToList();
+            var list = _datLines.Where(d => d.HardwareFamilyId == pid).ToList();
             _datLinesByPlatformIdx[i] = list;
         }
         RefreshDatLines();
@@ -190,7 +190,7 @@ public partial class CreateVolumeDialog : Window
         {
             Id               = Guid.NewGuid().ToString("N"),
             Label            = LabelInput.Text!.Trim(),
-            PlatformId       = datLine.PlatformId,
+            PlatformId       = datLine.HardwareFamilyId,
             DatLineId        = datLine.Id,
             Status           = "init",
             PlannedSizeBytes = (long)(sizeGb * 1024 * 1024 * 1024),

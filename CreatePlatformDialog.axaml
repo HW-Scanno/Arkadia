@@ -2,7 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:data="using:Arkadia.Data"
         x:Class="Arkadia.CreatePlatformDialog"
-        Title="Create Platform"
+        Title="Create System"
         Width="540" Height="720"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
@@ -96,10 +96,10 @@
                 BorderThickness="0,0,0,1"
                 Background="#0F0F14">
             <StackPanel Spacing="5">
-                <TextBlock Text="Create Platform"
+                <TextBlock Text="Create System"
                            FontSize="17" FontWeight="SemiBold"
                            Foreground="#F0F0F0"/>
-                <TextBlock Text="Define a new platform before importing DAT lines."
+                <TextBlock Text="Define a new system before importing DAT lines."
                            FontSize="12" Foreground="#555566"/>
             </StackPanel>
         </Border>
@@ -121,7 +121,7 @@
                         <!-- Platform ID -->
                         <StackPanel Spacing="4">
                             <StackPanel Orientation="Horizontal" Spacing="4">
-                                <TextBlock Text="Platform ID" FontSize="12" Foreground="#888899"/>
+                                <TextBlock Text="System ID" FontSize="12" Foreground="#888899"/>
                                 <TextBlock Text="*"           FontSize="12" Foreground="#E07040"/>
                             </StackPanel>
                             <TextBox x:Name="IdInput"
@@ -169,7 +169,7 @@
                         <StackPanel Spacing="4">
                             <Grid ColumnDefinitions="*,Auto">
                                 <TextBlock Grid.Column="0"
-                                           Text="Platform Type" FontSize="12" Foreground="#888899"
+                                           Text="Form Factor" FontSize="12" Foreground="#888899"
                                            VerticalAlignment="Center"/>
                                 <Button Grid.Column="1"
                                         Content="Manage"
@@ -368,7 +368,7 @@
                         Padding="16,8" CornerRadius="6" BorderThickness="0"
                         Click="OnCancel"/>
                 <Button x:Name="CreateButton"
-                        Content="Create Platform"
+                        Content="Create System"
                         Background="#E07040" Foreground="#FFFFFF"
                         Padding="16,8" CornerRadius="6" BorderThickness="0"
                         IsEnabled="False"

@@ -5,10 +5,10 @@ namespace Arkadia.Data;
 public sealed class DatLineRecord
 {
     public string   Id            { get; set; } = "";
-    public string   PlatformId    { get; set; } = "";
+    public string   HardwareFamilyId { get; set; } = "";
     public string   Name          { get; set; } = "";
     public string   Authority          { get; set; } = "";
-    public string   DatCategory        { get; set; } = "";
+    public string   MediaTypeId        { get; set; } = "other";
     public string   Version            { get; set; } = "";
     public string   StorageStrategyId  { get; set; } = "";
     public string   DataStorePath      { get; set; } = "";   // relative: data/systems/<pid>/<id>.db

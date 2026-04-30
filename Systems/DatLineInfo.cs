@@ -11,7 +11,7 @@ public sealed record DatLineInfo(
     string  LastImport,
     string  StorageStrategy       = "",
     string  Authority             = "",
-    string  DatCategory           = "",
+    string  MediaTypeId           = "",
     string  DataStorePath         = "",
     string? LibraryPlatform       = null,
     string? LibraryDatLine        = null,

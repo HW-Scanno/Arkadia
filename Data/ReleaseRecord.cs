@@ -32,4 +32,7 @@ public sealed class ReleaseRecord
     /// This is a change marker, not a primary status.
     /// </summary>
     public DateTime? IntroducedAtUtc { get; set; }
+
+    /// <summary>Content classification for this release. Defaults to "games".</summary>
+    public string ContentCategoryId { get; set; } = "games";
 }

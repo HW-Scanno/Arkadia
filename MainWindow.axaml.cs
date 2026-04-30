@@ -155,7 +155,7 @@ public partial class MainWindow : Window
         _systemsPlatforms = _catalog.LoadPlatforms()
             .Select(platform =>
             {
-                var platformDatLines = allDatLines.Where(dl => dl.PlatformId == platform.Id).ToList();
+                var platformDatLines = allDatLines.Where(dl => dl.HardwareFamilyId == platform.Id).ToList();
                 var total   = platformDatLines.Sum(dl => dl.ReleaseCount);
                 int present = 0, outdated = 0;
                 foreach (var dl in platformDatLines.Where(dl => dl.DataStorePath.Length > 0))
@@ -214,8 +214,9 @@ public partial class MainWindow : Window
         var hasDat      = _selectedDatLine is not null;
         var datHasStore = hasDat && _selectedDatLine!.DataStorePath.Length > 0;
 
-        SysActEditPlatform.IsEnabled  = hasPlatform;
-        SysActConfigureDat.IsEnabled  = datHasStore;
+        SysActEditPlatform.IsEnabled   = hasPlatform;
+        SysActDeletePlatform.IsEnabled = hasPlatform;
+        SysActConfigureDat.IsEnabled   = datHasStore;
         SysActUpdateDat.IsEnabled     = hasDat;
         SysActVerifyAll.IsEnabled     = datHasStore;
         SysActDeleteDat.IsEnabled     = hasDat;
@@ -230,7 +231,7 @@ public partial class MainWindow : Window
         {
             SystemsTreePanel.Children.Add(new TextBlock
             {
-                Text         = "No platforms. Click 'Create Platform' to add one.",
+                Text         = "No systems. Click 'Create System' to add one.",
                 FontSize     = 12,
                 Foreground   = new SolidColorBrush(Color.Parse("#555566")),
                 Margin       = new Avalonia.Thickness(4, 4, 4, 0),
@@ -502,6 +503,9 @@ public partial class MainWindow : Window
         if (id.Length == 0) return id;
         return _authorityNameMap.TryGetValue(id, out var name) ? name : id;
     }
+
+    private string FormatDatLineName(string authorityId, string mediaTypeId)
+        => $"{GetAuthorityName(authorityId)} · {mediaTypeId.ToUpperInvariant()}";
 
     private Bitmap? LoadSystemImage(string platformId, string role, (int Width, int Height) size)
     {
@@ -978,7 +982,7 @@ public partial class MainWindow : Window
 
     private List<DatLineInfo> BuildDatLineInfos(string platformId)
         => _catalog.LoadDatLines()
-            .Where(dl => dl.PlatformId == platformId)
+            .Where(dl => dl.HardwareFamilyId == platformId)
             .Select(dl =>
             {
                 int outdated = 0;
@@ -989,16 +993,16 @@ public partial class MainWindow : Window
                         outdated = new DatLineStore(absPath).GetStatusCounts().Outdated;
                 }
                 return new DatLineInfo(
-                    Name:                  dl.Name,
+                    Name:                  FormatDatLineName(dl.Authority, dl.MediaTypeId),
                     Releases:              dl.ReleaseCount,
                     Outdated:              outdated,
                     LastImport:            dl.ImportedAtUtc.ToString("yyyy-MM-dd"),
                     StorageStrategy:       _strategyNameMap.TryGetValue(dl.StorageStrategyId, out var sn) ? sn : "",
                     Authority:             dl.Authority,
-                    DatCategory:           dl.DatCategory,
+                    MediaTypeId:           dl.MediaTypeId,
                     DataStorePath:         dl.DataStorePath,
                     CatalogId:             dl.Id,
-                    CatalogPlatformId:     dl.PlatformId,
+                    CatalogPlatformId:     dl.HardwareFamilyId,
                     TransformStrategyType: dl.TransformStrategyType,
                     FolderTransformId:     dl.FolderTransformId,
                     FileHandling:          dl.FileHandling);
@@ -1429,7 +1433,7 @@ public partial class MainWindow : Window
             foreach (var datLineDir in Directory.GetDirectories(platformDir))
             {
                 var datLineId   = Path.GetFileName(datLineDir);
-                var datLineName = allDatLines.TryGetValue(datLineId, out var dl) ? dl.Name : datLineId;
+                var datLineName = allDatLines.TryGetValue(datLineId, out var dl) ? FormatDatLineName(dl.Authority, dl.MediaTypeId) : datLineId;
 
                 // Open the DAT-line DB to get releases and their expected files
                 if (!allDatLines.TryGetValue(datLineId, out var dlRecord) ||
@@ -1550,7 +1554,7 @@ public partial class MainWindow : Window
         }
 
         StagingDetailName.Text     = release.ReleaseName;
-        StagingDetailPlatform.Text = _catalog.GetPlatform(release.PlatformId)?.Name ?? release.PlatformId;
+        StagingDetailPlatform.Text = _catalog.GetHardwareFamily(release.PlatformId)?.Name ?? release.PlatformId;
         StagingDetailDatLine.Text  = release.DatLineId;
         StagingDetailProgress.Text = release.ProgressLabel;
 
@@ -3055,7 +3059,7 @@ public partial class MainWindow : Window
         var repairDialog = new DatLineVerifyDialog(entry.Label, platformId);
         var hdr = repairDialog.FindControl<Avalonia.Controls.TextBlock>("HeaderText");
         if (hdr is not null)
-            hdr.Text = $"Volume Repair  —  Platform: {platformId}  —  Volume: {entry.Label}";
+            hdr.Text = $"Volume Repair  —  System: {platformId}  —  Volume: {entry.Label}";
 
         var dlgTask = repairDialog.ShowDialog(this);
 
@@ -3098,7 +3102,7 @@ public partial class MainWindow : Window
 
         log.AppendLine($"Volume Repair — {entry.Label}");
         log.AppendLine($"Started:   {DateTime.UtcNow:o}");
-        log.AppendLine($"Platform:  {platformId}");
+        log.AppendLine($"System:    {platformId}");
         log.AppendLine();
         log.AppendLine("── Repair Targets ───────────────────────────────────────────");
         log.AppendLine($"  Volume:              {entry.Label}");
@@ -5154,7 +5158,7 @@ public partial class MainWindow : Window
             sb.AppendLine("Volume Marked Lost");
             sb.AppendLine();
             sb.AppendLine($"Volume:    {entry.Label}");
-            sb.AppendLine($"Platform:  {entry.PlatformId}");
+            sb.AppendLine($"System:           {entry.PlatformId}");
             sb.AppendLine($"DAT Line:  {entry.DatLineId}");
             sb.AppendLine($"Timestamp: {logTs:o}");
             sb.AppendLine($"Result:    {(skippedDatLines.Count == 0 ? "ok" : "partial")}");
@@ -5310,8 +5314,8 @@ public partial class MainWindow : Window
             if (!dl.CatalogEnabled) continue;
             if (dl.DataStorePath.Length == 0) continue;
 
-            var platformName = allPlatforms.FirstOrDefault(p => p.Id == dl.PlatformId)?.Name
-                               ?? dl.PlatformId;
+            var platformName = allPlatforms.FirstOrDefault(p => p.Id == dl.HardwareFamilyId)?.Name
+                               ?? dl.HardwareFamilyId;
             var absPath  = Path.Combine(_dataDir, dl.DataStorePath);
             if (!File.Exists(absPath)) continue;
 
@@ -5320,7 +5324,7 @@ public partial class MainWindow : Window
             var metadata     = store.LoadReleaseMetadata();
             var titleMode    = dl.LibraryTitleMode;
 
-            MediaStore.EnsureMediaFolders(_dataDir, dl.PlatformId, dl.Id);
+            MediaStore.EnsureMediaFolders(_dataDir, dl.HardwareFamilyId, dl.Id);
 
             var releases = store.LoadReleases()
                 .Select(r =>
@@ -5331,7 +5335,8 @@ public partial class MainWindow : Window
                     {
                         Name                  = r.Name,
                         DisplayName           = LibraryTitleResolver.Resolve(r.Name, titleMode, meta?.Title),
-                        PlatformId            = dl.PlatformId,
+                        HardwareFamilyId      = dl.HardwareFamilyId,
+                        Authority             = dl.Authority,
                         Metadata              = meta,
                         Platform              = platformName,
                         Status                = Capitalize(r.Status),
@@ -5351,7 +5356,7 @@ public partial class MainWindow : Window
                 .ToList();
 
             if (releases.Count > 0)
-                merged.Add(new LibraryDataset(platformName, dl.Name, releases));
+                merged.Add(new LibraryDataset(platformName, FormatDatLineName(dl.Authority, dl.MediaTypeId), releases));
         }
 
         _activeLibraryDatasets = merged;
@@ -6621,12 +6626,12 @@ public partial class MainWindow : Window
                                ? _catalog.GetPlatform(info.CatalogPlatformId) : null;
         var platformDesc = platform is not null
                                ? $"{platform.Manufacturer} {platform.Name}".Trim()
-                               : (info.CatalogPlatformId ?? "Unknown Platform");
+                               : (info.CatalogPlatformId ?? "Unknown System");
 
         // ── Pre-flight confirmation ────────────────────────────────────────────
         var preflight = new System.Text.StringBuilder();
         preflight.AppendLine($"DAT Line:  {info.Name}");
-        preflight.AppendLine($"Platform:  {platformDesc}");
+        preflight.AppendLine($"System:    {platformDesc}");
         preflight.AppendLine($"Volumes:   {volumes.Count}");
         preflight.AppendLine();
         preflight.AppendLine("This operation will:");
@@ -7310,7 +7315,7 @@ public partial class MainWindow : Window
 
             RebuildLibraryDatasets();
             ResolveFlagImages();
-            RefreshSystemsKeepSelection(record.PlatformId);
+            RefreshSystemsKeepSelection(record.HardwareFamilyId);
             RefreshPending();
         }
     }
@@ -7726,7 +7731,7 @@ public partial class MainWindow : Window
         _catalogCoverBitmap?.Dispose();
         _catalogCoverBitmap = null;
 
-        var coverPath = MediaStore.FindCoverFront(_dataDir, entry.PlatformId, entry.DatLineId, entry.Name);
+        var coverPath = MediaStore.FindCoverFront(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name);
         _catalogCoverBitmap = CoverLoader.TryLoad(coverPath);
         if (_catalogCoverBitmap is not null)
         {
@@ -7746,7 +7751,7 @@ public partial class MainWindow : Window
         _catalogScreenshotBitmap?.Dispose();
         _catalogScreenshotBitmap = null;
 
-        var screenshots = MediaStore.FindScreenshots(_dataDir, entry.PlatformId, entry.DatLineId, entry.Name);
+        var screenshots = MediaStore.FindScreenshots(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name);
         _catalogScreenshotBitmap = CoverLoader.TryLoad(screenshots.FirstOrDefault());
         var hasScreenshot = _catalogScreenshotBitmap is not null;
         CatalogScreenshotCompact.Source    = _catalogScreenshotBitmap;
@@ -7843,15 +7848,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!Arkadia.Providers.ScreenScraperClient.TryResolveSystemId(entry.PlatformId, out _))
+        if (!Arkadia.Providers.ScreenScraperClient.TryResolveSystemId(entry.HardwareFamilyId, out _))
         {
-            SetScrapeStatus($"No ScreenScraper system ID mapped for platform '{entry.PlatformId}'.", "#FFD54F");
+            SetScrapeStatus($"No ScreenScraper system ID mapped for system '{entry.HardwareFamilyId}'.", "#FFD54F");
             return;
         }
 
-        var isMame = string.Equals(entry.PlatformId, "mame",   StringComparison.OrdinalIgnoreCase)
-                           || string.Equals(entry.PlatformId, "arcade", StringComparison.OrdinalIgnoreCase)
-                           || string.Equals(entry.PlatformId, "fbneo",  StringComparison.OrdinalIgnoreCase);
+        var isMame = string.Equals(entry.Authority, "mame",  StringComparison.OrdinalIgnoreCase)
+                           || string.Equals(entry.Authority, "fbneo", StringComparison.OrdinalIgnoreCase);
 
         CatalogScrapeBtn.IsEnabled    = false;
         SetScrapeStatus("Querying ScreenScraper…", "#888899");
@@ -7861,7 +7865,7 @@ public partial class MainWindow : Window
             var result = await Arkadia.Providers.ScreenScraperClient.QueryAsync(
                 devId, devPassword,
                 username, password,
-                entry.PlatformId, entry.Name,
+                entry.HardwareFamilyId, entry.Name,
                 isMame);
 
             if (result is null)
@@ -7891,13 +7895,13 @@ public partial class MainWindow : Window
             store.SaveReleaseMetadata(newMeta);
 
             // ── Download media ───────────────────────────────────────────────
-            Arkadia.Data.MediaStore.EnsureMediaFolders(_dataDir, entry.PlatformId, entry.DatLineId);
+            Arkadia.Data.MediaStore.EnsureMediaFolders(_dataDir, entry.HardwareFamilyId, entry.DatLineId);
             var mediaLog = new System.Text.StringBuilder();
 
             if (result.CoverUrl is not null)
             {
                 var stem = Arkadia.Data.MediaStore.NextIndexedMediaStem(
-                    _dataDir, entry.PlatformId, entry.DatLineId,
+                    _dataDir, entry.HardwareFamilyId, entry.DatLineId,
                     entry.Name, Path.Combine("covers", "front"));
                 SetScrapeStatus("Downloading cover…", "#888899");
                 if (await Arkadia.Providers.ScreenScraperClient.DownloadMediaAsync(
@@ -7909,7 +7913,7 @@ public partial class MainWindow : Window
             if (result.ScreenshotUrl is not null)
             {
                 var stem = Arkadia.Data.MediaStore.NextIndexedMediaStem(
-                    _dataDir, entry.PlatformId, entry.DatLineId,
+                    _dataDir, entry.HardwareFamilyId, entry.DatLineId,
                     entry.Name, "screenshots");
                 SetScrapeStatus("Downloading screenshot…", "#888899");
                 if (await Arkadia.Providers.ScreenScraperClient.DownloadMediaAsync(
@@ -7921,7 +7925,7 @@ public partial class MainWindow : Window
             if (result.VideoUrl is not null)
             {
                 var stem = Arkadia.Data.MediaStore.NextIndexedMediaStem(
-                    _dataDir, entry.PlatformId, entry.DatLineId,
+                    _dataDir, entry.HardwareFamilyId, entry.DatLineId,
                     entry.Name, "videos");
                 SetScrapeStatus("Downloading video…", "#888899");
                 if (await Arkadia.Providers.ScreenScraperClient.DownloadMediaAsync(
@@ -9355,14 +9359,14 @@ public partial class MainWindow : Window
 
     private async void OnCreatePlatform(object? sender, RoutedEventArgs e)
     {
-        var existingIds   = _catalog.LoadPlatforms().Select(p => p.Id);
+        var existingIds   = _catalog.GetHardwareFamilies().Select(p => p.Id);
         var hardwareTypes = _catalog.LoadHardwareTypes();
         var dialog        = new CreatePlatformDialog(existingIds, null, Path.Combine(_dataDir, "systemimages"), hardwareTypes, _catalog);
         var confirmed   = await dialog.ShowDialog<bool>(this);
         if (!confirmed || dialog.CreatedPlatform is null) return;
 
         var platform = dialog.CreatedPlatform;
-        _catalog.SavePlatforms([platform]);
+        _catalog.SaveHardwareFamilies([platform]);
 
         Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "incoming-roms", platform.Id));
 
@@ -9395,17 +9399,17 @@ public partial class MainWindow : Window
         var platform = _selectedPlatform;
         if (platform is null) return;
 
-        var existing = _catalog.LoadPlatforms().FirstOrDefault(p => p.Id == platform.Id);
+        var existing = _catalog.GetHardwareFamilies().FirstOrDefault(p => p.Id == platform.Id);
         if (existing is null) return;
 
-        var otherIds      = _catalog.LoadPlatforms().Select(p => p.Id).Where(id => id != existing.Id);
+        var otherIds      = _catalog.GetHardwareFamilies().Select(p => p.Id).Where(id => id != existing.Id);
         var imageDir      = Path.Combine(_dataDir, "systemimages");
         var hardwareTypes = _catalog.LoadHardwareTypes();
         var dialog        = new CreatePlatformDialog(otherIds, existing, imageDir, hardwareTypes, _catalog);
         var confirmed = await dialog.ShowDialog<bool>(this);
         if (!confirmed || dialog.CreatedPlatform is null) return;
 
-        _catalog.SavePlatforms([dialog.CreatedPlatform]);
+        _catalog.SaveHardwareFamilies([dialog.CreatedPlatform]);
 
         Directory.CreateDirectory(imageDir);
 
@@ -9440,26 +9444,58 @@ public partial class MainWindow : Window
         RefreshSystemsKeepSelection(existing.Id);
     }
 
+    private async void OnDeletePlatform(object? sender, RoutedEventArgs e)
+    {
+        if (_selectedPlatformId is null) return;
+        var platformId   = _selectedPlatformId;
+        var platformName = _selectedPlatform?.Name ?? platformId;
+
+        if (_catalog.HardwareFamilyHasDependencies(platformId))
+        {
+            await new InfoDialog(
+                "Cannot Delete System",
+                "Cannot delete this system because it has registered DAT lines.\n\n" +
+                "Delete all DAT lines for this system first.")
+                .ShowDialog(this);
+            return;
+        }
+
+        var confirmed = await new ConfirmDialog(
+            "Delete System",
+            $"Permanently delete system \"{platformName}\"?\n\n" +
+            "This will remove the system from the catalog.\n" +
+            "No DAT lines, releases, or media will be affected.\n\n" +
+            "This action cannot be undone.")
+            .ShowDialog<bool>(this);
+        if (!confirmed) return;
+
+        _catalog.DeleteHardwareFamily(platformId);
+        _selectedPlatformId = null;
+        _selectedPlatform   = null;
+        _selectedDatLine    = null;
+        RefreshSystemsKeepSelection(null);
+    }
+
     private async void OnImportDat(object? sender, RoutedEventArgs e)
     {
         if (string.IsNullOrEmpty(_selectedPlatformId))
         {
-            await new InfoDialog("Import DAT", "Select a platform first.").ShowDialog(this);
+            await new InfoDialog("Import DAT", "Select a system first.").ShowDialog(this);
             return;
         }
 
-        var platforms        = _catalog.LoadPlatforms();
+        var platforms        = _catalog.GetHardwareFamilies();
         var existingDatLines = _catalog.LoadDatLines();
         var importDialog     = new ImportDatDialog(platforms, existingDatLines, _catalog, _dataDir, _selectedPlatformId);
         var ok               = await importDialog.ShowDialog<bool>(this);
         if (!ok) return;
 
-        var platformId    = importDialog.PlatformId       ?? "";
+        var platformId    = importDialog.HardwareFamilyId ?? "";
         var authority     = importDialog.Authority        ?? "";
-        var datCategory   = importDialog.DatCategory      ?? "";
+        var mediaTypeId   = importDialog.MediaTypeId      ?? "";
         var datLineId     = importDialog.DatLineId        ?? "";
         var authorityName = importDialog.SelectedAuthority?.Name ?? authority;
-        var datLineName   = $"{authorityName}: {datCategory}";
+        var datLineName   = mediaTypeId;
         var version     = importDialog.Version     ?? "";
         var parsedGames = importDialog.ParsedGames.ToList();
 
@@ -9469,10 +9505,10 @@ public partial class MainWindow : Window
         var newDatLineRecord = new DatLineRecord
         {
             Id                = datLineId,
-            PlatformId        = platformId,
+            HardwareFamilyId  = platformId,
             Name              = datLineName,
             Authority         = authority,
-            DatCategory       = datCategory,
+            MediaTypeId       = mediaTypeId,
             Version           = version,
             StorageStrategyId = "",
             DataStorePath     = relPath,
@@ -9656,7 +9692,7 @@ public partial class MainWindow : Window
             var rows  = store.LoadPendingReconciliations("pending");
             if (rows.Count == 0) continue;
 
-            var platformName  = allPlatforms.FirstOrDefault(p => p.Id == dl.PlatformId)?.Name ?? dl.PlatformId;
+            var platformName  = allPlatforms.FirstOrDefault(p => p.Id == dl.HardwareFamilyId)?.Name ?? dl.HardwareFamilyId;
             var relById       = store.LoadReleases().ToDictionary(r => r.Id);
             var filesByRelId  = store.LoadAllReleaseFiles();
 
@@ -9687,8 +9723,8 @@ public partial class MainWindow : Window
                     TargetName         = row.TargetName,
                     TargetRelativePath = row.TargetRelativePath ?? "",
                     DatLineId          = dl.Id,
-                    DatLineName        = dl.Name,
-                    PlatformId         = dl.PlatformId,
+                    DatLineName        = FormatDatLineName(dl.Authority, dl.MediaTypeId),
+                    PlatformId         = dl.HardwareFamilyId,
                     PlatformName       = platformName,
                     NewRelease         = newRelease,
                     NewRomFiles        = newFiles      ?? [],
@@ -12108,7 +12144,7 @@ public partial class MainWindow : Window
         sb.Append(AnalyticsHtmlHeader("Volume Heatmap"));
 
         sb.Append($"<p style='color:#888899;margin-bottom:24px;font-size:13px;'>{d.Volumes.Count:N0} volumes tracked.</p>");
-        sb.Append("<table><thead><tr><th>Label</th><th>Platform</th><th>Status</th><th>Health</th><th>Size</th></tr></thead><tbody>");
+        sb.Append("<table><thead><tr><th>Label</th><th>System</th><th>Status</th><th>Health</th><th>Size</th></tr></thead><tbody>");
         foreach (var vol in d.Volumes.OrderBy(v => v.Label))
         {
             var pn = d.PlatformNames.TryGetValue(vol.PlatformId, out var p) ? p : vol.PlatformId;

@@ -40,7 +40,8 @@ public sealed class DatLineStore
                 format               TEXT,
                 size                 TEXT,
                 release_content_key  TEXT NOT NULL DEFAULT '',
-                introduced_at_utc    TEXT
+                introduced_at_utc    TEXT,
+                content_category_id  TEXT NOT NULL DEFAULT 'games'
             );
 
             CREATE INDEX IF NOT EXISTS idx_releases_name                ON releases(name);
@@ -162,22 +163,23 @@ public sealed class DatLineStore
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO releases(id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key, introduced_at_utc)
-                VALUES($id, $datLineId, $name, $status, $tier, $region, $languages, $format, $size, $contentKey, $introducedAt)
+                INSERT INTO releases(id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key, introduced_at_utc, content_category_id)
+                VALUES($id, $datLineId, $name, $status, $tier, $region, $languages, $format, $size, $contentKey, $introducedAt, $contentCategoryId)
                 """;
-            cmd.Parameters.AddWithValue("$id",           r.Id);
-            cmd.Parameters.AddWithValue("$datLineId",    r.DatLineId);
-            cmd.Parameters.AddWithValue("$name",         r.Name);
-            cmd.Parameters.AddWithValue("$status",       r.Status);
-            cmd.Parameters.AddWithValue("$tier",         r.Tier);
-            cmd.Parameters.AddWithValue("$region",       r.Region);
-            cmd.Parameters.AddWithValue("$languages",    r.Languages);
-            cmd.Parameters.AddWithValue("$format",       r.Format);
-            cmd.Parameters.AddWithValue("$size",         r.Size);
-            cmd.Parameters.AddWithValue("$contentKey",   r.ReleaseContentKey);
-            cmd.Parameters.AddWithValue("$introducedAt", r.IntroducedAtUtc.HasValue
+            cmd.Parameters.AddWithValue("$id",                r.Id);
+            cmd.Parameters.AddWithValue("$datLineId",         r.DatLineId);
+            cmd.Parameters.AddWithValue("$name",              r.Name);
+            cmd.Parameters.AddWithValue("$status",            r.Status);
+            cmd.Parameters.AddWithValue("$tier",              r.Tier);
+            cmd.Parameters.AddWithValue("$region",            r.Region);
+            cmd.Parameters.AddWithValue("$languages",         r.Languages);
+            cmd.Parameters.AddWithValue("$format",            r.Format);
+            cmd.Parameters.AddWithValue("$size",              r.Size);
+            cmd.Parameters.AddWithValue("$contentKey",        r.ReleaseContentKey);
+            cmd.Parameters.AddWithValue("$introducedAt",      r.IntroducedAtUtc.HasValue
                 ? (object)r.IntroducedAtUtc.Value.ToString("o")
                 : DBNull.Value);
+            cmd.Parameters.AddWithValue("$contentCategoryId", r.ContentCategoryId.Length > 0 ? r.ContentCategoryId : "games");
             cmd.ExecuteNonQuery();
         }
 
@@ -211,7 +213,8 @@ public sealed class DatLineStore
                         LIMIT 1),
                        ''
                    ) AS effective_tier,
-                   r.region, r.languages, r.format, r.size, r.release_content_key, r.introduced_at_utc
+                   r.region, r.languages, r.format, r.size, r.release_content_key, r.introduced_at_utc,
+                   r.content_category_id
             FROM releases r
             ORDER BY r.name
             """;
@@ -228,9 +231,10 @@ public sealed class DatLineStore
                 Languages  = reader.IsDBNull(6) ? "" : reader.GetString(6),
                 Format     = reader.IsDBNull(7) ? "" : reader.GetString(7),
                 Size       = reader.IsDBNull(8) ? "" : reader.GetString(8),
-                ReleaseContentKey  = reader.IsDBNull(9)  ? "" : reader.GetString(9),
-                IntroducedAtUtc    = reader.IsDBNull(10) ? null
+                ReleaseContentKey   = reader.IsDBNull(9)  ? "" : reader.GetString(9),
+                IntroducedAtUtc     = reader.IsDBNull(10) ? null
                     : DateTime.Parse(reader.GetString(10)),
+                ContentCategoryId   = reader.IsDBNull(11) ? "games" : reader.GetString(11),
             });
         return list;
     }

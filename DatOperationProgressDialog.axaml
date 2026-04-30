@@ -84,7 +84,7 @@
             <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,10">
                 <StackPanel Spacing="6">
                     <Grid ColumnDefinitions="120,*">
-                        <TextBlock Grid.Column="0" Text="Platform"   FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="0" Text="System" FontSize="12" Foreground="#888899"/>
                         <TextBlock Grid.Column="1" x:Name="ImportSumPlatform" FontSize="12" Foreground="#F0F0F0"/>
                     </Grid>
                     <Grid ColumnDefinitions="120,*">
@@ -131,7 +131,7 @@
             <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,10">
                 <StackPanel Spacing="6">
                     <Grid ColumnDefinitions="120,*">
-                        <TextBlock Grid.Column="0" Text="Platform"    FontSize="12" Foreground="#888899"/>
+                        <TextBlock Grid.Column="0" Text="System" FontSize="12" Foreground="#888899"/>
                         <TextBlock Grid.Column="1" x:Name="UpdateSumPlatform" FontSize="12" Foreground="#F0F0F0"/>
                     </Grid>
                     <Grid ColumnDefinitions="120,*">

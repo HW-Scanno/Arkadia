@@ -42,11 +42,19 @@ public sealed class CatalogService
                 is_seeded  INTEGER NOT NULL DEFAULT 0
             );
 
-            CREATE TABLE IF NOT EXISTS platforms (
+            CREATE TABLE IF NOT EXISTS ecosystems (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                is_seeded  INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS hardware_families (
                 id                  TEXT PRIMARY KEY,
                 name                TEXT NOT NULL,
                 manufacturer        TEXT NOT NULL,
-                hardware_type_id    TEXT,
+                ecosystem_id        TEXT REFERENCES ecosystems(id),
+                hardware_type_id    TEXT REFERENCES hardware_types(id),
                 year_of_release     TEXT,
                 media               TEXT,
                 notes               TEXT,
@@ -65,12 +73,26 @@ public sealed class CatalogService
                 sort_order  INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS media_types (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                is_seeded  INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS content_categories (
+                id         TEXT PRIMARY KEY,
+                name       TEXT NOT NULL,
+                sort_order INTEGER NOT NULL,
+                is_seeded  INTEGER DEFAULT 0
+            );
+
             CREATE TABLE IF NOT EXISTS dat_lines (
                 id                       TEXT PRIMARY KEY,
-                platform_id              TEXT NOT NULL,
+                hardware_family_id       TEXT NOT NULL,
                 name                     TEXT NOT NULL,
                 authority                TEXT NOT NULL,
-                dat_category             TEXT NOT NULL DEFAULT '',
+                media_type_id            TEXT NOT NULL DEFAULT 'other' REFERENCES media_types(id),
                 version                  TEXT,
                 storage_strategy_id      TEXT,
                 data_store_path          TEXT NOT NULL DEFAULT '',
@@ -81,10 +103,10 @@ public sealed class CatalogService
                 file_handling            TEXT NOT NULL DEFAULT 'archives_pre_extraction',
                 catalog_enabled          INTEGER NOT NULL DEFAULT 1,
                 library_title_mode       TEXT NOT NULL DEFAULT 'dat',
-                FOREIGN KEY(platform_id) REFERENCES platforms(id) ON DELETE CASCADE
+                FOREIGN KEY(hardware_family_id) REFERENCES hardware_families(id) ON DELETE CASCADE
             );
 
-            CREATE INDEX IF NOT EXISTS idx_dat_lines_platform_id ON dat_lines(platform_id);
+            CREATE INDEX IF NOT EXISTS idx_dat_lines_hardware_family_id ON dat_lines(hardware_family_id);
 
             CREATE TABLE IF NOT EXISTS disks (
                 id                       TEXT PRIMARY KEY,
@@ -103,7 +125,7 @@ public sealed class CatalogService
             CREATE TABLE IF NOT EXISTS volumes (
                 id                  TEXT PRIMARY KEY,
                 label               TEXT NOT NULL,
-                platform_id         TEXT NOT NULL,
+                hardware_family_id  TEXT NOT NULL,
                 dat_line_id         TEXT NOT NULL,
                 status              TEXT NOT NULL,
                 health              TEXT NOT NULL DEFAULT 'ok',
@@ -282,36 +304,87 @@ public sealed class CatalogService
                     ('handheld', 'Handheld', 20, 1),
                     ('computer', 'Computer', 30, 1),
                     ('arcade',   'Arcade',   40, 1),
+                    ('pinball',  'Pinball',  45, 1),
                     ('other',    'Other',    99, 1);
                 """;
             seed.ExecuteNonQuery();
         }
 
+        // ── Seed ecosystems (INSERT OR IGNORE — safe to re-run) ──────────────
+        using var ecoSeed = conn.CreateCommand();
+        ecoSeed.CommandText = """
+            INSERT OR IGNORE INTO ecosystems(id, name, sort_order, is_seeded) VALUES
+                ('nintendo',  'Nintendo',  10, 1),
+                ('sony',      'Sony',      20, 1),
+                ('sega',      'Sega',      30, 1),
+                ('microsoft', 'Microsoft', 40, 1),
+                ('nec',       'NEC',       50, 1),
+                ('snk',       'SNK',       60, 1),
+                ('atari',     'Atari',     70, 1),
+                ('pc',        'PC',        80, 1),
+                ('other',     'Other',     99, 1);
+            """;
+        ecoSeed.ExecuteNonQuery();
+
+        // ── Seed media_types (INSERT OR IGNORE — safe to re-run) ─────────────
+        using var mtSeed = conn.CreateCommand();
+        mtSeed.CommandText = """
+            INSERT OR IGNORE INTO media_types(id, name, sort_order, is_seeded) VALUES
+                ('rom',       'ROM',       10, 1),
+                ('cartridge', 'Cartridge', 20, 1),
+                ('cd',        'CD',        30, 1),
+                ('dvd',       'DVD',       40, 1),
+                ('floppy',    'Floppy',    50, 1),
+                ('hdd',       'HDD',       60, 1),
+                ('digital',   'Digital',   70, 1),
+                ('other',     'Other',     99, 1);
+            """;
+        mtSeed.ExecuteNonQuery();
+
+        // ── Seed content_categories (INSERT OR IGNORE — safe to re-run) ──────
+        using var ccSeed = conn.CreateCommand();
+        ccSeed.CommandText = """
+            INSERT OR IGNORE INTO content_categories(id, name, sort_order, is_seeded) VALUES
+                ('games',    'Games',    10, 1),
+                ('software', 'Software', 20, 1),
+                ('bios',     'BIOS',     30, 1),
+                ('firmware', 'Firmware', 40, 1),
+                ('dlc',      'DLC',      50, 1),
+                ('eshop',    'eShop',    60, 1),
+                ('media',    'Media',    70, 1),
+                ('other',    'Other',    99, 1);
+            """;
+        ccSeed.ExecuteNonQuery();
+
         // ── Seed authorities (INSERT OR IGNORE — safe to re-run) ─────────────
         using var authSeed = conn.CreateCommand();
         authSeed.CommandText = """
             INSERT OR IGNORE INTO authorities(id, name, is_seeded) VALUES
-                ('redump',  'ReDump',   1),
-                ('nointro', 'No-Intro', 1),
-                ('tosec',   'TOSEC',    1),
-                ('custom',  'Custom',   1);
+                ('redump',  'ReDump',        1),
+                ('nointro', 'No-Intro',      1),
+                ('tosec',   'TOSEC',         1),
+                ('mame',    'MAME',          1),
+                ('fbneo',   'FinalBurn Neo', 1),
+                ('custom',  'Custom',        1);
             """;
         authSeed.ExecuteNonQuery();
     }
 
-    // ── Platforms ────────────────────────────────────────────────────────────
+    // ── Hardware Families ─────────────────────────────────────────────────────
 
-    public List<PlatformRecord> LoadPlatforms()
+    public List<HardwareFamilyRecord> LoadPlatforms() => GetHardwareFamilies();
+
+    public List<HardwareFamilyRecord> GetHardwareFamilies()
     {
-        var list = new List<PlatformRecord>();
+        var list = new List<HardwareFamilyRecord>();
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT p.id, p.name, p.manufacturer, p.hardware_type_id,
+            SELECT p.id, p.name, p.manufacturer, p.ecosystem_id, p.hardware_type_id,
                    p.year_of_release, p.media, p.notes,
                    p.cpu, p.memory, p.graphics, p.sound,
                    p.display_resolution, p.aspect_ratio
-            FROM platforms p
+            FROM hardware_families p
             LEFT JOIN hardware_types ht ON ht.id = p.hardware_type_id
             ORDER BY
                 CASE WHEN ht.sort_order IS NULL THEN 9999 ELSE ht.sort_order END,
@@ -320,26 +393,29 @@ public sealed class CatalogService
             """;
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
-            list.Add(new PlatformRecord
+            list.Add(new HardwareFamilyRecord
             {
                 Id                = reader.GetString(0),
                 Name              = reader.GetString(1),
                 Manufacturer      = reader.GetString(2),
-                HardwareTypeId    = reader.IsDBNull(3)  ? "" : reader.GetString(3),
-                YearOfRelease     = reader.IsDBNull(4)  ? "" : reader.GetString(4),
-                Media             = reader.IsDBNull(5)  ? "" : reader.GetString(5),
-                Notes             = reader.IsDBNull(6)  ? "" : reader.GetString(6),
-                Cpu               = reader.IsDBNull(7)  ? "" : reader.GetString(7),
-                Memory            = reader.IsDBNull(8)  ? "" : reader.GetString(8),
-                Graphics          = reader.IsDBNull(9)  ? "" : reader.GetString(9),
-                Sound             = reader.IsDBNull(10) ? "" : reader.GetString(10),
-                DisplayResolution = reader.IsDBNull(11) ? "" : reader.GetString(11),
-                AspectRatio       = reader.IsDBNull(12) ? "" : reader.GetString(12),
+                EcosystemId       = reader.IsDBNull(3)  ? "" : reader.GetString(3),
+                HardwareTypeId    = reader.IsDBNull(4)  ? "" : reader.GetString(4),
+                YearOfRelease     = reader.IsDBNull(5)  ? "" : reader.GetString(5),
+                Media             = reader.IsDBNull(6)  ? "" : reader.GetString(6),
+                Notes             = reader.IsDBNull(7)  ? "" : reader.GetString(7),
+                Cpu               = reader.IsDBNull(8)  ? "" : reader.GetString(8),
+                Memory            = reader.IsDBNull(9)  ? "" : reader.GetString(9),
+                Graphics          = reader.IsDBNull(10) ? "" : reader.GetString(10),
+                Sound             = reader.IsDBNull(11) ? "" : reader.GetString(11),
+                DisplayResolution = reader.IsDBNull(12) ? "" : reader.GetString(12),
+                AspectRatio       = reader.IsDBNull(13) ? "" : reader.GetString(13),
             });
         return list;
     }
 
-    public void SavePlatforms(List<PlatformRecord> records)
+    public void SavePlatforms(List<HardwareFamilyRecord> records) => SaveHardwareFamilies(records);
+
+    public void SaveHardwareFamilies(List<HardwareFamilyRecord> records)
     {
         using var conn = Open();
         using var tx   = conn.BeginTransaction();
@@ -347,15 +423,16 @@ public sealed class CatalogService
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO platforms(
-                    id, name, manufacturer, hardware_type_id, year_of_release, media, notes,
+                INSERT INTO hardware_families(
+                    id, name, manufacturer, ecosystem_id, hardware_type_id, year_of_release, media, notes,
                     cpu, memory, graphics, sound, display_resolution, aspect_ratio)
                 VALUES(
-                    $id, $name, $manufacturer, $hardwareTypeId, $yearOfRelease, $media, $notes,
+                    $id, $name, $manufacturer, $ecosystemId, $hardwareTypeId, $yearOfRelease, $media, $notes,
                     $cpu, $memory, $graphics, $sound, $displayResolution, $aspectRatio)
                 ON CONFLICT(id) DO UPDATE SET
                     name               = excluded.name,
                     manufacturer       = excluded.manufacturer,
+                    ecosystem_id       = excluded.ecosystem_id,
                     hardware_type_id   = excluded.hardware_type_id,
                     year_of_release    = excluded.year_of_release,
                     media              = excluded.media,
@@ -370,6 +447,7 @@ public sealed class CatalogService
             cmd.Parameters.AddWithValue("$id",                p.Id);
             cmd.Parameters.AddWithValue("$name",              p.Name);
             cmd.Parameters.AddWithValue("$manufacturer",      p.Manufacturer);
+            cmd.Parameters.AddWithValue("$ecosystemId",       NullIfEmpty(p.EcosystemId));
             cmd.Parameters.AddWithValue("$hardwareTypeId",    NullIfEmpty(p.HardwareTypeId));
             cmd.Parameters.AddWithValue("$yearOfRelease",     NullIfEmpty(p.YearOfRelease));
             cmd.Parameters.AddWithValue("$media",             NullIfEmpty(p.Media));
@@ -385,35 +463,119 @@ public sealed class CatalogService
         tx.Commit();
     }
 
-    public PlatformRecord? GetPlatform(string id)
+    public void SaveHardwareFamily(HardwareFamilyRecord p)
+        => SaveHardwareFamilies([p]);
+
+    public HardwareFamilyRecord? GetPlatform(string id) => GetHardwareFamily(id);
+
+    public HardwareFamilyRecord? GetHardwareFamily(string id)
     {
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, name, manufacturer, hardware_type_id,
+            SELECT id, name, manufacturer, ecosystem_id, hardware_type_id,
                    year_of_release, media, notes,
                    cpu, memory, graphics, sound, display_resolution, aspect_ratio
-            FROM platforms WHERE id = $id
+            FROM hardware_families WHERE id = $id
             """;
         cmd.Parameters.AddWithValue("$id", id);
         using var reader = cmd.ExecuteReader();
         if (!reader.Read()) return null;
-        return new PlatformRecord
+        return new HardwareFamilyRecord
         {
             Id                = reader.GetString(0),
             Name              = reader.GetString(1),
             Manufacturer      = reader.GetString(2),
-            HardwareTypeId    = reader.IsDBNull(3)  ? "" : reader.GetString(3),
-            YearOfRelease     = reader.IsDBNull(4)  ? "" : reader.GetString(4),
-            Media             = reader.IsDBNull(5)  ? "" : reader.GetString(5),
-            Notes             = reader.IsDBNull(6)  ? "" : reader.GetString(6),
-            Cpu               = reader.IsDBNull(7)  ? "" : reader.GetString(7),
-            Memory            = reader.IsDBNull(8)  ? "" : reader.GetString(8),
-            Graphics          = reader.IsDBNull(9)  ? "" : reader.GetString(9),
-            Sound             = reader.IsDBNull(10) ? "" : reader.GetString(10),
-            DisplayResolution = reader.IsDBNull(11) ? "" : reader.GetString(11),
-            AspectRatio       = reader.IsDBNull(12) ? "" : reader.GetString(12),
+            EcosystemId       = reader.IsDBNull(3)  ? "" : reader.GetString(3),
+            HardwareTypeId    = reader.IsDBNull(4)  ? "" : reader.GetString(4),
+            YearOfRelease     = reader.IsDBNull(5)  ? "" : reader.GetString(5),
+            Media             = reader.IsDBNull(6)  ? "" : reader.GetString(6),
+            Notes             = reader.IsDBNull(7)  ? "" : reader.GetString(7),
+            Cpu               = reader.IsDBNull(8)  ? "" : reader.GetString(8),
+            Memory            = reader.IsDBNull(9)  ? "" : reader.GetString(9),
+            Graphics          = reader.IsDBNull(10) ? "" : reader.GetString(10),
+            Sound             = reader.IsDBNull(11) ? "" : reader.GetString(11),
+            DisplayResolution = reader.IsDBNull(12) ? "" : reader.GetString(12),
+            AspectRatio       = reader.IsDBNull(13) ? "" : reader.GetString(13),
         };
+    }
+
+    public void DeleteHardwareFamily(string id)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM hardware_families WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", id);
+        cmd.ExecuteNonQuery();
+    }
+
+    public bool HardwareFamilyHasDependencies(string id)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM dat_lines WHERE hardware_family_id = $id LIMIT 1";
+        cmd.Parameters.AddWithValue("$id", id);
+        return cmd.ExecuteScalar() is not null;
+    }
+
+    // ── Ecosystems ────────────────────────────────────────────────────────────
+
+    public List<EcosystemRecord> GetEcosystems()
+    {
+        var list = new List<EcosystemRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, name, sort_order, is_seeded FROM ecosystems ORDER BY sort_order, name";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new EcosystemRecord
+            {
+                Id        = r.GetString(0),
+                Name      = r.GetString(1),
+                SortOrder = r.GetInt32(2),
+                IsSeeded  = r.GetInt32(3) != 0,
+            });
+        return list;
+    }
+
+    // ── Media Types ───────────────────────────────────────────────────────────
+
+    public List<MediaTypeRecord> GetMediaTypes()
+    {
+        var list = new List<MediaTypeRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, name, sort_order, is_seeded FROM media_types ORDER BY sort_order, name";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new MediaTypeRecord
+            {
+                Id        = r.GetString(0),
+                Name      = r.GetString(1),
+                SortOrder = r.GetInt32(2),
+                IsSeeded  = r.GetInt32(3) != 0,
+            });
+        return list;
+    }
+
+    // ── Content Categories ────────────────────────────────────────────────────
+
+    public List<ContentCategoryRecord> GetContentCategories()
+    {
+        var list = new List<ContentCategoryRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT id, name, sort_order, is_seeded FROM content_categories ORDER BY sort_order, name";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new ContentCategoryRecord
+            {
+                Id        = r.GetString(0),
+                Name      = r.GetString(1),
+                SortOrder = r.GetInt32(2),
+                IsSeeded  = r.GetInt32(3) != 0,
+            });
+        return list;
     }
 
     // ── Hardware Types ────────────────────────────────────────────────────────
@@ -465,7 +627,7 @@ public sealed class CatalogService
     {
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
-        cmd.CommandText = "SELECT 1 FROM platforms WHERE hardware_type_id = $id LIMIT 1";
+        cmd.CommandText = "SELECT 1 FROM hardware_families WHERE hardware_type_id = $id LIMIT 1";
         cmd.Parameters.AddWithValue("$id", id);
         return cmd.ExecuteScalar() is not null;
     }
@@ -725,7 +887,7 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, platform_id, name, authority, dat_category, version, storage_strategy_id, data_store_path, release_count, imported_at_utc,
+            SELECT id, hardware_family_id, name, authority, media_type_id, version, storage_strategy_id, data_store_path, release_count, imported_at_utc,
                    transform_strategy_type, folder_transform_id, file_handling, catalog_enabled, library_title_mode
             FROM dat_lines
             ORDER BY imported_at_utc DESC
@@ -735,10 +897,10 @@ public sealed class CatalogService
             list.Add(new DatLineRecord
             {
                 Id                    = reader.GetString(0),
-                PlatformId            = reader.GetString(1),
+                HardwareFamilyId      = reader.GetString(1),
                 Name                  = reader.GetString(2),
                 Authority             = reader.GetString(3),
-                DatCategory           = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                MediaTypeId           = reader.IsDBNull(4) ? "other" : reader.GetString(4),
                 Version               = reader.IsDBNull(5) ? "" : reader.GetString(5),
                 StorageStrategyId     = reader.IsDBNull(6) ? "" : reader.GetString(6),
                 DataStorePath         = reader.IsDBNull(7) ? "" : reader.GetString(7),
@@ -761,12 +923,12 @@ public sealed class CatalogService
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO dat_lines(id, platform_id, name, authority, dat_category, version, storage_strategy_id, data_store_path, release_count, imported_at_utc, catalog_enabled, library_title_mode)
-                VALUES($id, $platformId, $name, $authority, $datCategory, $version, $storageStrategyId, $dataStorePath, $releaseCount, $importedAt, $catalogEnabled, $libraryTitleMode)
+                INSERT INTO dat_lines(id, hardware_family_id, name, authority, media_type_id, version, storage_strategy_id, data_store_path, release_count, imported_at_utc, catalog_enabled, library_title_mode)
+                VALUES($id, $hardwareFamilyId, $name, $authority, $mediaTypeId, $version, $storageStrategyId, $dataStorePath, $releaseCount, $importedAt, $catalogEnabled, $libraryTitleMode)
                 ON CONFLICT(id) DO UPDATE SET
                     name                 = excluded.name,
                     authority            = excluded.authority,
-                    dat_category         = excluded.dat_category,
+                    media_type_id        = excluded.media_type_id,
                     version              = excluded.version,
                     storage_strategy_id  = excluded.storage_strategy_id,
                     data_store_path      = excluded.data_store_path,
@@ -776,10 +938,10 @@ public sealed class CatalogService
                     library_title_mode   = excluded.library_title_mode
                 """;
             cmd.Parameters.AddWithValue("$id",                dl.Id);
-            cmd.Parameters.AddWithValue("$platformId",        dl.PlatformId);
+            cmd.Parameters.AddWithValue("$hardwareFamilyId",  dl.HardwareFamilyId);
             cmd.Parameters.AddWithValue("$name",              dl.Name);
             cmd.Parameters.AddWithValue("$authority",         dl.Authority);
-            cmd.Parameters.AddWithValue("$datCategory",       dl.DatCategory);
+            cmd.Parameters.AddWithValue("$mediaTypeId",       dl.MediaTypeId.Length > 0 ? dl.MediaTypeId : "other");
             cmd.Parameters.AddWithValue("$version",           dl.Version);
             cmd.Parameters.AddWithValue("$storageStrategyId", NullIfEmpty(dl.StorageStrategyId));
             cmd.Parameters.AddWithValue("$dataStorePath",     dl.DataStorePath);
@@ -794,7 +956,7 @@ public sealed class CatalogService
 
     /// <summary>
     /// Updates only the mutable metadata fields on an existing DAT line.
-    /// Identity fields (platform_id, authority, dat_category, storage_strategy_id,
+    /// Identity fields (hardware_family_id, authority, media_type_id, storage_strategy_id,
     /// data_store_path) are intentionally not touched.
     /// </summary>
     public void UpdateDatLineMetadata(string id, string version, int releaseCount, DateTime importedAtUtc)
@@ -908,7 +1070,7 @@ public sealed class CatalogService
         cmd.CommandText = """
             SELECT COUNT(*), COALESCE(SUM(release_count), 0)
             FROM dat_lines
-            WHERE platform_id = $pid
+            WHERE hardware_family_id = $pid
             """;
         cmd.Parameters.AddWithValue("$pid", platformId);
         using var reader = cmd.ExecuteReader();
@@ -1327,7 +1489,7 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, label, platform_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at, health
+            SELECT id, label, hardware_family_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at, health
             FROM volumes
             ORDER BY label
             """;
@@ -1343,7 +1505,7 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT v.id, v.label, v.platform_id, v.dat_line_id, v.status,
+            SELECT v.id, v.label, v.hardware_family_id, v.dat_line_id, v.status,
                    v.planned_size_bytes, v.actual_size_bytes, v.created_at, v.verified_at, v.health
             FROM volumes v
             JOIN volume_locations vl ON vl.volume_id = v.id
@@ -1362,7 +1524,7 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO volumes(id, label, platform_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at, health)
+            INSERT INTO volumes(id, label, hardware_family_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at, health)
             VALUES($id, $label, $platId, $dlId, $status, $planned, $actual, $created, $verified, $health)
             ON CONFLICT(id) DO UPDATE SET
                 label              = excluded.label,
@@ -1660,7 +1822,7 @@ public sealed class CatalogService
         var placeholders = string.Join(",", System.Linq.Enumerable.Range(0, derivedIds.Count).Select(i => $"$id{i}"));
         cmd.CommandText = $"""
             SELECT DISTINCT
-                v.id, v.label, v.platform_id, v.dat_line_id, v.status,
+                v.id, v.label, v.hardware_family_id, v.dat_line_id, v.status,
                 v.planned_size_bytes, v.actual_size_bytes, v.created_at, v.verified_at, v.health,
                 vl.disk_id, COALESCE(vl.location_type, 'unknown')
             FROM volume_artifacts va
