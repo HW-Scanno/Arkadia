@@ -141,6 +141,14 @@ public sealed class DatLineStore
                 description      TEXT NOT NULL DEFAULT '',
                 scraped_at_utc   TEXT NOT NULL DEFAULT ''
             );
+
+            CREATE TABLE IF NOT EXISTS release_provider_payloads (
+                release_id  TEXT NOT NULL,
+                provider    TEXT NOT NULL,
+                payload     TEXT NOT NULL DEFAULT '{}',
+                scraped_at  TEXT NOT NULL,
+                PRIMARY KEY (release_id, provider)
+            );
             """;
         cmd.ExecuteNonQuery();
 
@@ -565,6 +573,47 @@ public sealed class DatLineStore
         cmd.Parameters.AddWithValue("$desc",     m.Description);
         cmd.Parameters.AddWithValue("$scraped",  m.ScrapedAtUtc);
         cmd.ExecuteNonQuery();
+    }
+
+    // ── Provider payloads ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Upserts the raw provider payload for a release.
+    /// Updates both payload and scraped_at when the (release_id, provider) pair already exists.
+    /// </summary>
+    public void SaveProviderPayload(string releaseId, string provider, string payloadJson)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO release_provider_payloads(release_id, provider, payload, scraped_at)
+            VALUES($id, $provider, $payload, $scraped)
+            ON CONFLICT(release_id, provider) DO UPDATE SET
+                payload    = excluded.payload,
+                scraped_at = excluded.scraped_at
+            """;
+        cmd.Parameters.AddWithValue("$id",       releaseId);
+        cmd.Parameters.AddWithValue("$provider", provider);
+        cmd.Parameters.AddWithValue("$payload",  payloadJson);
+        cmd.Parameters.AddWithValue("$scraped",  DateTime.UtcNow.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Returns the stored payload JSON for the given (release_id, provider) pair,
+    /// or null if no row exists.
+    /// </summary>
+    public string? LoadProviderPayload(string releaseId, string provider)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT payload FROM release_provider_payloads
+            WHERE release_id = $id AND provider = $provider
+            """;
+        cmd.Parameters.AddWithValue("$id",       releaseId);
+        cmd.Parameters.AddWithValue("$provider", provider);
+        return cmd.ExecuteScalar() as string;
     }
 
     // ── Status update ────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using LibVLCSharp.Shared;
 
 namespace Arkadia;
 
@@ -7418,23 +7419,25 @@ public partial class MainWindow : Window
     private List<LibraryEntry> _catalogDatasetEntries = [];
     private List<LibraryEntry> _filteredCatalogEntries = [];
     private LibraryEntry?      _catalogSelected;
+    private record struct GalleryItem(string Path, bool IsVideo, string Label);
+
     private bool               _catalogGridMode;
     private Bitmap?            _catalogCoverBitmap;
-    private Bitmap?            _catalogScreenshotBitmap;
+    private Bitmap?            _catalogPhysicalBitmap;
+    private Bitmap?            _galleryBitmap;
+    private readonly List<GalleryItem> _galleryItems = [];
+    private int                _galleryIndex;
+    private LibVLC?            _libVlc;
+    private MediaPlayer?       _mediaPlayer;
+    private LibVLCSharp.Avalonia.VideoView? _videoView;
+    private bool               _libVlcInitFailed;
 
     private void InitCatalog()
     {
         CatalogStatusFilter.ItemsSource   = new[] { "All Statuses", "Present", "Outdated", "Pending", "Missing", "Lost", "New" };
         CatalogStatusFilter.SelectedIndex = 0;
         BuildCatalogJumpList();
-        CatalogHeroInnerGrid.SizeChanged += (_, e) => ApplyCatalogMediaLayout(e.NewSize.Width);
-    }
 
-    private void ApplyCatalogMediaLayout(double heroWidth)
-    {
-        var wide = heroWidth >= 1700;
-        CatalogMediaWide.IsVisible    = wide;
-        CatalogMediaCompact.IsVisible = !wide;
     }
 
     private void SyncCatalogContext()
@@ -7459,7 +7462,6 @@ public partial class MainWindow : Window
         CatalogContextDatLine.SelectionChanged  += OnCatalogContextDatLineChanged;
 
         LoadCatalogDataset(activePlatform, CatalogContextDatLine.SelectedItem as string);
-        ApplyCatalogMediaLayout(CatalogHeroInnerGrid.Bounds.Width);
     }
 
     private void OnCatalogContextPlatformChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
@@ -7684,6 +7686,8 @@ public partial class MainWindow : Window
 
         if (entry is null)
         {
+            StopVideo();
+            _galleryItems.Clear();
             CatalogHeroEmpty.IsVisible   = true;
             CatalogHeroScroll.IsVisible  = false;
             return;
@@ -7745,19 +7749,45 @@ public partial class MainWindow : Window
             CatalogHeroNoCover.IsVisible = true;
         }
 
-        // Screenshot — same Source-before-Dispose safety as cover; shared bitmap for both panels.
-        CatalogScreenshotCompact.Source = null;
-        CatalogScreenshotWide.Source    = null;
-        _catalogScreenshotBitmap?.Dispose();
-        _catalogScreenshotBitmap = null;
+        // Physical media — texture first, fallback to flat.
+        CatalogPhysicalMediaImage.Source = null;
+        _catalogPhysicalBitmap?.Dispose();
+        _catalogPhysicalBitmap = null;
 
-        var screenshots = MediaStore.FindScreenshots(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name);
-        _catalogScreenshotBitmap = CoverLoader.TryLoad(screenshots.FirstOrDefault());
-        var hasScreenshot = _catalogScreenshotBitmap is not null;
-        CatalogScreenshotCompact.Source    = _catalogScreenshotBitmap;
-        CatalogScreenshotCompact.IsVisible = hasScreenshot;
-        CatalogScreenshotWide.Source       = _catalogScreenshotBitmap;
-        CatalogScreenshotWide.IsVisible    = hasScreenshot;
+        var physicalPath = MediaStore.FindFirstPhysicalTexture(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name)
+                        ?? MediaStore.FindFirstPhysical(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name);
+        _catalogPhysicalBitmap = CoverLoader.TryLoad(physicalPath);
+        if (_catalogPhysicalBitmap is not null)
+        {
+            CatalogPhysicalMediaImage.Source    = _catalogPhysicalBitmap;
+            CatalogPhysicalMediaImage.IsVisible = true;
+            CatalogPhysicalNoMedia.IsVisible    = false;
+        }
+        else
+        {
+            CatalogPhysicalMediaImage.IsVisible = false;
+            CatalogPhysicalNoMedia.IsVisible    = true;
+        }
+
+        // Media gallery
+        BuildGallery(entry);
+        ShowGalleryItem(0);
+
+        // Badges — hide rows whose value is unavailable
+        static void SetBadge(Avalonia.Controls.Border border, Avalonia.Controls.TextBlock text, string value)
+        {
+            text.Text        = value;
+            border.IsVisible = value != "—";
+        }
+
+        SetBadge(CatalogBadgeStatusBorder,  CatalogBadgeStatus,  entry.Status);
+        SetBadge(CatalogBadgeRegionBorder,  CatalogBadgeRegion,  entry.Region.Length  > 0 ? entry.Region  : "—");
+        SetBadge(CatalogBadgeSystemBorder,  CatalogBadgeSystem,  entry.Platform.Length > 0 ? entry.Platform : entry.HardwareFamilyId);
+        SetBadge(CatalogBadgeYearBorder,    CatalogBadgeYear,    entry.Metadata?.Year is { Length: > 0 } y ? y : "—");
+        CatalogBadgeGenreBorder.IsVisible   = false;
+        CatalogBadgePlayersBorder.IsVisible = false;
+        SetBadge(CatalogBadgeTypeBorder,    CatalogBadgeType,    entry.Format.Length  > 0 ? entry.Format  : "—");
+        SetBadge(CatalogBadgeSizeBorder,    CatalogBadgeSize,    entry.Size.Length    > 0 ? entry.Size    : "—");
 
         // Metadata fields
         CatalogHeroStatus.Text    = entry.Status;
@@ -7785,6 +7815,14 @@ public partial class MainWindow : Window
         var score = m?.QualityScore ?? 0;
         CatalogQualityFilled.Text = new string('●', score);
         CatalogQualityEmpty.Text  = new string('●', 6 - score);
+        CatalogQualityLabel.Text  = score switch
+        {
+            6       => "Perfect",
+            5       => "High",
+            3 or 4  => "Medium",
+            1 or 2  => "Low",
+            _       => ""
+        };
 
         // Description
         var desc = m?.Description ?? "";
@@ -7797,6 +7835,208 @@ public partial class MainWindow : Window
 
         // DAT name (technical identity)
         CatalogHeroDatName.Text = entry.Name;
+    }
+
+    // ── Media gallery ─────────────────────────────────────────────────────────
+
+    private void EnsureLibVlc()
+    {
+        if (_libVlcInitFailed || _libVlc is not null) return;
+        try
+        {
+            var vlcDir = Path.Combine(AppContext.BaseDirectory, "libraries", "lib-vlc",
+                Environment.Is64BitProcess ? "win-x64" : "win-x86");
+
+            if (!File.Exists(Path.Combine(vlcDir, "libvlc.dll")))
+            {
+                System.Diagnostics.Debug.WriteLine($"[VLC] Runtime not found at: {vlcDir}");
+                _libVlcInitFailed = true;
+                return;
+            }
+
+            System.Diagnostics.Debug.WriteLine($"[VLC] Initializing from: {vlcDir}");
+            Core.Initialize(vlcDir);
+
+            _libVlc      = new LibVLC(enableDebugLogs: false);
+            _mediaPlayer = new MediaPlayer(_libVlc);
+            _mediaPlayer.EncounteredError += (_, _) =>
+                System.Diagnostics.Debug.WriteLine("[VLC] MediaPlayer.EncounteredError");
+
+            _videoView = new LibVLCSharp.Avalonia.VideoView
+            {
+                MediaPlayer         = _mediaPlayer,
+                IsVisible           = false,
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Stretch,
+            };
+            CatalogVideoPanel.Children.Add(_videoView);
+            System.Diagnostics.Debug.WriteLine("[VLC] Initialized OK");
+        }
+        catch (Exception ex)
+        {
+            _libVlcInitFailed = true;
+            System.Diagnostics.Debug.WriteLine($"[VLC] Init failed: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    private void BuildGallery(LibraryEntry entry)
+    {
+        _galleryItems.Clear();
+        foreach (var p in MediaStore.FindVideos(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name))
+            _galleryItems.Add(new GalleryItem(p, true, "Video"));
+        foreach (var p in MediaStore.FindTitleScreenshots(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name))
+            _galleryItems.Add(new GalleryItem(p, false, "Title"));
+        foreach (var p in MediaStore.FindScreenshots(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name))
+            _galleryItems.Add(new GalleryItem(p, false, "Gameplay"));
+        foreach (var p in MediaStore.FindFanart(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name))
+            _galleryItems.Add(new GalleryItem(p, false, "Fanart"));
+    }
+
+    private void ShowGalleryItem(int index)
+    {
+        StopVideo();
+        CatalogMediaImage.Source = null;
+        _galleryBitmap?.Dispose();
+        _galleryBitmap = null;
+
+        if (_galleryItems.Count == 0)
+        {
+            _galleryIndex = 0;
+            CatalogMediaNoItem.Text           = "No media";
+            CatalogMediaNoItem.IsVisible      = true;
+            CatalogMediaImage.IsVisible       = false;
+            CatalogMediaTypeLabel.Text        = "";
+            CatalogMediaPrev.IsVisible        = false;
+            CatalogMediaNext.IsVisible        = false;
+            CatalogVideoPlayOverlay.IsVisible = false;
+            RefreshDots();
+            return;
+        }
+
+        _galleryIndex = Math.Clamp(index, 0, _galleryItems.Count - 1);
+        var item = _galleryItems[_galleryIndex];
+
+        CatalogMediaTypeLabel.Text   = item.Label;
+        CatalogMediaNoItem.IsVisible = false;
+        CatalogMediaPrev.IsVisible   = _galleryItems.Count > 1;
+        CatalogMediaNext.IsVisible   = _galleryItems.Count > 1;
+
+        if (item.IsVideo)
+        {
+            CatalogMediaImage.IsVisible = false;
+            EnsureLibVlc();
+
+            if (_libVlcInitFailed || _libVlc is null || _mediaPlayer is null)
+            {
+                CatalogMediaNoItem.Text           = $"▶  {Path.GetFileName(item.Path)}";
+                CatalogMediaNoItem.IsVisible      = true;
+                CatalogVideoPlayOverlay.IsVisible = true;
+            }
+            else
+            {
+                var autoplay     = _catalog.GetBoolSetting("catalog_video_autoplay", true);
+                var audioEnabled = _catalog.GetBoolSetting("catalog_video_audio",    false);
+
+                _videoView!.IsVisible             = true;
+                CatalogMediaNoItem.IsVisible      = false;
+                CatalogVideoPlayOverlay.IsVisible = !autoplay;
+
+                if (autoplay)
+                {
+                    var capturedPath  = item.Path;
+                    var capturedIndex = _galleryIndex;
+                    var capturedMute  = !audioEnabled;
+                    Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                    {
+                        if (_mediaPlayer is null || _libVlc is null) return;
+                        if (_galleryIndex != capturedIndex) return;
+                        _mediaPlayer.Mute = capturedMute;
+                        using var media = new Media(_libVlc, capturedPath, FromType.FromPath);
+                        _mediaPlayer.Play(media);
+                    }, Avalonia.Threading.DispatcherPriority.Background);
+                }
+            }
+        }
+        else
+        {
+            CatalogVideoPlayOverlay.IsVisible = false;
+            _galleryBitmap              = CoverLoader.TryLoad(item.Path);
+            CatalogMediaImage.Source    = _galleryBitmap;
+            CatalogMediaImage.IsVisible = _galleryBitmap is not null;
+            if (_galleryBitmap is null)
+            {
+                CatalogMediaNoItem.Text      = "No media";
+                CatalogMediaNoItem.IsVisible = true;
+            }
+        }
+
+        RefreshDots();
+    }
+
+    private void StopVideo()
+    {
+        try { if (_mediaPlayer?.IsPlaying == true) _mediaPlayer.Stop(); } catch { }
+        if (_videoView is not null) _videoView.IsVisible = false;
+        CatalogVideoPlayOverlay.IsVisible = false;
+    }
+
+    private void RefreshDots()
+    {
+        CatalogMediaDots.Children.Clear();
+        int count = Math.Min(_galleryItems.Count, 12);
+        if (count == 0)
+        {
+            CatalogMediaDots.Children.Add(new TextBlock
+                { Text = "●", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse("#55557A")) });
+            return;
+        }
+        for (int i = 0; i < count; i++)
+            CatalogMediaDots.Children.Add(new TextBlock
+            {
+                Text       = "●",
+                FontSize   = 11,
+                Foreground = new SolidColorBrush(Color.Parse(i == _galleryIndex ? "#9FA4FF" : "#55557A")),
+            });
+    }
+
+    private void OnCatalogVideoPlay(object? sender, RoutedEventArgs e)
+    {
+        CatalogVideoPlayOverlay.IsVisible = false;
+        if (_galleryItems.Count == 0 || _galleryIndex >= _galleryItems.Count) return;
+        var item = _galleryItems[_galleryIndex];
+        if (!item.IsVideo) return;
+
+        if (_libVlcInitFailed || _libVlc is null || _mediaPlayer is null)
+        {
+            if (!File.Exists(item.Path)) return;
+            try { Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true }); } catch { }
+            return;
+        }
+
+        _videoView!.IsVisible = true;
+        var capturedPath  = item.Path;
+        var capturedIndex = _galleryIndex;
+        var capturedMute  = !_catalog.GetBoolSetting("catalog_video_audio", false);
+        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (_mediaPlayer is null || _libVlc is null) return;
+            if (_galleryIndex != capturedIndex) return;
+            _mediaPlayer.Mute = capturedMute;
+            using var media = new Media(_libVlc, capturedPath, FromType.FromPath);
+            _mediaPlayer.Play(media);
+        }, Avalonia.Threading.DispatcherPriority.Background);
+    }
+
+    private void OnCatalogMediaPrev(object? sender, RoutedEventArgs e)
+    {
+        if (_galleryItems.Count == 0) return;
+        ShowGalleryItem((_galleryIndex - 1 + _galleryItems.Count) % _galleryItems.Count);
+    }
+
+    private void OnCatalogMediaNext(object? sender, RoutedEventArgs e)
+    {
+        if (_galleryItems.Count == 0) return;
+        ShowGalleryItem((_galleryIndex + 1) % _galleryItems.Count);
     }
 
     private void OnCatalogOpenInLibrary(object? sender, RoutedEventArgs e)
@@ -7848,9 +8088,12 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (!Arkadia.Providers.ScreenScraperClient.TryResolveSystemId(entry.HardwareFamilyId, out _))
+        var family   = _catalog.GetHardwareFamily(entry.HardwareFamilyId);
+        var scrapeId = family?.ScrapeSystemId is { Length: > 0 } s ? s : entry.HardwareFamilyId;
+
+        if (!Arkadia.Providers.ScreenScraperClient.TryResolveSystemId(scrapeId, out _))
         {
-            SetScrapeStatus($"No ScreenScraper system ID mapped for system '{entry.HardwareFamilyId}'.", "#FFD54F");
+            SetScrapeStatus($"No ScreenScraper system ID mapped for system '{scrapeId}'.", "#FFD54F");
             return;
         }
 
@@ -7865,7 +8108,7 @@ public partial class MainWindow : Window
             var result = await Arkadia.Providers.ScreenScraperClient.QueryAsync(
                 devId, devPassword,
                 username, password,
-                entry.HardwareFamilyId, entry.Name,
+                scrapeId, entry.Name,
                 isMame);
 
             if (result is null)
@@ -7894,54 +8137,121 @@ public partial class MainWindow : Window
             var store = new Arkadia.Data.DatLineStore(entry.DbPath);
             store.SaveReleaseMetadata(newMeta);
 
+            // ── Save provider payload (DB + filesystem) ──────────────────────
+            var payloadJson = result.RawJson.Length > 0 ? result.RawJson : "{}";
+            store.SaveProviderPayload(entry.ReleaseId, "screenscraper", payloadJson);
+
+            var metaDir  = Path.Combine(
+                Arkadia.Data.MediaStore.DatLinePath(_dataDir, entry.HardwareFamilyId, entry.DatLineId),
+                "metadata");
+            Directory.CreateDirectory(metaDir);
+            var metaFile = Path.Combine(metaDir,
+                $"{Arkadia.Data.MediaStore.ReleaseStem(entry.Name)}_screenscraper.json");
+            await File.WriteAllTextAsync(metaFile, payloadJson);
+
             // ── Download media ───────────────────────────────────────────────
             Arkadia.Data.MediaStore.EnsureMediaFolders(_dataDir, entry.HardwareFamilyId, entry.DatLineId);
-            var mediaLog = new System.Text.StringBuilder();
 
-            if (result.CoverUrl is not null)
+            // Swallows per-asset errors; re-throws rate-limit so outer catch handles it.
+            static async Task<bool> TryDownloadAsync(
+                string url, string stem, string fmt, IReadOnlyList<string> exts, long? size = null)
             {
-                var stem = Arkadia.Data.MediaStore.NextIndexedMediaStem(
-                    _dataDir, entry.HardwareFamilyId, entry.DatLineId,
-                    entry.Name, Path.Combine("covers", "front"));
-                SetScrapeStatus("Downloading cover…", "#888899");
-                if (await Arkadia.Providers.ScreenScraperClient.DownloadMediaAsync(
-                    result.CoverUrl, stem, result.CoverFormat,
-                    Arkadia.Providers.ScreenScraperClient.ValidImageExts) is not null)
-                    mediaLog.Append("cover ");
+                try
+                {
+                    return await Arkadia.Providers.ScreenScraperClient
+                        .DownloadMediaAsync(url, stem, fmt, exts, size) is not null;
+                }
+                catch (Arkadia.Providers.ScreenScraperRateLimitException) { throw; }
+                catch { return false; }
             }
 
-            if (result.ScreenshotUrl is not null)
-            {
-                var stem = Arkadia.Data.MediaStore.NextIndexedMediaStem(
-                    _dataDir, entry.HardwareFamilyId, entry.DatLineId,
-                    entry.Name, "screenshots");
-                SetScrapeStatus("Downloading screenshot…", "#888899");
-                if (await Arkadia.Providers.ScreenScraperClient.DownloadMediaAsync(
-                    result.ScreenshotUrl, stem, result.ScreenshotFormat,
-                    Arkadia.Providers.ScreenScraperClient.ValidImageExts) is not null)
-                    mediaLog.Append("screenshot ");
-            }
+            string MediaStem(string sub) =>
+                Arkadia.Data.MediaStore.NextIndexedMediaStem(
+                    _dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name, sub);
 
-            if (result.VideoUrl is not null)
-            {
-                var stem = Arkadia.Data.MediaStore.NextIndexedMediaStem(
+            string CoverStem(string sub, string region) =>
+                Arkadia.Data.MediaStore.NextIndexedCoverStem(
                     _dataDir, entry.HardwareFamilyId, entry.DatLineId,
-                    entry.Name, "videos");
+                    entry.Name, sub, region.Length > 0 ? region : "wor");
+
+            var imgExts = Arkadia.Providers.ScreenScraperClient.ValidImageExts;
+            var vidExts = Arkadia.Providers.ScreenScraperClient.ValidVideoExts;
+            var docExts = Arkadia.Providers.ScreenScraperClient.ValidDocumentExts;
+
+            int coversCount = 0, ssCount = 0, fanartCount = 0, logosCount = 0;
+            int marqueesCount = 0, flyersCount = 0, manualsCount = 0;
+            bool gotVideo = false;
+
+            // Covers
+            SetScrapeStatus("Downloading covers…", "#888899");
+            foreach (var c in result.CoverFront)
+                if (await TryDownloadAsync(c.Url, CoverStem("covers-front", c.Region), c.Format, imgExts, c.Size)) coversCount++;
+            foreach (var c in result.CoverBack)
+                if (await TryDownloadAsync(c.Url, CoverStem("covers-back",  c.Region), c.Format, imgExts, c.Size)) coversCount++;
+            foreach (var c in result.CoverSpine)
+                if (await TryDownloadAsync(c.Url, CoverStem("covers-spine", c.Region), c.Format, imgExts, c.Size)) coversCount++;
+            foreach (var c in result.CoverWrap)
+                if (await TryDownloadAsync(c.Url, CoverStem("covers-wrap",  c.Region), c.Format, imgExts, c.Size)) coversCount++;
+
+            // Screenshots
+            SetScrapeStatus("Downloading screenshots…", "#888899");
+            foreach (var ss in result.TitleScreenshots)
+                if (await TryDownloadAsync(ss.Url, MediaStem("screenshots-title"), ss.Format, imgExts, ss.Size)) ssCount++;
+            foreach (var ss in result.GameplayScreenshots)
+                if (await TryDownloadAsync(ss.Url, MediaStem("screenshots"),       ss.Format, imgExts, ss.Size)) ssCount++;
+
+            // Fanart
+            foreach (var f in result.Fanart)
+                if (await TryDownloadAsync(f.Url, MediaStem("fanart"), f.Format, imgExts, f.Size)) fanartCount++;
+
+            // Video
+            if (result.Video is { } vid)
+            {
                 SetScrapeStatus("Downloading video…", "#888899");
-                if (await Arkadia.Providers.ScreenScraperClient.DownloadMediaAsync(
-                    result.VideoUrl, stem, result.VideoFormat,
-                    Arkadia.Providers.ScreenScraperClient.ValidVideoExts) is not null)
-                    mediaLog.Append("video ");
+                gotVideo = await TryDownloadAsync(vid.Url, MediaStem("videos"), vid.Format, vidExts, vid.Size);
             }
+
+            // Logos
+            foreach (var l in result.LogosHd)
+                if (await TryDownloadAsync(l.Url, MediaStem("logos-hd"), l.Format, imgExts, l.Size)) logosCount++;
+            foreach (var l in result.Logos)
+                if (await TryDownloadAsync(l.Url, MediaStem("logos"),    l.Format, imgExts, l.Size)) logosCount++;
+
+            // Marquees
+            foreach (var m in result.Marquees)
+                if (await TryDownloadAsync(m.Url, MediaStem("marquees"), m.Format, imgExts, m.Size)) marqueesCount++;
+
+            // Flyers
+            foreach (var f in result.Flyers)
+                if (await TryDownloadAsync(f.Url, MediaStem("flyers"),   f.Format, imgExts, f.Size)) flyersCount++;
+
+            // Manuals
+            foreach (var m in result.Manuals)
+                if (await TryDownloadAsync(m.Url, MediaStem("manuals"),  m.Format, docExts, m.Size)) manualsCount++;
+
+            // Physical media (not surfaced in UI yet)
+            foreach (var p in result.PhysicalMedia)
+                await TryDownloadAsync(p.Url, MediaStem("physical"),         p.Format, imgExts, p.Size);
+            foreach (var p in result.PhysicalTexture)
+                await TryDownloadAsync(p.Url, MediaStem("physical-texture"), p.Format, imgExts, p.Size);
 
             // ── Refresh hero ─────────────────────────────────────────────────
             entry.Metadata = newMeta;
             RebuildCatalogList(preserveSelection: true);
             UpdateCatalogHero(entry);
 
-            var downloaded = mediaLog.ToString().Trim();
-            var msg = downloaded.Length > 0
-                ? $"Scraped — metadata + {downloaded} downloaded."
+            var parts = new List<string>();
+            if (coversCount   > 0) parts.Add($"{coversCount} cover{(coversCount   > 1 ? "s" : "")}");
+            if (ssCount       > 0) parts.Add($"{ssCount} screenshot{(ssCount       > 1 ? "s" : "")}");
+            if (fanartCount   > 0) parts.Add($"{fanartCount} fanart");
+            if (gotVideo)          parts.Add("video");
+            if (logosCount    > 0) parts.Add($"{logosCount} logo{(logosCount    > 1 ? "s" : "")}");
+            if (marqueesCount > 0) parts.Add($"{marqueesCount} marquee{(marqueesCount > 1 ? "s" : "")}");
+            if (flyersCount   > 0) parts.Add($"{flyersCount} flyer{(flyersCount   > 1 ? "s" : "")}");
+            if (manualsCount  > 0) parts.Add($"{manualsCount} manual{(manualsCount  > 1 ? "s" : "")}");
+
+            var msg = parts.Count > 0
+                ? $"Scraped — metadata + {string.Join(" + ", parts)}."
                 : "Scraped — metadata only (no media available).";
             SetScrapeStatus(msg, "#4CAF50");
         }
@@ -9891,6 +10201,8 @@ public partial class MainWindow : Window
         SettingShowDebugArtifactInfo.IsChecked     = _catalog.GetBoolSetting("show_debug_artifact_info",       defaultValue: false);
         SettingImageCacheRegenWriteLog.IsChecked   = _catalog.GetBoolSetting("image_cache_regen_write_log",   defaultValue: true);
         SettingLogsToKeep.Text                     = _catalog.GetSetting("logs_to_keep_per_type", "5");
+        SettingCatalogVideoAutoplay.IsChecked      = _catalog.GetBoolSetting("catalog_video_autoplay",        defaultValue: true);
+        SettingCatalogVideoAudio.IsChecked         = _catalog.GetBoolSetting("catalog_video_audio",           defaultValue: false);
     }
 
     private void OnSaveSettings(object? sender, RoutedEventArgs e)
@@ -9903,6 +10215,8 @@ public partial class MainWindow : Window
         _catalog.SetSetting("auto_export_repair_logs",         SettingAutoExportRepairLogs.IsChecked  == true ? "true" : "false");
         _catalog.SetSetting("show_debug_artifact_info",      SettingShowDebugArtifactInfo.IsChecked   == true ? "true" : "false");
         _catalog.SetSetting("image_cache_regen_write_log",  SettingImageCacheRegenWriteLog.IsChecked == true ? "true" : "false");
+        _catalog.SetSetting("catalog_video_autoplay",        SettingCatalogVideoAutoplay.IsChecked    == true ? "true" : "false");
+        _catalog.SetSetting("catalog_video_audio",           SettingCatalogVideoAudio.IsChecked       == true ? "true" : "false");
         var logsToKeepRaw = SettingLogsToKeep.Text?.Trim() ?? "5";
         var logsToKeep    = int.TryParse(logsToKeepRaw, out var lv) && lv >= 1 ? lv : 5;
         _catalog.SetSetting("logs_to_keep_per_type", logsToKeep.ToString());

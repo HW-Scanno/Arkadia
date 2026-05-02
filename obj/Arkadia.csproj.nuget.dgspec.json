@@ -65,6 +65,14 @@
               "target": "Package",
               "version": "[11.3.12, )"
             },
+            "LibVLCSharp": {
+              "target": "Package",
+              "version": "[3.9.0, )"
+            },
+            "LibVLCSharp.Avalonia": {
+              "target": "Package",
+              "version": "[3.9.0, )"
+            },
             "Microsoft.Data.Sqlite": {
               "target": "Package",
               "version": "[8.0.14, )"
@@ -94,6 +102,10 @@
             "System.Management": {
               "target": "Package",
               "version": "[8.0.0, )"
+            },
+            "VideoLAN.LibVLC.Windows": {
+              "target": "Package",
+              "version": "[3.0.21, )"
             }
           },
           "imports": [

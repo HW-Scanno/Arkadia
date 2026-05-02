@@ -6,6 +6,9 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <ApplicationIcon>Assets\arkadia.ico</ApplicationIcon>
+    <!-- Deploy LibVLC runtime to libraries/lib-vlc/ instead of the default libvlc/ root -->
+    <VlcWindowsX64TargetDir>libraries\lib-vlc\win-x64</VlcWindowsX64TargetDir>
+    <VlcWindowsX86Enabled>false</VlcWindowsX86Enabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -40,5 +43,36 @@
     <PackageReference Include="SharpCompress" Version="0.38.0" />
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="2.88.9" />
+    <PackageReference Include="LibVLCSharp" Version="3.9.0" />
+    <PackageReference Include="LibVLCSharp.Avalonia" Version="3.9.0" />
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
   </ItemGroup>
+
+  <!--
+    VideoLAN.LibVLC.Windows uses CopyToOutputDirectory (works for debug builds) but not
+    CopyToPublishDirectory, so VLC files don't reach the publish output automatically.
+    This target copies them directly from the NuGet package into the publish directory.
+  -->
+  <Target Name="PublishVlcRuntime" AfterTargets="Publish">
+    <PropertyGroup>
+      <_VlcSrc>$(NuGetPackageRoot)videolan.libvlc.windows\3.0.21\build\x64\</_VlcSrc>
+      <_VlcDest>$(PublishDir)libraries\lib-vlc\win-x64\</_VlcDest>
+    </PropertyGroup>
+    <ItemGroup>
+      <_VlcDlls    Include="$(_VlcSrc)libvlc.dll;$(_VlcSrc)libvlccore.dll" />
+      <_VlcPlugins Include="$(_VlcSrc)plugins\**\*.*" />
+      <_VlcHrtfs   Include="$(_VlcSrc)hrtfs\**\*.*" />
+      <_VlcLua     Include="$(_VlcSrc)lua\**\*.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_VlcDlls)" DestinationFolder="$(_VlcDest)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_VlcPlugins)"
+          DestinationFiles="@(_VlcPlugins->'$(_VlcDest)plugins\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_VlcHrtfs)"
+          DestinationFiles="@(_VlcHrtfs->'$(_VlcDest)hrtfs\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_VlcLua)"
+          DestinationFiles="@(_VlcLua->'$(_VlcDest)lua\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>

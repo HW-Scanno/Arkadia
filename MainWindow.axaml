@@ -10,6 +10,7 @@
         Title="Arkadia"
         Width="1550" Height="785"
         MinWidth="800" MinHeight="565"
+        WindowState="Maximized"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource ArkBackground}"
         FontFamily="Inter,Segoe UI,sans-serif">
@@ -1794,6 +1795,38 @@
                                     </StackPanel>
                                 </Border><!-- /Platform Images card -->
 
+                                <!-- ── CATALOG card ─────────────────────────────── -->
+                                <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                        BorderThickness="1" CornerRadius="6" Padding="20,16">
+                                    <StackPanel Spacing="0">
+
+                                        <TextBlock Text="CATALOG"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                                   Foreground="#555566" Margin="0,0,0,16"/>
+
+                                        <!-- catalog_video_autoplay -->
+                                        <StackPanel Spacing="4" Margin="0,0,0,14">
+                                            <CheckBox x:Name="SettingCatalogVideoAutoplay"
+                                                      Content="Autoplay videos in Catalog"
+                                                      FontSize="12" Foreground="#CCCCDD"/>
+                                            <TextBlock Text="When enabled, videos start playing automatically when displayed in the Catalog media gallery."
+                                                       FontSize="11" Foreground="#555577"
+                                                       Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                        <!-- catalog_video_audio -->
+                                        <StackPanel Spacing="4">
+                                            <CheckBox x:Name="SettingCatalogVideoAudio"
+                                                      Content="Play Catalog videos with audio"
+                                                      FontSize="12" Foreground="#CCCCDD"/>
+                                            <TextBlock Text="When disabled, videos play muted. Takes effect on next video."
+                                                       FontSize="11" Foreground="#555577"
+                                                       Margin="22,0,0,0" TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                    </StackPanel>
+                                </Border><!-- /Catalog card -->
+
                             </StackPanel><!-- /Left column -->
 
                             <!-- ── Right column: LOGGING, DIAGNOSTICS ───────────── -->
@@ -3094,6 +3127,38 @@
                                     </Border>
                                 </StackPanel>
 
+                                <!-- ── Physical Media — row 1, col 0 ── -->
+                                <StackPanel Grid.Row="1" Grid.Column="0"
+                                            Width="360"
+                                            VerticalAlignment="Top"
+                                            Margin="0,20,24,0">
+                                    <TextBlock Text="PHYSICAL MEDIA"
+                                               Foreground="#9FA4FF"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               LetterSpacing="1.5"/>
+                                    <Border Height="1" Background="#2A2A50" Margin="0,4,0,8"/>
+                                    <Border ClipToBounds="True" CornerRadius="6"
+                                            BorderBrush="#2A2A42" BorderThickness="1">
+                                        <Panel Width="360" Height="300">
+                                            <Image x:Name="CatalogPhysicalMediaImage"
+                                                   IsVisible="False"
+                                                   Stretch="Uniform"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"/>
+                                            <Border x:Name="CatalogPhysicalNoMedia"
+                                                    Width="360" Height="300"
+                                                    Background="#111120">
+                                                <TextBlock Text="No media"
+                                                           FontSize="12"
+                                                           Foreground="#333344"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"/>
+                                            </Border>
+                                        </Panel>
+                                    </Border>
+                                </StackPanel>
+
                                 <!-- ── Content — row 0, col 1 ── -->
                                 <StackPanel Grid.Row="0" Grid.Column="1" Spacing="0" MaxWidth="760">
 
@@ -3117,21 +3182,66 @@
                                     <StackPanel x:Name="CatalogHeroLangFlagsPanel"
                                                 Orientation="Horizontal"
                                                 Margin="0,0,0,6"/>
-                                    <StackPanel Orientation="Horizontal" Spacing="0" Margin="0,0,0,20">
-                                        <TextBlock x:Name="CatalogQualityFilled"
-                                                   FontSize="26"
-                                                   FontFamily="Consolas,Courier New,monospace"
-                                                   LetterSpacing="2"
-                                                   Foreground="#4CAF50"/>
-                                        <TextBlock x:Name="CatalogQualityEmpty"
-                                                   FontSize="26"
-                                                   FontFamily="Consolas,Courier New,monospace"
-                                                   LetterSpacing="2"
-                                                   Foreground="#252538"/>
+                                    <!-- ─── Badges ─── -->
+                                    <StackPanel Spacing="4" Margin="0,0,0,16">
+                                        <!-- Row 1: core -->
+                                        <WrapPanel Orientation="Horizontal">
+                                            <Border x:Name="CatalogBadgeStatusBorder"
+                                                    CornerRadius="3" Padding="6,3" Margin="0,0,4,4"
+                                                    Background="#1E1E30" BorderBrush="#2A2A44" BorderThickness="1">
+                                                <TextBlock x:Name="CatalogBadgeStatus"
+                                                           FontSize="11" Foreground="#888899"/>
+                                            </Border>
+                                            <Border x:Name="CatalogBadgeRegionBorder"
+                                                    CornerRadius="3" Padding="6,3" Margin="0,0,4,4"
+                                                    Background="#1E1E30" BorderBrush="#2A2A44" BorderThickness="1">
+                                                <TextBlock x:Name="CatalogBadgeRegion"
+                                                           FontSize="11" Foreground="#888899"/>
+                                            </Border>
+                                            <Border x:Name="CatalogBadgeSystemBorder"
+                                                    CornerRadius="3" Padding="6,3" Margin="0,0,4,4"
+                                                    Background="#1E1E30" BorderBrush="#2A2A44" BorderThickness="1">
+                                                <TextBlock x:Name="CatalogBadgeSystem"
+                                                           FontSize="11" Foreground="#888899"/>
+                                            </Border>
+                                            <Border x:Name="CatalogBadgeYearBorder"
+                                                    CornerRadius="3" Padding="6,3" Margin="0,0,4,4"
+                                                    Background="#1E1E30" BorderBrush="#2A2A44" BorderThickness="1">
+                                                <TextBlock x:Name="CatalogBadgeYear"
+                                                           FontSize="11" Foreground="#888899"/>
+                                            </Border>
+                                        </WrapPanel>
+                                        <!-- Row 2: secondary -->
+                                        <WrapPanel Orientation="Horizontal">
+                                            <Border x:Name="CatalogBadgeGenreBorder"
+                                                    CornerRadius="3" Padding="6,3" Margin="0,0,4,4"
+                                                    Background="#161622" BorderBrush="#222238" BorderThickness="1">
+                                                <TextBlock x:Name="CatalogBadgeGenre"
+                                                           FontSize="11" Foreground="#666677"/>
+                                            </Border>
+                                            <Border x:Name="CatalogBadgePlayersBorder"
+                                                    CornerRadius="3" Padding="6,3" Margin="0,0,4,4"
+                                                    Background="#161622" BorderBrush="#222238" BorderThickness="1">
+                                                <TextBlock x:Name="CatalogBadgePlayers"
+                                                           FontSize="11" Foreground="#666677"/>
+                                            </Border>
+                                            <Border x:Name="CatalogBadgeTypeBorder"
+                                                    CornerRadius="3" Padding="6,3" Margin="0,0,4,4"
+                                                    Background="#161622" BorderBrush="#222238" BorderThickness="1">
+                                                <TextBlock x:Name="CatalogBadgeType"
+                                                           FontSize="11" Foreground="#666677"/>
+                                            </Border>
+                                            <Border x:Name="CatalogBadgeSizeBorder"
+                                                    CornerRadius="3" Padding="6,3" Margin="0,0,4,4"
+                                                    Background="#161622" BorderBrush="#222238" BorderThickness="1">
+                                                <TextBlock x:Name="CatalogBadgeSize"
+                                                           FontSize="11" Foreground="#666677"/>
+                                            </Border>
+                                        </WrapPanel>
                                     </StackPanel>
 
-                                    <!-- ─── Data card: Metadata + Checklist ─── -->
-                                    <Border CornerRadius="6" Padding="14,12" Margin="0,0,0,16"
+                                    <!-- ─── Details card ─── -->
+                                    <Border CornerRadius="6" Padding="16,14" Margin="0,0,0,16"
                                             BorderBrush="#2D2D44" BorderThickness="1"
                                             BoxShadow="0 2 12 0 #30000000">
                                         <Border.Background>
@@ -3140,88 +3250,44 @@
                                                 <GradientStop Offset="1" Color="#131325"/>
                                             </LinearGradientBrush>
                                         </Border.Background>
-                                        <StackPanel Spacing="0">
-
-                                            <!-- Metadata — 2-row inline grid -->
-                                            <Grid ColumnDefinitions="64,92,64,92,80,*" RowDefinitions="Auto,Auto">
-                                                <TextBlock Grid.Row="0" Grid.Column="0"
-                                                           Text="Status" FontSize="12" Foreground="#666677"
-                                                           VerticalAlignment="Center"/>
-                                                <TextBlock x:Name="CatalogHeroStatus"
-                                                           Grid.Row="0" Grid.Column="1"
-                                                           FontSize="13" FontWeight="SemiBold"
-                                                           VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Row="0" Grid.Column="2"
-                                                           Text="Region" FontSize="12" Foreground="#666677"
-                                                           VerticalAlignment="Center"/>
-                                                <TextBlock x:Name="CatalogHeroRegion"
-                                                           Grid.Row="0" Grid.Column="3"
-                                                           FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
-                                                           VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Row="0" Grid.Column="4"
-                                                           Text="Languages" FontSize="12" Foreground="#666677"
-                                                           VerticalAlignment="Center"/>
-                                                <TextBlock x:Name="CatalogHeroLangs"
-                                                           Grid.Row="0" Grid.Column="5"
-                                                           FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
-                                                           VerticalAlignment="Center"/>
-                                                <TextBlock Grid.Row="1" Grid.Column="0"
-                                                           Text="Format" FontSize="12" Foreground="#666677"
-                                                           VerticalAlignment="Center" Margin="0,9,0,0"/>
-                                                <TextBlock x:Name="CatalogHeroFormat"
-                                                           Grid.Row="1" Grid.Column="1"
-                                                           FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
-                                                           VerticalAlignment="Center" Margin="0,9,0,0"/>
-                                                <TextBlock Grid.Row="1" Grid.Column="2"
-                                                           Text="Size" FontSize="12" Foreground="#666677"
-                                                           VerticalAlignment="Center" Margin="0,9,0,0"/>
-                                                <TextBlock x:Name="CatalogHeroSize"
-                                                           Grid.Row="1" Grid.Column="3"
-                                                           FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
-                                                           VerticalAlignment="Center" Margin="0,9,0,0"/>
-                                            </Grid>
-
-                                            <!-- Card divider -->
-                                            <Border Height="1" Background="#1A1A2C" Margin="0,12,0,12"/>
-
-                                            <!-- Checklist header -->
-                                            <TextBlock Text="CHECKLIST"
-                                                       FontSize="9" FontWeight="SemiBold" LetterSpacing="1.8"
-                                                       Foreground="#444455" Margin="0,0,0,8"/>
-
-                                            <!-- Checklist — 2-column grid -->
-                                            <Grid ColumnDefinitions="*,*">
-                                                <StackPanel Grid.Column="0" Spacing="7">
-                                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                                        <TextBlock x:Name="CatalogChkTitleIcon"    FontSize="14" FontWeight="SemiBold" Width="20"/>
-                                                        <TextBlock Text="Title"          FontSize="13" Foreground="#888899"/>
-                                                    </StackPanel>
-                                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                                        <TextBlock x:Name="CatalogChkDevIcon"      FontSize="14" FontWeight="SemiBold" Width="20"/>
-                                                        <TextBlock Text="Developer"      FontSize="13" Foreground="#888899"/>
-                                                    </StackPanel>
-                                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                                        <TextBlock x:Name="CatalogChkYearIcon"     FontSize="14" FontWeight="SemiBold" Width="20"/>
-                                                        <TextBlock Text="Year"           FontSize="13" Foreground="#888899"/>
-                                                    </StackPanel>
-                                                </StackPanel>
-                                                <StackPanel Grid.Column="1" Spacing="7">
-                                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                                        <TextBlock x:Name="CatalogChkOrigTitleIcon" FontSize="14" FontWeight="SemiBold" Width="20"/>
-                                                        <TextBlock Text="Original Title" FontSize="13" Foreground="#888899"/>
-                                                    </StackPanel>
-                                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                                        <TextBlock x:Name="CatalogChkPubIcon"      FontSize="14" FontWeight="SemiBold" Width="20"/>
-                                                        <TextBlock Text="Publisher"      FontSize="13" Foreground="#888899"/>
-                                                    </StackPanel>
-                                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                                        <TextBlock x:Name="CatalogChkLangsIcon"    FontSize="14" FontWeight="SemiBold" Width="20"/>
-                                                        <TextBlock Text="Languages"      FontSize="13" Foreground="#888899"/>
-                                                    </StackPanel>
-                                                </StackPanel>
-                                            </Grid>
-
-                                        </StackPanel>
+                                        <!-- Metadata — 2-row inline grid -->
+                                        <Grid ColumnDefinitions="64,92,64,92,80,*" RowDefinitions="Auto,Auto">
+                                            <TextBlock Grid.Row="0" Grid.Column="0"
+                                                       Text="Status" FontSize="12" Foreground="#666677"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="CatalogHeroStatus"
+                                                       Grid.Row="0" Grid.Column="1"
+                                                       FontSize="13" FontWeight="SemiBold"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="2"
+                                                       Text="Region" FontSize="12" Foreground="#666677"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="CatalogHeroRegion"
+                                                       Grid.Row="0" Grid.Column="3"
+                                                       FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Row="0" Grid.Column="4"
+                                                       Text="Languages" FontSize="12" Foreground="#666677"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="CatalogHeroLangs"
+                                                       Grid.Row="0" Grid.Column="5"
+                                                       FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="0"
+                                                       Text="Format" FontSize="12" Foreground="#666677"
+                                                       VerticalAlignment="Center" Margin="0,11,0,0"/>
+                                            <TextBlock x:Name="CatalogHeroFormat"
+                                                       Grid.Row="1" Grid.Column="1"
+                                                       FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
+                                                       VerticalAlignment="Center" Margin="0,11,0,0"/>
+                                            <TextBlock Grid.Row="1" Grid.Column="2"
+                                                       Text="Size" FontSize="12" Foreground="#666677"
+                                                       VerticalAlignment="Center" Margin="0,11,0,0"/>
+                                            <TextBlock x:Name="CatalogHeroSize"
+                                                       Grid.Row="1" Grid.Column="3"
+                                                       FontSize="13" Foreground="{DynamicResource ArkTextPrimary}"
+                                                       VerticalAlignment="Center" Margin="0,11,0,0"/>
+                                        </Grid>
                                     </Border>
 
                                     <!-- ─── Description ─── -->
@@ -3277,79 +3343,27 @@
 
                                 </StackPanel>
 
-                                <!-- ── Media compact — row 1, col 0 (≤1699px hero) ── -->
-                                <StackPanel x:Name="CatalogMediaCompact" Grid.Row="1" Grid.Column="0"
-                                            Width="360" VerticalAlignment="Top"
-                                            Margin="0,20,24,0">
-                                    <TextBlock Text="MEDIA"
-                                               Foreground="#9FA4FF"
-                                               FontSize="11"
-                                               FontWeight="SemiBold"
-                                               LetterSpacing="1.5"/>
-                                    <Border Height="1" Background="#2A2A50" Margin="0,4,0,8"/>
-                                    <Border Width="360" Height="203"
-                                            ClipToBounds="True"
-                                            CornerRadius="4"
-                                            BorderBrush="#252538" BorderThickness="1"
-                                            Margin="0,0,0,8">
-                                        <Border.Background>
-                                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                                <GradientStop Offset="0" Color="#101020"/>
-                                                <GradientStop Offset="1" Color="#0D0D1A"/>
-                                            </LinearGradientBrush>
-                                        </Border.Background>
-                                        <Panel>
-                                            <TextBlock Text="No media"
-                                                       FontSize="12"
-                                                       Foreground="#252538"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"/>
-                                            <Image x:Name="CatalogScreenshotCompact"
-                                                   IsVisible="False"
-                                                   Stretch="UniformToFill"/>
-                                        </Panel>
-                                    </Border>
-                                    <StackPanel Orientation="Horizontal"
-                                                HorizontalAlignment="Center"
-                                                Spacing="5">
-                                        <TextBlock Text="●" FontSize="7" Foreground="#444455"/>
-                                        <TextBlock Text="●" FontSize="7" Foreground="#252538"/>
-                                        <TextBlock Text="●" FontSize="7" Foreground="#252538"/>
-                                    </StackPanel>
-                                </StackPanel>
-
-                                <!-- ── Catalog notes — row 1, col 1 (aligned with content) ── -->
-                                <Border Grid.Row="1" Grid.Column="1"
-                                        CornerRadius="6"
-                                        BorderBrush="#1E1E30" BorderThickness="1"
-                                        Padding="14,12"
-                                        Margin="0,20,0,0"
-                                        VerticalAlignment="Top">
-                                    <Border.Background>
-                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                            <GradientStop Offset="0" Color="#101020"/>
-                                            <GradientStop Offset="1" Color="#0D0D1A"/>
-                                        </LinearGradientBrush>
-                                    </Border.Background>
-                                    <TextBlock Text="No additional catalog data available."
-                                               FontSize="12"
-                                               Foreground="#2E2E44"
-                                               TextWrapping="Wrap"/>
-                                </Border>
-
-                                <!-- ── Media wide — row 0, col 2 (≥1700px hero) ── -->
+                                <!-- ── Media / right column — row 0, col 2 ── -->
                                 <StackPanel x:Name="CatalogMediaWide"
                                             Grid.Row="0" Grid.Column="2"
                                             Width="340"
                                             VerticalAlignment="Top"
                                             Margin="24,0,0,0"
-                                            IsVisible="False"
                                             Spacing="0">
-                                    <TextBlock Text="MEDIA"
-                                               Foreground="#9FA4FF"
-                                               FontSize="11"
-                                               FontWeight="SemiBold"
-                                               LetterSpacing="1.5"/>
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBlock Text="MEDIA"
+                                                   Foreground="#9FA4FF"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   LetterSpacing="1.5"/>
+                                        <TextBlock x:Name="CatalogMediaTypeLabel"
+                                                   Grid.Column="1"
+                                                   FontSize="11"
+                                                   FontWeight="SemiBold"
+                                                   LetterSpacing="1.5"
+                                                   Foreground="#9FA4FF"
+                                                   VerticalAlignment="Center"/>
+                                    </Grid>
                                     <Border Height="1" Background="#2A2A50" Margin="0,4,0,8"/>
                                     <Border Width="340" Height="191"
                                             ClipToBounds="True"
@@ -3362,24 +3376,126 @@
                                                 <GradientStop Offset="1" Color="#0D0D1A"/>
                                             </LinearGradientBrush>
                                         </Border.Background>
-                                        <Panel>
-                                            <TextBlock Text="No media"
-                                                       FontSize="12"
-                                                       Foreground="#252538"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Center"/>
-                                            <Image x:Name="CatalogScreenshotWide"
-                                                   IsVisible="False"
-                                                   Stretch="UniformToFill"/>
-                                        </Panel>
+                                        <Grid>
+                                            <Panel x:Name="CatalogVideoPanel">
+                                                <TextBlock x:Name="CatalogMediaNoItem"
+                                                           Text="No media"
+                                                           FontSize="12"
+                                                           Foreground="#252538"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center"/>
+                                                <Image x:Name="CatalogMediaImage"
+                                                       IsVisible="False"
+                                                       Stretch="Uniform"/>
+                                            </Panel>
+                                            <Button x:Name="CatalogVideoPlayOverlay"
+                                                    IsVisible="False"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    Background="#28202040"
+                                                    Foreground="#CCCCE0"
+                                                    Content="▶"
+                                                    FontSize="40"
+                                                    Padding="20,12"
+                                                    BorderThickness="0"
+                                                    Click="OnCatalogVideoPlay"/>
+                                        </Grid>
                                     </Border>
-                                    <StackPanel Orientation="Horizontal"
-                                                HorizontalAlignment="Center"
-                                                Spacing="5">
-                                        <TextBlock Text="●" FontSize="7" Foreground="#444455"/>
-                                        <TextBlock Text="●" FontSize="7" Foreground="#252538"/>
-                                        <TextBlock Text="●" FontSize="7" Foreground="#252538"/>
+                                    <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,0">
+                                        <Button x:Name="CatalogMediaPrev"
+                                                Grid.Column="0"
+                                                Content="‹"
+                                                FontSize="24"
+                                                FontWeight="SemiBold"
+                                                Padding="10,2"
+                                                Background="Transparent"
+                                                Foreground="#9FA4FF"
+                                                BorderThickness="0"
+                                                IsVisible="False"
+                                                Click="OnCatalogMediaPrev"/>
+                                        <StackPanel x:Name="CatalogMediaDots"
+                                                    Grid.Column="1"
+                                                    Orientation="Horizontal"
+                                                    HorizontalAlignment="Center"
+                                                    VerticalAlignment="Center"
+                                                    Spacing="5"/>
+                                        <Button x:Name="CatalogMediaNext"
+                                                Grid.Column="2"
+                                                Content="›"
+                                                FontSize="24"
+                                                FontWeight="SemiBold"
+                                                Padding="10,2"
+                                                Background="Transparent"
+                                                Foreground="#9FA4FF"
+                                                BorderThickness="0"
+                                                IsVisible="False"
+                                                Click="OnCatalogMediaNext"/>
+                                    </Grid>
+
+                                    <!-- ─── Release Quality ─── -->
+                                    <TextBlock Text="RELEASE QUALITY"
+                                               Foreground="#9FA4FF"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               LetterSpacing="1.5"
+                                               Margin="0,28,0,0"/>
+                                    <Border Height="1" Background="#2A2A50" Margin="0,4,0,12"/>
+                                    <StackPanel Orientation="Horizontal" Spacing="0" Margin="0,0,0,28">
+                                        <TextBlock x:Name="CatalogQualityFilled"
+                                                   FontSize="26"
+                                                   FontFamily="Consolas,Courier New,monospace"
+                                                   LetterSpacing="2"
+                                                   Foreground="#4CAF50"/>
+                                        <TextBlock x:Name="CatalogQualityEmpty"
+                                                   FontSize="26"
+                                                   FontFamily="Consolas,Courier New,monospace"
+                                                   LetterSpacing="2"
+                                                   Foreground="#252538"/>
+                                        <TextBlock x:Name="CatalogQualityLabel"
+                                                   FontSize="13"
+                                                   Foreground="#666677"
+                                                   VerticalAlignment="Center"
+                                                   Margin="12,0,0,0"/>
                                     </StackPanel>
+
+                                    <!-- ─── Checklist ─── -->
+                                    <TextBlock Text="CHECKLIST"
+                                               Foreground="#9FA4FF"
+                                               FontSize="11"
+                                               FontWeight="SemiBold"
+                                               LetterSpacing="1.5"/>
+                                    <Border Height="1" Background="#2A2A50" Margin="0,4,0,12"/>
+                                    <Grid ColumnDefinitions="*,*" Margin="0,0,0,16">
+                                        <StackPanel Grid.Column="0" Spacing="13">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock x:Name="CatalogChkTitleIcon"    FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                <TextBlock Text="Title"          FontSize="13" Foreground="#888899"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock x:Name="CatalogChkDevIcon"      FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                <TextBlock Text="Developer"      FontSize="13" Foreground="#888899"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock x:Name="CatalogChkYearIcon"     FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                <TextBlock Text="Year"           FontSize="13" Foreground="#888899"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                        <StackPanel Grid.Column="1" Spacing="13" Margin="16,0,0,0">
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock x:Name="CatalogChkOrigTitleIcon" FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                <TextBlock Text="Original Title" FontSize="13" Foreground="#888899"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock x:Name="CatalogChkPubIcon"      FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                <TextBlock Text="Publisher"      FontSize="13" Foreground="#888899"/>
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                                <TextBlock x:Name="CatalogChkLangsIcon"    FontSize="14" FontWeight="SemiBold" Width="20"/>
+                                                <TextBlock Text="Languages"      FontSize="13" Foreground="#888899"/>
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Grid>
+
                                 </StackPanel>
 
                             </Grid>

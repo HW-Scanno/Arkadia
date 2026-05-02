@@ -63,7 +63,8 @@ public sealed class CatalogService
                 graphics            TEXT,
                 sound               TEXT,
                 display_resolution  TEXT,
-                aspect_ratio        TEXT
+                aspect_ratio        TEXT,
+                scrape_system_id    TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS storage_strategies (
@@ -383,7 +384,7 @@ public sealed class CatalogService
             SELECT p.id, p.name, p.manufacturer, p.ecosystem_id, p.hardware_type_id,
                    p.year_of_release, p.media, p.notes,
                    p.cpu, p.memory, p.graphics, p.sound,
-                   p.display_resolution, p.aspect_ratio
+                   p.display_resolution, p.aspect_ratio, p.scrape_system_id
             FROM hardware_families p
             LEFT JOIN hardware_types ht ON ht.id = p.hardware_type_id
             ORDER BY
@@ -409,6 +410,7 @@ public sealed class CatalogService
                 Sound             = reader.IsDBNull(11) ? "" : reader.GetString(11),
                 DisplayResolution = reader.IsDBNull(12) ? "" : reader.GetString(12),
                 AspectRatio       = reader.IsDBNull(13) ? "" : reader.GetString(13),
+                ScrapeSystemId    = reader.IsDBNull(14) ? "" : reader.GetString(14),
             });
         return list;
     }
@@ -425,10 +427,10 @@ public sealed class CatalogService
             cmd.CommandText = """
                 INSERT INTO hardware_families(
                     id, name, manufacturer, ecosystem_id, hardware_type_id, year_of_release, media, notes,
-                    cpu, memory, graphics, sound, display_resolution, aspect_ratio)
+                    cpu, memory, graphics, sound, display_resolution, aspect_ratio, scrape_system_id)
                 VALUES(
                     $id, $name, $manufacturer, $ecosystemId, $hardwareTypeId, $yearOfRelease, $media, $notes,
-                    $cpu, $memory, $graphics, $sound, $displayResolution, $aspectRatio)
+                    $cpu, $memory, $graphics, $sound, $displayResolution, $aspectRatio, $scrapeSystemId)
                 ON CONFLICT(id) DO UPDATE SET
                     name               = excluded.name,
                     manufacturer       = excluded.manufacturer,
@@ -442,7 +444,8 @@ public sealed class CatalogService
                     graphics           = excluded.graphics,
                     sound              = excluded.sound,
                     display_resolution = excluded.display_resolution,
-                    aspect_ratio       = excluded.aspect_ratio
+                    aspect_ratio       = excluded.aspect_ratio,
+                    scrape_system_id   = excluded.scrape_system_id
                 """;
             cmd.Parameters.AddWithValue("$id",                p.Id);
             cmd.Parameters.AddWithValue("$name",              p.Name);
@@ -458,6 +461,7 @@ public sealed class CatalogService
             cmd.Parameters.AddWithValue("$sound",             NullIfEmpty(p.Sound));
             cmd.Parameters.AddWithValue("$displayResolution", NullIfEmpty(p.DisplayResolution));
             cmd.Parameters.AddWithValue("$aspectRatio",       NullIfEmpty(p.AspectRatio));
+            cmd.Parameters.AddWithValue("$scrapeSystemId",    p.ScrapeSystemId);
             cmd.ExecuteNonQuery();
         }
         tx.Commit();
@@ -475,7 +479,7 @@ public sealed class CatalogService
         cmd.CommandText = """
             SELECT id, name, manufacturer, ecosystem_id, hardware_type_id,
                    year_of_release, media, notes,
-                   cpu, memory, graphics, sound, display_resolution, aspect_ratio
+                   cpu, memory, graphics, sound, display_resolution, aspect_ratio, scrape_system_id
             FROM hardware_families WHERE id = $id
             """;
         cmd.Parameters.AddWithValue("$id", id);
@@ -497,6 +501,7 @@ public sealed class CatalogService
             Sound             = reader.IsDBNull(11) ? "" : reader.GetString(11),
             DisplayResolution = reader.IsDBNull(12) ? "" : reader.GetString(12),
             AspectRatio       = reader.IsDBNull(13) ? "" : reader.GetString(13),
+            ScrapeSystemId    = reader.IsDBNull(14) ? "" : reader.GetString(14),
         };
     }
 

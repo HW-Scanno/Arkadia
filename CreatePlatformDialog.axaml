@@ -132,6 +132,15 @@
                                        IsVisible="False" TextWrapping="Wrap"/>
                         </StackPanel>
 
+                        <!-- Scrape As -->
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Scrape As" FontSize="12" Foreground="#888899"/>
+                            <TextBox x:Name="ScrapeAsInput"
+                                     Watermark="Scraper system ID (defaults to System ID)"
+                                     TextChanged="OnScrapeAsChanged"
+                                     GotFocus="OnScrapeAsGotFocus"/>
+                        </StackPanel>
+
                         <!-- Name -->
                         <StackPanel Spacing="4">
                             <StackPanel Orientation="Horizontal" Spacing="4">

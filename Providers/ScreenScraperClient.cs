@@ -10,24 +10,44 @@ using System.Threading.Tasks;
 
 namespace Arkadia.Providers;
 
-/// <summary>Metadata and media URLs returned by a successful ScreenScraper query.</summary>
+/// <summary>A single media asset: URL, format hint, and optional byte size from the ScreenScraper JSON.</summary>
+public sealed record ScreenScraperMediaItem(string Url, string Format, long? Size = null);
+
+/// <summary>A regional cover asset: region code, URL, format hint, and optional byte size.</summary>
+public sealed record ScreenScraperCoverItem(string Region, string Url, string Format, long? Size = null);
+
+/// <summary>Metadata and media collections returned by a successful ScreenScraper query.</summary>
 public sealed class ScreenScraperResult
 {
-    public string  Title            { get; init; } = "";
-    public string  OriginalTitle    { get; init; } = "";
-    public string  Developer        { get; init; } = "";
-    public string  Publisher        { get; init; } = "";
-    public string  Year             { get; init; } = "";
-    public string  Description      { get; init; } = "";
-    public string? CoverUrl         { get; init; }
-    /// <summary>File extension for the cover, from the JSON format field (e.g. "png", "jpg").</summary>
-    public string  CoverFormat      { get; init; } = "jpg";
-    public string? ScreenshotUrl    { get; init; }
-    public string  ScreenshotFormat { get; init; } = "png";
-    public string? VideoUrl         { get; init; }
-    public string  VideoFormat      { get; init; } = "mp4";
-    /// <summary>Comma-separated uppercase language codes extracted from the API response, e.g. "EN, FR".</summary>
-    public string  Languages        { get; init; } = "";
+    // ── Metadata ──────────────────────────────────────────────────────────────
+    public string Title         { get; init; } = "";
+    public string OriginalTitle { get; init; } = "";
+    public string Developer     { get; init; } = "";
+    public string Publisher     { get; init; } = "";
+    public string Year          { get; init; } = "";
+    public string Description   { get; init; } = "";
+    /// <summary>Comma-separated uppercase language codes, e.g. "EN, FR".</summary>
+    public string Languages     { get; init; } = "";
+    /// <summary>Raw JSON string received from the ScreenScraper API.</summary>
+    public string RawJson       { get; init; } = "{}";
+
+    // ── Media collections ─────────────────────────────────────────────────────
+    public IReadOnlyList<ScreenScraperMediaItem> TitleScreenshots    { get; init; } = [];
+    public IReadOnlyList<ScreenScraperMediaItem> GameplayScreenshots { get; init; } = [];
+    public IReadOnlyList<ScreenScraperMediaItem> Fanart              { get; init; } = [];
+    public IReadOnlyList<ScreenScraperMediaItem> LogosHd             { get; init; } = [];
+    public IReadOnlyList<ScreenScraperMediaItem> Logos               { get; init; } = [];
+    public IReadOnlyList<ScreenScraperMediaItem> Marquees            { get; init; } = [];
+    public IReadOnlyList<ScreenScraperMediaItem> Flyers              { get; init; } = [];
+    public IReadOnlyList<ScreenScraperMediaItem> Manuals             { get; init; } = [];
+    public IReadOnlyList<ScreenScraperCoverItem> CoverFront          { get; init; } = [];
+    public IReadOnlyList<ScreenScraperCoverItem> CoverBack           { get; init; } = [];
+    public IReadOnlyList<ScreenScraperCoverItem> CoverSpine          { get; init; } = [];
+    public IReadOnlyList<ScreenScraperCoverItem> CoverWrap           { get; init; } = [];
+    /// <summary>Preferred video (normalized if available, else standard). Null when absent.</summary>
+    public ScreenScraperMediaItem?               Video               { get; init; }
+    public IReadOnlyList<ScreenScraperMediaItem> PhysicalMedia       { get; init; } = [];
+    public IReadOnlyList<ScreenScraperMediaItem> PhysicalTexture     { get; init; } = [];
 }
 
 /// <summary>
@@ -68,43 +88,43 @@ public static class ScreenScraperClient
             ["psp"]        = 61,
             ["psvita"]     = 62,
             // Sega
-            ["ms"]         = 2,
+            ["ms"]          = 2,
             ["mastersystem"]= 2,
-            ["sms"]        = 2,
-            ["md"]         = 1,
-            ["genesis"]    = 1,
-            ["megadrive"]  = 1,
-            ["segacd"]     = 20,
-            ["32x"]        = 19,
-            ["saturn"]     = 22,
-            ["dreamcast"]  = 23,
-            ["gg"]         = 21,
-            ["gamegear"]   = 21,
-            ["sg1000"]     = 6,
+            ["sms"]         = 2,
+            ["md"]          = 1,
+            ["genesis"]     = 1,
+            ["megadrive"]   = 1,
+            ["segacd"]      = 20,
+            ["32x"]         = 19,
+            ["saturn"]      = 22,
+            ["dreamcast"]   = 23,
+            ["gg"]          = 21,
+            ["gamegear"]    = 21,
+            ["sg1000"]      = 6,
             // NEC
-            ["pce"]        = 31,
-            ["tg16"]       = 31,
-            ["pcecd"]      = 114,
-            ["pcfx"]       = 72,
+            ["pce"]         = 31,
+            ["tg16"]        = 31,
+            ["pcecd"]       = 114,
+            ["pcfx"]        = 72,
             // SNK
-            ["ngp"]        = 25,
-            ["ngpc"]       = 82,
-            ["neogeo"]     = 142,
+            ["ngp"]         = 25,
+            ["ngpc"]        = 82,
+            ["neogeo"]      = 142,
             // Atari
-            ["a2600"]      = 26,
-            ["a5200"]      = 40,
-            ["a7800"]      = 41,
-            ["lynx"]       = 28,
-            ["jaguar"]     = 27,
-            ["st"]         = 42,
+            ["a2600"]       = 26,
+            ["a5200"]       = 40,
+            ["a7800"]       = 41,
+            ["lynx"]        = 28,
+            ["jaguar"]      = 27,
+            ["st"]          = 42,
             // Arcade / MAME
-            ["mame"]       = 75,
-            ["arcade"]     = 75,
-            ["fbneo"]      = 75,
+            ["mame"]        = 75,
+            ["arcade"]      = 75,
+            ["fbneo"]       = 75,
             // Computers
-            ["amiga"]      = 64,
-            ["c64"]        = 66,
-            ["dos"]        = 135,
+            ["amiga"]       = 64,
+            ["c64"]         = 66,
+            ["dos"]         = 135,
         };
 
     public static bool TryResolveSystemId(string platformId, out int systemId)
@@ -132,8 +152,7 @@ public static class ScreenScraperClient
         var stem = releaseName;
 
         // First attempt: romnom with .zip extension
-        var firstRomNom = isMame ? $"{stem}.zip" : $"{stem}.zip";
-        var url1 = BuildUrl(devId, devPassword, username, password, systemId, firstRomNom, false);
+        var url1 = BuildUrl(devId, devPassword, username, password, systemId, $"{stem}.zip", false);
         var result = await TryFetchAsync(url1, ct);
 
         if (result is null && isMame)
@@ -192,7 +211,6 @@ public static class ScreenScraperClient
             throw new InvalidOperationException(err);
         }
 
-        // Try to pull the login name from the response
         if (root.TryGetProperty("response", out var resp) &&
             resp.TryGetProperty("ssuser", out var ssuser) &&
             ssuser.TryGetProperty("id", out var id))
@@ -209,6 +227,9 @@ public static class ScreenScraperClient
     public static readonly IReadOnlyList<string> ValidVideoExts =
         [".mp4", ".webm", ".mkv"];
 
+    public static readonly IReadOnlyList<string> ValidDocumentExts =
+        [".pdf", ".png", ".jpg", ".jpeg", ".webp"];
+
     // ── Download helper (reuses ProviderHelpers.Http) ─────────────────────────
 
     /// <summary>
@@ -224,11 +245,24 @@ public static class ScreenScraperClient
         string destStem,
         string hintFormat,
         IReadOnlyList<string> validExts,
+        long? expectedSize = null,
         CancellationToken ct = default)
     {
-        // Skip if any file already exists at this stem (regardless of extension)
         var dir      = Path.GetDirectoryName(destStem)!;
         var stemName = Path.GetFileName(destStem);
+
+        // Size-based duplicate guard: skip if any sibling file (same stem family)
+        // already has the expected byte count reported by ScreenScraper.
+        if (expectedSize is > 0 && Directory.Exists(dir))
+        {
+            var lastUs     = stemName.LastIndexOf('_');
+            var familyGlob = (lastUs > 0 ? stemName[..lastUs] : stemName) + "_*";
+            if (Directory.EnumerateFiles(dir, familyGlob)
+                    .Any(f => new FileInfo(f).Length == expectedSize.Value))
+                return null;
+        }
+
+        // Skip if any file already exists at this exact stem (regardless of extension)
         if (Directory.Exists(dir) &&
             Directory.EnumerateFiles(dir, stemName + ".*").Any())
             return null;
@@ -318,6 +352,7 @@ public static class ScreenScraperClient
         "video/webm"        => ".webm",
         "video/x-matroska"  => ".mkv",
         "video/mkv"         => ".mkv",
+        "application/pdf"   => ".pdf",
         _                   => null,
     };
 
@@ -341,6 +376,9 @@ public static class ScreenScraperClient
                 buf[0] == 0x52 && buf[1] == 0x49 && buf[2] == 0x46 && buf[3] == 0x46 &&
                 buf[8] == 0x57 && buf[9] == 0x45 && buf[10] == 0x42 && buf[11] == 0x50)
                 return ".webp";
+            // PDF: 25 50 44 46 (% P D F)
+            if (buf[0] == 0x25 && buf[1] == 0x50 && buf[2] == 0x44 && buf[3] == 0x46)
+                return ".pdf";
             // MP4: ftyp box at offset 4 (66 74 79 70)
             if (read >= 8 &&
                 buf[4] == 0x66 && buf[5] == 0x74 && buf[6] == 0x79 && buf[7] == 0x70)
@@ -360,7 +398,7 @@ public static class ScreenScraperClient
         string username, string password,
         int systemId, string queryValue, bool isSearch)
     {
-        var encoded = Uri.EscapeDataString(queryValue);
+        var encoded    = Uri.EscapeDataString(queryValue);
         var queryParam = isSearch ? $"recherche={encoded}" : $"romnom={encoded}";
         return $"{BaseUrl}?devid={Uri.EscapeDataString(devId)}" +
                $"&devpassword={Uri.EscapeDataString(devPassword)}" +
@@ -420,35 +458,119 @@ public static class ScreenScraperClient
             if (!root.TryGetProperty("response", out var response)) return null;
             if (!response.TryGetProperty("jeu",      out var jeu))      return null;
 
-            var (coverUrl, coverFmt) = PickMediaUrl(jeu, "box-2D", "jpg");
-            var (ssUrl,    ssFmt)    = PickMediaUrl(jeu, "ss",     "png");
-            var (vidUrl,   vidFmt)   = PickMediaUrl(jeu, "video",  "mp4");
-
-            // Decode HTML entities once at the result-construction boundary.
             static string Decode(string s) =>
                 s.Length > 0 ? WebUtility.HtmlDecode(s) : s;
 
             return new ScreenScraperResult
             {
-                Title            = Decode(PickName(jeu, preferredRegions: ["wor", "us", "eu", "jp"])),
-                OriginalTitle    = Decode(PickName(jeu, preferredRegions: ["jp"])),
-                Developer        = Decode(GetText(jeu, "developpeur")),
-                Publisher        = Decode(GetText(jeu, "editeur")),
-                Year             = PickDate(jeu),
-                Description      = Decode(PickSynopsis(jeu)),
-                Languages        = PickLanguages(jeu),
-                CoverUrl         = coverUrl,
-                CoverFormat      = coverFmt,
-                ScreenshotUrl    = ssUrl,
-                ScreenshotFormat = ssFmt,
-                VideoUrl         = vidUrl,
-                VideoFormat      = vidFmt,
+                Title               = Decode(PickName(jeu, ["wor", "us", "eu", "jp"])),
+                OriginalTitle       = Decode(PickName(jeu, ["jp"])),
+                Developer           = Decode(GetText(jeu, "developpeur")),
+                Publisher           = Decode(GetText(jeu, "editeur")),
+                Year                = PickDate(jeu),
+                Description         = Decode(PickSynopsis(jeu)),
+                Languages           = PickLanguages(jeu),
+                RawJson             = json,
+                TitleScreenshots    = CollectMediaItems(jeu, "sstitle",     "png"),
+                GameplayScreenshots = CollectMediaItems(jeu, "ss",          "png"),
+                Fanart              = CollectMediaItems(jeu, "fanart",       "jpg"),
+                LogosHd             = CollectMediaItems(jeu, "wheel-hd",    "png"),
+                Logos               = CollectMediaItems(jeu, "wheel",       "png"),
+                Marquees            = CollectMediaItems(jeu, "marquee",     "png"),
+                Flyers              = CollectMediaItems(jeu, "flyer",       "jpg"),
+                Manuals             = CollectMediaItems(jeu, "manuel",      "pdf"),
+                CoverFront          = CollectCoverItems(jeu, "box-2D",      "jpg"),
+                CoverBack           = CollectCoverItems(jeu, "box-2D-back", "jpg"),
+                CoverSpine          = CollectCoverItems(jeu, "box-2D-side", "jpg"),
+                CoverWrap           = CollectCoverItems(jeu, "box-texture", "jpg"),
+                Video               = PickPreferredVideo(jeu),
+                PhysicalMedia       = CollectMediaItems(jeu, "support-2D",      "png"),
+                PhysicalTexture     = CollectMediaItems(jeu, "support-texture",  "png"),
             };
         }
         catch
         {
             return null;
         }
+    }
+
+    // Cover regions emitted by ScreenScraper that we do not download.
+    private static readonly HashSet<string> ExcludedCoverRegions =
+        new(StringComparer.OrdinalIgnoreCase) { "custom", "personalized", "screenscraper", "ss" };
+
+    /// <summary>Collects all media items of the given type.</summary>
+    private static IReadOnlyList<ScreenScraperMediaItem> CollectMediaItems(
+        JsonElement jeu, string mediaType, string defaultFormat)
+    {
+        if (!jeu.TryGetProperty("medias", out var medias) || medias.ValueKind != JsonValueKind.Array)
+            return [];
+        var list = new List<ScreenScraperMediaItem>();
+        foreach (var m in medias.EnumerateArray())
+        {
+            if (!m.TryGetProperty("type", out var mt) || mt.GetString() != mediaType) continue;
+            if (!m.TryGetProperty("url",  out var urlProp)) continue;
+            var url = urlProp.GetString();
+            if (url is null or { Length: 0 }) continue;
+            var fmt     = m.TryGetProperty("format", out var fp) && fp.GetString() is { Length: > 0 } fs
+                ? fs : defaultFormat;
+            var sizeStr = m.TryGetProperty("size",   out var sp) ? sp.GetString() : null;
+            var size    = sizeStr is not null && long.TryParse(sizeStr, out var sv) ? sv : (long?)null;
+            list.Add(new ScreenScraperMediaItem(url, fmt, size));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Collects all regional cover items of the given type,
+    /// excluding internal/custom regions.
+    /// </summary>
+    private static IReadOnlyList<ScreenScraperCoverItem> CollectCoverItems(
+        JsonElement jeu, string mediaType, string defaultFormat)
+    {
+        if (!jeu.TryGetProperty("medias", out var medias) || medias.ValueKind != JsonValueKind.Array)
+            return [];
+        var list = new List<ScreenScraperCoverItem>();
+        foreach (var m in medias.EnumerateArray())
+        {
+            if (!m.TryGetProperty("type", out var mt) || mt.GetString() != mediaType) continue;
+            if (!m.TryGetProperty("url",  out var urlProp)) continue;
+            var url = urlProp.GetString();
+            if (url is null or { Length: 0 }) continue;
+            var region = m.TryGetProperty("region", out var rp) ? (rp.GetString() ?? "") : "";
+            if (ExcludedCoverRegions.Contains(region)) continue;
+            var fmt     = m.TryGetProperty("format", out var fp) && fp.GetString() is { Length: > 0 } fs
+                ? fs : defaultFormat;
+            var sizeStr = m.TryGetProperty("size",   out var sp) ? sp.GetString() : null;
+            var size    = sizeStr is not null && long.TryParse(sizeStr, out var sv) ? sv : (long?)null;
+            list.Add(new ScreenScraperCoverItem(region, url, fmt, size));
+        }
+        return list;
+    }
+
+    /// <summary>
+    /// Picks the preferred video: normalised (video-normalized) first,
+    /// falling back to standard (video).
+    /// </summary>
+    private static ScreenScraperMediaItem? PickPreferredVideo(JsonElement jeu)
+    {
+        if (!jeu.TryGetProperty("medias", out var medias) || medias.ValueKind != JsonValueKind.Array)
+            return null;
+        ScreenScraperMediaItem? standard = null;
+        foreach (var m in medias.EnumerateArray())
+        {
+            if (!m.TryGetProperty("type",  out var mt)) continue;
+            if (!m.TryGetProperty("url",   out var urlProp)) continue;
+            var url = urlProp.GetString();
+            if (url is null or { Length: 0 }) continue;
+            var fmt     = m.TryGetProperty("format", out var fp) && fp.GetString() is { Length: > 0 } fs
+                ? fs : "mp4";
+            var sizeStr = m.TryGetProperty("size",   out var sp) ? sp.GetString() : null;
+            var size    = sizeStr is not null && long.TryParse(sizeStr, out var sv) ? sv : (long?)null;
+            var t = mt.GetString();
+            if (t == "video-normalized") return new ScreenScraperMediaItem(url, fmt, size);
+            if (t == "video" && standard is null) standard = new ScreenScraperMediaItem(url, fmt, size);
+        }
+        return standard;
     }
 
     private static string PickName(JsonElement jeu, string[] preferredRegions)
@@ -550,35 +672,6 @@ public static class ScreenScraperClient
                 return t.GetString() ?? "";
         }
         return "";
-    }
-
-    private static (string? Url, string Format) PickMediaUrl(
-        JsonElement jeu, string mediaType, string defaultFormat)
-    {
-        if (!jeu.TryGetProperty("medias", out var medias) || medias.ValueKind != JsonValueKind.Array)
-            return (null, defaultFormat);
-        // Prefer world region, then us, then eu, then any
-        foreach (var region in new[] { "wor", "us", "eu", "" })
-        {
-            foreach (var m in medias.EnumerateArray())
-            {
-                if (!m.TryGetProperty("type", out var mt) || mt.GetString() != mediaType) continue;
-                if (region.Length > 0)
-                {
-                    if (!m.TryGetProperty("region", out var mr) || mr.GetString() != region) continue;
-                }
-                if (!m.TryGetProperty("url", out var urlProp)) continue;
-                var url    = urlProp.GetString();
-                if (url is null) continue;
-                // Use the JSON format field — it is always a clean extension ("png","jpg","mp4").
-                // Never extract extension from the URL itself (ScreenScraper URLs end in .php).
-                var format = m.TryGetProperty("format", out var fp) && fp.GetString() is { Length: > 0 } fs
-                    ? fs
-                    : defaultFormat;
-                return (url, format);
-            }
-        }
-        return (null, defaultFormat);
     }
 
     private static void TryDelete(string path)

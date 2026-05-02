@@ -71,6 +71,9 @@ public partial class CreatePlatformDialog : Window
             _existingIds.Remove(prefill.Id); // allow saving back same id without "already exists" error
 
             // Pre-fill all other fields
+            ScrapeAsInput.Text = prefill.ScrapeSystemId;
+            ScrapeAsInput.Classes.Add("id-readonly");
+
             NameInput.Text         = prefill.Name;
             ManufacturerInput.Text = prefill.Manufacturer;
             YearInput.Text         = prefill.YearOfRelease;
@@ -237,6 +240,15 @@ public partial class CreatePlatformDialog : Window
     // ── Validation ───────────────────────────────────────────────────────────
 
     private void OnIdChanged(object? sender, TextChangedEventArgs e)           => ValidateForm();
+
+    private void OnScrapeAsChanged(object? sender, TextChangedEventArgs e)    { }
+
+    private void OnScrapeAsGotFocus(object? sender, Avalonia.Input.GotFocusEventArgs e)
+    {
+        if (!_isEditMode && string.IsNullOrEmpty(ScrapeAsInput.Text))
+            ScrapeAsInput.Text = IdInput.Text?.Trim() ?? "";
+    }
+
     private void OnNameChanged(object? sender, TextChangedEventArgs e)         => ValidateForm();
     private void OnManufacturerChanged(object? sender, TextChangedEventArgs e) => ValidateForm();
 
@@ -268,9 +280,11 @@ public partial class CreatePlatformDialog : Window
 
     private void OnCreate(object? sender, RoutedEventArgs e)
     {
+        var idVal    = IdInput.Text!.Trim();
+        var scrapeAs = ScrapeAsInput.Text?.Trim() ?? "";
         CreatedPlatform = new HardwareFamilyRecord
         {
-            Id                = IdInput.Text!.Trim(),
+            Id                = idVal,
             Name              = NameInput.Text!.Trim(),
             Manufacturer      = ManufacturerInput.Text!.Trim(),
             HardwareTypeId    = (HardwareTypeInput.SelectedItem as HardwareTypeRecord)?.Id ?? "",
@@ -283,6 +297,7 @@ public partial class CreatePlatformDialog : Window
             Sound             = SoundInput.Text?.Trim()       ?? "",
             DisplayResolution = ResolutionInput.Text?.Trim()  ?? "",
             AspectRatio       = AspectRatioInput.Text?.Trim() ?? "",
+            ScrapeSystemId    = scrapeAs == idVal ? "" : scrapeAs,
         };
         LogoImagePath      = _logoPath;
         DetailsImagePath   = _detailsPath;

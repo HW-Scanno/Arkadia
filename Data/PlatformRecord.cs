@@ -16,4 +16,5 @@ public sealed class HardwareFamilyRecord
     public string Sound             { get; set; } = "";
     public string DisplayResolution { get; set; } = "";
     public string AspectRatio       { get; set; } = "";
+    public string ScrapeSystemId   { get; set; } = "";
 }
