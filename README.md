@@ -5,7 +5,7 @@
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-Arkadia is a preservation-grade desktop application for managing large offline ROM archives across multiple physical disks, with an integrated metadata catalog and ScreenScraper scraping workflow.
+Arkadia is a preservation-grade desktop application for managing large offline ROM archives across multiple physical disks, with an integrated metadata catalog and online/offline scraping workflow with coming Arkadia Media Packs.
 
 It provides a structured, integrity-first approach to organizing, verifying, and distributing artifact collections derived from DAT files — ensuring filesystem state and catalog state are always aligned, and that no artifact is ever considered present without independent verification.
 
