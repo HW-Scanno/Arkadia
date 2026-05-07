@@ -1,0 +1,204 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.ScreenScraperCacheBuilderDialog"
+        Title="ScreenScraper Cache Builder"
+        Width="560"
+        SizeToContent="Height"
+        MaxHeight="780"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="TextBlock.label">
+            <Setter Property="FontSize"   Value="11"/>
+            <Setter Property="Foreground" Value="#888899"/>
+        </Style>
+        <Style Selector="Button.browse">
+            <Setter Property="Background"   Value="#1E1E2C"/>
+            <Setter Property="Foreground"   Value="#AAAACC"/>
+            <Setter Property="Padding"      Value="10,6"/>
+            <Setter Property="FontSize"     Value="12"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+        <Style Selector="Button.primary">
+            <Setter Property="Background"   Value="#7B68EE"/>
+            <Setter Property="Foreground"   Value="#FFFFFF"/>
+            <Setter Property="Padding"      Value="20,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"   Value="#1E1E2C"/>
+            <Setter Property="Foreground"   Value="#AAAACC"/>
+            <Setter Property="Padding"      Value="20,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="*,Auto">
+
+        <!-- ── Scrollable form ─────────────────────────────────────────────── -->
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="24,20,24,16" Spacing="0">
+
+                <!-- Description -->
+                <TextBlock Text="Build an offline ScreenScraper Cache ZIP package from a ScreenScraper gamelist.csv export. The package can later be used by the ScreenScraper Cache provider without internet access."
+                           FontSize="12" Foreground="#666677"
+                           TextWrapping="Wrap" Margin="0,0,0,20"/>
+
+                <!-- CSV File -->
+                <StackPanel Spacing="4" Margin="0,0,0,12">
+                    <TextBlock Classes="label" Text="Gamelist CSV"/>
+                    <Grid ColumnDefinitions="*,8,Auto">
+                        <TextBox x:Name="CsvPathField" Grid.Column="0"
+                                 Watermark="Path to ScreenScraper gamelist.csv"
+                                 FontSize="12"/>
+                        <Button Grid.Column="2" Classes="browse" Content="Browse"
+                                Click="OnBrowseCsv"/>
+                    </Grid>
+                </StackPanel>
+
+                <!-- System ID + System Name -->
+                <Grid ColumnDefinitions="*,16,*" Margin="0,0,0,12">
+                    <StackPanel Grid.Column="0" Spacing="4">
+                        <TextBlock Classes="label" Text="ScreenScraper System ID"/>
+                        <TextBox x:Name="SystemIdField"
+                                 Watermark="e.g. 75"
+                                 FontSize="12"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="4">
+                        <TextBlock Classes="label" Text="System Name"/>
+                        <TextBox x:Name="SystemNameField"
+                                 Watermark="e.g. Capcom Classics"
+                                 FontSize="12"/>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Package Name -->
+                <StackPanel Spacing="4" Margin="0,0,0,12">
+                    <TextBlock Classes="label" Text="Package Name"/>
+                    <TextBox x:Name="PackageNameField"
+                             Watermark="e.g. arcade-capcom_classics"
+                             FontSize="12"/>
+                    <TextBlock Text="Used for the staging folder and ZIP filename. Unsafe characters are replaced with dashes."
+                               FontSize="10" Foreground="#444455" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <!-- Output ZIP path -->
+                <StackPanel Spacing="4" Margin="0,0,0,12">
+                    <TextBlock Classes="label" Text="Output ZIP Path"/>
+                    <Grid ColumnDefinitions="*,8,Auto">
+                        <TextBox x:Name="OutputZipPathField" Grid.Column="0"
+                                 Watermark="scrape-cache/screenscraper/&lt;package-name&gt;.zip  (auto)"
+                                 FontSize="12"/>
+                        <Button Grid.Column="2" Classes="browse" Content="Save As"
+                                Click="OnBrowseOutputZip"/>
+                    </Grid>
+                    <TextBlock Text="Leave empty to auto-fill from package name. Relative paths resolve from the application directory."
+                               FontSize="10" Foreground="#444455" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <!-- Staging root -->
+                <StackPanel Spacing="4" Margin="0,0,0,16">
+                    <TextBlock Classes="label" Text="Staging Root"/>
+                    <Grid ColumnDefinitions="*,8,Auto">
+                        <TextBox x:Name="StagingRootField" Grid.Column="0"
+                                 FontSize="12"/>
+                        <Button Grid.Column="2" Classes="browse" Content="Browse"
+                                Click="OnBrowseStagingRoot"/>
+                    </Grid>
+                    <TextBlock Text="Folder for intermediate files. Preserved across runs to support resumable builds."
+                               FontSize="10" Foreground="#444455" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <!-- Divider -->
+                <Border Height="1" Background="#1E1E2C" Margin="0,0,0,16"/>
+
+                <!-- Max scrapes -->
+                <StackPanel Spacing="4" Margin="0,0,0,16">
+                    <TextBlock Classes="label" Text="Max Scrapes This Run"/>
+                    <TextBox x:Name="MaxScrapesField"
+                             Width="100"
+                             HorizontalAlignment="Left"
+                             FontSize="12"/>
+                    <TextBlock Text="Maximum API calls in this run. Build resumes from staging on the next run. Minimum 1, recommended maximum 19000."
+                               FontSize="10" Foreground="#444455" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <!-- Options -->
+                <TextBlock Text="OPTIONS"
+                           FontSize="9" FontWeight="SemiBold" LetterSpacing="1.4"
+                           Foreground="#444455" Margin="0,0,0,8"/>
+
+                <StackPanel Spacing="8" Margin="0,0,0,20">
+                    <CheckBox x:Name="ForceRebuildCheck"
+                              Content="Force rebuild / refetch (overwrite existing staged files)"
+                              FontSize="12" Foreground="#CCCCDD"/>
+                    <CheckBox x:Name="UpdatePayloadsCheck"
+                              Content="Re-check existing payloads for updates (re-fetches to compare; only re-downloads changed media)"
+                              FontSize="12" Foreground="#CCCCDD"/>
+                    <CheckBox x:Name="KeepStagingCheck"
+                              Content="Keep staging folder after successful build"
+                              FontSize="12" Foreground="#CCCCDD"/>
+                    <CheckBox x:Name="IndexAfterBuildCheck"
+                              Content="Index package in catalog after build"
+                              FontSize="12" Foreground="#CCCCDD"/>
+                </StackPanel>
+
+                <!-- Status area -->
+                <Border x:Name="StatusPanel"
+                        Background="#141420" CornerRadius="4" Padding="12,10"
+                        IsVisible="False">
+                    <StackPanel Spacing="8">
+                        <ProgressBar x:Name="BuildProgress"
+                                     IsIndeterminate="True"
+                                     IsVisible="False"
+                                     Height="3"
+                                     Foreground="#7B68EE"
+                                     Background="#242433"
+                                     CornerRadius="1"/>
+                        <TextBlock x:Name="StatusText"
+                                   FontSize="12"
+                                   Foreground="#888899"
+                                   TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ── Button bar ───────────────────────────────────────────────────── -->
+        <Border Grid.Row="1" Padding="24,10,24,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+
+                <TextBlock x:Name="ValidationMsg" Grid.Column="0"
+                           FontSize="11" Foreground="#EF5350"
+                           IsVisible="False" VerticalAlignment="Center"
+                           MaxWidth="280" TextWrapping="Wrap"/>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="CancelBuildBtn"
+                            Classes="secondary" Content="Cancel Build"
+                            IsVisible="False"
+                            Click="OnCancelBuild"/>
+                    <Button x:Name="CloseBtn"
+                            Classes="secondary" Content="Close"
+                            Click="OnClose"/>
+                    <Button x:Name="BuildBtn"
+                            Classes="primary" Content="Build Package"
+                            Click="OnBuildPackage"/>
+                </StackPanel>
+
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

@@ -1,43 +1,91 @@
-# ── Build artifacts ───────────────────────────────────────────────────────────
+# ── Build artifacts ────────────────────────────────────────────────────────────
 bin/
 obj/
 publish/
+artifacts/
+TestResults/
 
-# ── IDE / Editor ──────────────────────────────────────────────────────────────
+# ── IDE / Editor ───────────────────────────────────────────────────────────────
 .vs/
-.idea/
 .vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
 
-# ── Runtime: logs ─────────────────────────────────────────────────────────────
-# Written by the app next to the executable (AppContext.BaseDirectory).
-# During development this is bin/Debug/net8.0/logs/ — already inside bin/.
-# Listed explicitly as documentation and as a safety net for portable deploys.
+# ── Runtime: logs and crash reports ───────────────────────────────────────────
+# Written next to the executable at runtime (AppContext.BaseDirectory).
 logs/
+crash-reports/
+*.log
+*.dmp
+*.mdmp
 
 # ── Runtime: external tools ───────────────────────────────────────────────────
-# 7zip, chdman, and any user-installed tools live in a tools/ folder
-# next to the executable. These are executables, not source — never commit them.
+# 7zip, chdman, etc. live in tools/ next to the executable.
 tools/
 
-# ── Large binary / ROM media ──────────────────────────────────────────────────
+# ── Runtime: application data and local state ─────────────────────────────────
+# data/ is created at runtime and contains catalog.db, media, and per-DAT DBs.
+# None of these should be committed.
+data/
+app-data/
+staging/
+work/
+temp/
+tmp/
+
+# ── Runtime: media and cache ───────────────────────────────────────────────────
+# Scraped covers, screenshots, videos, and manuals are runtime-generated.
+media/
+cache/
+
+# ── Libraries: runtime dependencies ───────────────────────────────────────────
+# libraries/ contains runtime dependencies required for portable distribution; do not ignore it.
+# (lib-vlc, native runtimes, etc. must be committed so portable builds are self-contained.)
+
+# ── SQLite runtime databases ───────────────────────────────────────────────────
+# All databases are runtime-generated; catalog.db and per-DAT DBs are in data/.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# ── Local configuration and secrets ───────────────────────────────────────────
+appsettings.Local.json
+secrets.json
+.env
+.env.*
+
+# ── AI / coding assistant tooling ─────────────────────────────────────────────
+# Claude Code, Cursor, Windsurf, aider, Continue — local config is not for VCS.
+.claude/
+claude.md
+CLAUDE.md
+.cursor/
+.windsurf/
+.aider
+.aider*
+.aider/
+.continue/
+
+# ── Large binary / ROM media ───────────────────────────────────────────────────
 *.iso
 *.img
 *.chd
 *.nrg
 *.bin
 *.cue
-
-# ── SQLite databases ──────────────────────────────────────────────────────────
-# catalog.db is created at runtime in data/ (inside bin/ during development).
-# Listed explicitly as a safety net.
-*.db
-*.db-shm
-*.db-wal
-
-# ── Test output ───────────────────────────────────────────────────────────────
-TestResults/
+*.zip
+*.7z
+*.rar
+*.gz
+*.tar
 
 # ── OS junk ───────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
 Desktop.ini
+desktop.ini

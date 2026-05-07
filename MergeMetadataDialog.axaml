@@ -1,0 +1,176 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:Arkadia"
+        x:Class="Arkadia.MergeMetadataDialog"
+        Title="Merge Metadata"
+        Width="900"
+        Height="560"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0D0D12"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="TextBlock.col-header">
+            <Setter Property="FontSize"     Value="10"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="Foreground"   Value="#555566"/>
+            <Setter Property="LetterSpacing" Value="1.2"/>
+        </Style>
+        <Style Selector="Button.primary">
+            <Setter Property="Background"      Value="#7B68EE"/>
+            <Setter Property="Foreground"      Value="#FFFFFF"/>
+            <Setter Property="Padding"         Value="22,8"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="FontWeight"      Value="SemiBold"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"      Value="#1E1E2C"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="Padding"         Value="22,8"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="ToggleButton.unlock">
+            <Setter Property="Background"      Value="#2A2A3C"/>
+            <Setter Property="Foreground"      Value="#7070A0"/>
+            <Setter Property="FontSize"        Value="10"/>
+            <Setter Property="Padding"         Value="6,3"/>
+            <Setter Property="CornerRadius"    Value="3"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="BorderBrush"     Value="#3A3A52"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="ToggleButton.unlock:checked">
+            <Setter Property="Background"  Value="#FF7043"/>
+            <Setter Property="Foreground"  Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#FF7043"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="24,20,24,16" Spacing="4">
+            <TextBlock Text="MERGE METADATA"
+                       FontSize="11" FontWeight="SemiBold" LetterSpacing="1.8"
+                       Foreground="#9FA4FF"/>
+            <TextBlock x:Name="SubtitleLabel"
+                       FontSize="13" Foreground="#666677"
+                       TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+
+        <!-- Column headers -->
+        <Border Grid.Row="1" Margin="24,0,24,0" Padding="0,0,0,8"
+                BorderBrush="#1E1E2C" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="160,*,*,90,70,56">
+                <TextBlock Grid.Column="0" Classes="col-header" Text="FIELD"/>
+                <TextBlock Grid.Column="1" Classes="col-header" Text="CURRENT"  Margin="8,0,0,0"/>
+                <TextBlock Grid.Column="2" Classes="col-header" Text="PROVIDER" Margin="8,0,0,0"/>
+                <TextBlock Grid.Column="3" Classes="col-header" Text="STATUS"   HorizontalAlignment="Center"/>
+                <TextBlock Grid.Column="4" Classes="col-header" Text="UNLOCK"   HorizontalAlignment="Center"/>
+                <TextBlock Grid.Column="5" Classes="col-header" Text="APPLY"    HorizontalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <!-- Row list / empty state -->
+        <ScrollViewer Grid.Row="2"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Auto"
+                      Margin="0,4,0,0">
+            <StackPanel>
+                <TextBlock x:Name="EmptyLabel"
+                           IsVisible="False"
+                           Text="No pending proposals for this release."
+                           FontSize="13" Foreground="#555566"
+                           HorizontalAlignment="Center"
+                           Margin="0,48,0,0"/>
+
+                <ItemsControl x:Name="ProposalRows" Margin="24,0,24,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="local:ProposalRowVm">
+                            <Border BorderBrush="#181826" BorderThickness="0,0,0,1" Padding="0,9">
+                                <Grid ColumnDefinitions="160,*,*,90,70,56" MinHeight="26">
+
+                                    <!-- Field name -->
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding DisplayName}"
+                                               FontSize="11" FontWeight="SemiBold"
+                                               Foreground="#7070A0"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"/>
+
+                                    <!-- Current canonical value -->
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding CurrentDisplay}"
+                                               FontSize="12"
+                                               Foreground="#8888AA"
+                                               VerticalAlignment="Center"
+                                               Margin="8,0,8,0"
+                                               TextTrimming="CharacterEllipsis"/>
+
+                                    <!-- Provider proposed value -->
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding ProviderValue}"
+                                               FontSize="12"
+                                               Foreground="#D0D0E8"
+                                               VerticalAlignment="Center"
+                                               Margin="8,0,8,0"
+                                               TextTrimming="CharacterEllipsis"/>
+
+                                    <!-- Status badge -->
+                                    <Border Grid.Column="3"
+                                            CornerRadius="3" Padding="7,3"
+                                            Background="#181826"
+                                            HorizontalAlignment="Center"
+                                            VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding EffectiveStatusLabel}"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   Foreground="{Binding EffectiveStatusBrush}"
+                                                   LetterSpacing="0.5"/>
+                                    </Border>
+
+                                    <!-- Unlock toggle (visible only for MANUAL/LOCKED rows) -->
+                                    <ToggleButton Grid.Column="4"
+                                                  Classes="unlock"
+                                                  IsChecked="{Binding IsOverridden}"
+                                                  IsVisible="{Binding CanOverride}"
+                                                  Content="Unlock"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+
+                                    <!-- Apply checkbox -->
+                                    <CheckBox Grid.Column="5"
+                                              IsChecked="{Binding IsSelected}"
+                                              IsEnabled="{Binding CanSelectEffective}"
+                                              HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Footer -->
+        <Border Grid.Row="3" Padding="24,12,24,18"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <Grid>
+                <Button Classes="secondary" Content="Select All Safe"
+                        HorizontalAlignment="Left"
+                        Click="OnSelectAllSafe"/>
+                <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                    <Button Classes="secondary" Content="Cancel"         Click="OnCancel"/>
+                    <Button Classes="primary"   Content="Apply Selected" Click="OnApply"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

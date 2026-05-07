@@ -149,9 +149,103 @@ public sealed class DatLineStore
                 scraped_at  TEXT NOT NULL,
                 PRIMARY KEY (release_id, provider)
             );
+
+            CREATE TABLE IF NOT EXISTS release_metadata_field_state (
+                release_id      TEXT NOT NULL,
+                field           TEXT NOT NULL,
+                source          TEXT NOT NULL DEFAULT '',
+                provider        TEXT NOT NULL DEFAULT '',
+                locked          INTEGER NOT NULL DEFAULT 0,
+                updated_at_utc  TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (release_id, field)
+            );
+
+            CREATE TABLE IF NOT EXISTS release_metadata_proposals (
+                release_id   TEXT NOT NULL,
+                provider     TEXT NOT NULL,
+                field        TEXT NOT NULL,
+                value        TEXT NOT NULL DEFAULT '',
+                scraped_at   TEXT NOT NULL,
+                accepted     INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (release_id, provider, field)
+            );
+
+            CREATE TABLE IF NOT EXISTS release_media_curation (
+                id              INTEGER PRIMARY KEY,
+                release_id      TEXT NOT NULL,
+                media_type      TEXT NOT NULL,
+                file_path       TEXT NOT NULL,
+                file_sha256     TEXT,
+                is_preferred    INTEGER NOT NULL DEFAULT 0,
+                is_excluded     INTEGER NOT NULL DEFAULT 0,
+                excluded_reason TEXT,
+                credits         TEXT,
+                notes           TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL,
+                UNIQUE(release_id, media_type, file_path)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_rmc_release_type ON release_media_curation(release_id, media_type);
+            CREATE INDEX IF NOT EXISTS idx_rmc_sha256 ON release_media_curation(file_sha256);
+
+            CREATE TABLE IF NOT EXISTS release_extra_notes (
+                release_id TEXT PRIMARY KEY,
+                notes      TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """;
         cmd.ExecuteNonQuery();
 
+        // Normalize "physical-media" rows to canonical "physical".
+        // Rows with a conflicting (release_id, 'physical', file_path) are deleted first
+        // to avoid UNIQUE constraint violations during the rename.
+        using (var mig = Open())
+        {
+            using var del = mig.CreateCommand();
+            del.CommandText = """
+                DELETE FROM release_media_curation
+                WHERE media_type = 'physical-media'
+                  AND EXISTS (
+                      SELECT 1 FROM release_media_curation r2
+                      WHERE r2.release_id = release_media_curation.release_id
+                        AND r2.file_path  = release_media_curation.file_path
+                        AND r2.media_type = 'physical'
+                  )
+                """;
+            del.ExecuteNonQuery();
+
+            using var upd = mig.CreateCommand();
+            upd.CommandText = """
+                UPDATE release_media_curation
+                SET media_type = 'physical', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+                WHERE media_type = 'physical-media'
+                """;
+            upd.ExecuteNonQuery();
+        }
+
+        // Add columns introduced in v2 to release_metadata.
+        // TryAddColumn is idempotent — ignored if the column already exists.
+        using var alter = Open();
+        TryAddColumn(alter, "release_metadata", "sort_title    TEXT NOT NULL DEFAULT ''");
+        TryAddColumn(alter, "release_metadata", "genre         TEXT NOT NULL DEFAULT ''");
+        TryAddColumn(alter, "release_metadata", "subgenre      TEXT NOT NULL DEFAULT ''");
+        TryAddColumn(alter, "release_metadata", "players       TEXT NOT NULL DEFAULT ''");
+        TryAddColumn(alter, "release_metadata", "release_type  TEXT NOT NULL DEFAULT ''");
+        TryAddColumn(alter, "release_metadata", "rating        TEXT NOT NULL DEFAULT ''");
+        TryAddColumn(alter, "release_metadata", "notes         TEXT NOT NULL DEFAULT ''");
+    }
+
+    private static void TryAddColumn(SqliteConnection conn, string table, string columnDef)
+    {
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE {table} ADD COLUMN {columnDef}";
+            cmd.ExecuteNonQuery();
+        }
+        catch (SqliteException) { /* column already exists — safe to ignore */ }
     }
 
     /// <summary>
@@ -512,7 +606,8 @@ public sealed class DatLineStore
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
             SELECT release_id, title, original_title, developer, publisher, year, languages,
-                   alternate_titles, description, scraped_at_utc
+                   alternate_titles, description, scraped_at_utc,
+                   sort_title, genre, subgenre, players, release_type, rating, notes
             FROM release_metadata
             """;
         using var reader = cmd.ExecuteReader();
@@ -522,15 +617,22 @@ public sealed class DatLineStore
             dict[id] = new ReleaseMetadataRecord
             {
                 ReleaseId       = id,
-                Title           = reader.IsDBNull(1) ? "" : reader.GetString(1),
-                OriginalTitle   = reader.IsDBNull(2) ? "" : reader.GetString(2),
-                Developer       = reader.IsDBNull(3) ? "" : reader.GetString(3),
-                Publisher       = reader.IsDBNull(4) ? "" : reader.GetString(4),
-                Year            = reader.IsDBNull(5) ? "" : reader.GetString(5),
-                Languages       = reader.IsDBNull(6) ? "" : reader.GetString(6),
-                AlternateTitles = reader.IsDBNull(7) ? "" : reader.GetString(7),
-                Description     = reader.IsDBNull(8) ? "" : reader.GetString(8),
-                ScrapedAtUtc    = reader.IsDBNull(9) ? "" : reader.GetString(9),
+                Title           = reader.IsDBNull(1)  ? "" : reader.GetString(1),
+                OriginalTitle   = reader.IsDBNull(2)  ? "" : reader.GetString(2),
+                Developer       = reader.IsDBNull(3)  ? "" : reader.GetString(3),
+                Publisher       = reader.IsDBNull(4)  ? "" : reader.GetString(4),
+                Year            = reader.IsDBNull(5)  ? "" : reader.GetString(5),
+                Languages       = reader.IsDBNull(6)  ? "" : reader.GetString(6),
+                AlternateTitles = reader.IsDBNull(7)  ? "" : reader.GetString(7),
+                Description     = reader.IsDBNull(8)  ? "" : reader.GetString(8),
+                ScrapedAtUtc    = reader.IsDBNull(9)  ? "" : reader.GetString(9),
+                SortTitle       = reader.IsDBNull(10) ? "" : reader.GetString(10),
+                Genre           = reader.IsDBNull(11) ? "" : reader.GetString(11),
+                Subgenre        = reader.IsDBNull(12) ? "" : reader.GetString(12),
+                Players         = reader.IsDBNull(13) ? "" : reader.GetString(13),
+                ReleaseType     = reader.IsDBNull(14) ? "" : reader.GetString(14),
+                Rating          = reader.IsDBNull(15) ? "" : reader.GetString(15),
+                Notes           = reader.IsDBNull(16) ? "" : reader.GetString(16),
             };
         }
         return dict;
@@ -547,10 +649,12 @@ public sealed class DatLineStore
         cmd.CommandText = """
             INSERT INTO release_metadata(
                 release_id, title, original_title, developer, publisher,
-                year, languages, alternate_titles, description, scraped_at_utc)
+                year, languages, alternate_titles, description, scraped_at_utc,
+                sort_title, genre, subgenre, players, release_type, rating, notes)
             VALUES(
                 $id, $title, $origTitle, $dev, $pub,
-                $year, $langs, $alts, $desc, $scraped)
+                $year, $langs, $alts, $desc, $scraped,
+                $sortTitle, $genre, $subgenre, $players, $releaseType, $rating, $notes)
             ON CONFLICT(release_id) DO UPDATE SET
                 title            = excluded.title,
                 original_title   = excluded.original_title,
@@ -560,18 +664,32 @@ public sealed class DatLineStore
                 languages        = excluded.languages,
                 alternate_titles = excluded.alternate_titles,
                 description      = excluded.description,
-                scraped_at_utc   = excluded.scraped_at_utc
+                scraped_at_utc   = excluded.scraped_at_utc,
+                sort_title       = excluded.sort_title,
+                genre            = excluded.genre,
+                subgenre         = excluded.subgenre,
+                players          = excluded.players,
+                release_type     = excluded.release_type,
+                rating           = excluded.rating,
+                notes            = excluded.notes
             """;
-        cmd.Parameters.AddWithValue("$id",       m.ReleaseId);
-        cmd.Parameters.AddWithValue("$title",    m.Title);
-        cmd.Parameters.AddWithValue("$origTitle", m.OriginalTitle);
-        cmd.Parameters.AddWithValue("$dev",      m.Developer);
-        cmd.Parameters.AddWithValue("$pub",      m.Publisher);
-        cmd.Parameters.AddWithValue("$year",     m.Year);
-        cmd.Parameters.AddWithValue("$langs",    m.Languages);
-        cmd.Parameters.AddWithValue("$alts",     m.AlternateTitles);
-        cmd.Parameters.AddWithValue("$desc",     m.Description);
-        cmd.Parameters.AddWithValue("$scraped",  m.ScrapedAtUtc);
+        cmd.Parameters.AddWithValue("$id",          m.ReleaseId);
+        cmd.Parameters.AddWithValue("$title",       m.Title);
+        cmd.Parameters.AddWithValue("$origTitle",   m.OriginalTitle);
+        cmd.Parameters.AddWithValue("$dev",         m.Developer);
+        cmd.Parameters.AddWithValue("$pub",         m.Publisher);
+        cmd.Parameters.AddWithValue("$year",        m.Year);
+        cmd.Parameters.AddWithValue("$langs",       m.Languages);
+        cmd.Parameters.AddWithValue("$alts",        m.AlternateTitles);
+        cmd.Parameters.AddWithValue("$desc",        m.Description);
+        cmd.Parameters.AddWithValue("$scraped",     m.ScrapedAtUtc);
+        cmd.Parameters.AddWithValue("$sortTitle",   m.SortTitle);
+        cmd.Parameters.AddWithValue("$genre",       m.Genre);
+        cmd.Parameters.AddWithValue("$subgenre",    m.Subgenre);
+        cmd.Parameters.AddWithValue("$players",     m.Players);
+        cmd.Parameters.AddWithValue("$releaseType", m.ReleaseType);
+        cmd.Parameters.AddWithValue("$rating",      m.Rating);
+        cmd.Parameters.AddWithValue("$notes",       m.Notes);
         cmd.ExecuteNonQuery();
     }
 
@@ -614,6 +732,19 @@ public sealed class DatLineStore
         cmd.Parameters.AddWithValue("$id",       releaseId);
         cmd.Parameters.AddWithValue("$provider", provider);
         return cmd.ExecuteScalar() as string;
+    }
+
+    // ── Release field updates ─────────────────────────────────────────────────
+
+    /// <summary>Persists a user-edited region value back to the canonical releases row.</summary>
+    public void UpdateReleaseRegion(string releaseId, string region)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "UPDATE releases SET region = $region WHERE id = $id";
+        cmd.Parameters.AddWithValue("$region", region);
+        cmd.Parameters.AddWithValue("$id",     releaseId);
+        cmd.ExecuteNonQuery();
     }
 
     // ── Status update ────────────────────────────────────────────────────────
@@ -1637,6 +1768,565 @@ public sealed class DatLineStore
                 Sha1:              r.GetString(5)));
         }
         return result;
+    }
+
+    // ── Metadata field state ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Upserts the source, provider, locked flag, and timestamp for a single metadata field.
+    /// </summary>
+    public void SaveMetadataFieldState(
+        string releaseId, string field, string source, string provider, bool locked)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO release_metadata_field_state(
+                release_id, field, source, provider, locked, updated_at_utc)
+            VALUES($releaseId, $field, $source, $provider, $locked, $updatedAt)
+            ON CONFLICT(release_id, field) DO UPDATE SET
+                source         = excluded.source,
+                provider       = excluded.provider,
+                locked         = excluded.locked,
+                updated_at_utc = excluded.updated_at_utc
+            """;
+        cmd.Parameters.AddWithValue("$releaseId",  releaseId);
+        cmd.Parameters.AddWithValue("$field",      field);
+        cmd.Parameters.AddWithValue("$source",     source);
+        cmd.Parameters.AddWithValue("$provider",   provider);
+        cmd.Parameters.AddWithValue("$locked",     locked ? 1 : 0);
+        cmd.Parameters.AddWithValue("$updatedAt",  DateTime.UtcNow.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Returns all field-state rows for the given release.</summary>
+    public List<MetadataFieldStateRecord> LoadMetadataFieldStates(string releaseId)
+    {
+        var list = new List<MetadataFieldStateRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT field, source, provider, locked, updated_at_utc
+            FROM release_metadata_field_state
+            WHERE release_id = $releaseId
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new MetadataFieldStateRecord(
+                ReleaseId:    releaseId,
+                Field:        reader.GetString(0),
+                Source:       reader.IsDBNull(1) ? "" : reader.GetString(1),
+                Provider:     reader.IsDBNull(2) ? "" : reader.GetString(2),
+                Locked:       reader.GetInt64(3) != 0,
+                UpdatedAtUtc: reader.IsDBNull(4) ? "" : reader.GetString(4)));
+        }
+        return list;
+    }
+
+    /// <summary>Returns true when the given field has locked = 1 for this release.</summary>
+    public bool IsMetadataFieldLocked(string releaseId, string field)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT locked FROM release_metadata_field_state
+            WHERE release_id = $releaseId AND field = $field
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        cmd.Parameters.AddWithValue("$field",     field);
+        var result = cmd.ExecuteScalar();
+        return result is long l && l != 0;
+    }
+
+    /// <summary>
+    /// Sets or clears the locked flag on an existing field-state row.
+    /// If no row exists yet, inserts one with empty source/provider.
+    /// </summary>
+    public void SetMetadataFieldLocked(string releaseId, string field, bool locked)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO release_metadata_field_state(
+                release_id, field, source, provider, locked, updated_at_utc)
+            VALUES($releaseId, $field, '', '', $locked, $updatedAt)
+            ON CONFLICT(release_id, field) DO UPDATE SET
+                locked         = excluded.locked,
+                updated_at_utc = excluded.updated_at_utc
+            """;
+        cmd.Parameters.AddWithValue("$releaseId",  releaseId);
+        cmd.Parameters.AddWithValue("$field",      field);
+        cmd.Parameters.AddWithValue("$locked",     locked ? 1 : 0);
+        cmd.Parameters.AddWithValue("$updatedAt",  DateTime.UtcNow.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    // ── Metadata proposals ────────────────────────────────────────────────────
+
+    /// <summary>Upserts a single per-field proposal from a provider.</summary>
+    public void SaveMetadataProposal(
+        string releaseId, string provider, string field, string value)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO release_metadata_proposals(
+                release_id, provider, field, value, scraped_at, accepted)
+            VALUES($releaseId, $provider, $field, $value, $scrapedAt, 0)
+            ON CONFLICT(release_id, provider, field) DO UPDATE SET
+                value      = excluded.value,
+                scraped_at = excluded.scraped_at,
+                accepted   = 0
+            """;
+        cmd.Parameters.AddWithValue("$releaseId",  releaseId);
+        cmd.Parameters.AddWithValue("$provider",   provider);
+        cmd.Parameters.AddWithValue("$field",      field);
+        cmd.Parameters.AddWithValue("$value",      value);
+        cmd.Parameters.AddWithValue("$scrapedAt",  DateTime.UtcNow.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Batch-upserts all field/value pairs from a provider in a single transaction.
+    /// </summary>
+    public void SaveMetadataProposals(
+        string releaseId, string provider, IReadOnlyDictionary<string, string> fields)
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+        var scrapedAt  = DateTime.UtcNow.ToString("o");
+        foreach (var (field, value) in fields)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                INSERT INTO release_metadata_proposals(
+                    release_id, provider, field, value, scraped_at, accepted)
+                VALUES($releaseId, $provider, $field, $value, $scrapedAt, 0)
+                ON CONFLICT(release_id, provider, field) DO UPDATE SET
+                    value      = excluded.value,
+                    scraped_at = excluded.scraped_at,
+                    accepted   = 0
+                """;
+            cmd.Parameters.AddWithValue("$releaseId",  releaseId);
+            cmd.Parameters.AddWithValue("$provider",   provider);
+            cmd.Parameters.AddWithValue("$field",      field);
+            cmd.Parameters.AddWithValue("$value",      value);
+            cmd.Parameters.AddWithValue("$scrapedAt",  scrapedAt);
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+
+    /// <summary>Returns all proposals for a specific provider/release pair.</summary>
+    public List<MetadataProposalRecord> LoadMetadataProposals(string releaseId, string provider)
+    {
+        var list = new List<MetadataProposalRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT field, value, scraped_at, accepted
+            FROM release_metadata_proposals
+            WHERE release_id = $releaseId AND provider = $provider
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        cmd.Parameters.AddWithValue("$provider",  provider);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new MetadataProposalRecord(
+                ReleaseId: releaseId,
+                Provider:  provider,
+                Field:     reader.GetString(0),
+                Value:     reader.IsDBNull(1) ? "" : reader.GetString(1),
+                ScrapedAt: reader.IsDBNull(2) ? "" : reader.GetString(2),
+                Accepted:  reader.GetInt64(3) != 0));
+        }
+        return list;
+    }
+
+    /// <summary>Returns all proposals for a release across all providers.</summary>
+    public List<MetadataProposalRecord> LoadAllMetadataProposals(string releaseId)
+    {
+        var list = new List<MetadataProposalRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT provider, field, value, scraped_at, accepted
+            FROM release_metadata_proposals
+            WHERE release_id = $releaseId
+            ORDER BY provider, field
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new MetadataProposalRecord(
+                ReleaseId: releaseId,
+                Provider:  reader.GetString(0),
+                Field:     reader.GetString(1),
+                Value:     reader.IsDBNull(2) ? "" : reader.GetString(2),
+                ScrapedAt: reader.IsDBNull(3) ? "" : reader.GetString(3),
+                Accepted:  reader.GetInt64(4) != 0));
+        }
+        return list;
+    }
+
+    /// <summary>Marks a single proposal accepted without altering release_metadata.</summary>
+    public void MarkMetadataProposalAccepted(string releaseId, string provider, string field)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE release_metadata_proposals
+            SET accepted = 1
+            WHERE release_id = $releaseId AND provider = $provider AND field = $field
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        cmd.Parameters.AddWithValue("$provider",  provider);
+        cmd.Parameters.AddWithValue("$field",     field);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>Deletes all proposals for a provider/release pair (e.g. before re-scraping).</summary>
+    public void DeleteMetadataProposals(string releaseId, string provider)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            DELETE FROM release_metadata_proposals
+            WHERE release_id = $releaseId AND provider = $provider
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        cmd.Parameters.AddWithValue("$provider",  provider);
+        cmd.ExecuteNonQuery();
+    }
+
+    // ── Merge-dialog: apply user-selected proposals ───────────────────────────
+
+    /// <summary>
+    /// Applies the user-selected (field, value) pairs from a provider to the canonical
+    /// release_metadata. For each selection, updates the canonical value, writes
+    /// field_state(source=provider, locked=false), and marks the proposal accepted.
+    /// Fields not in <paramref name="selections"/> are untouched.
+    /// Returns the updated <see cref="ReleaseMetadataRecord"/>.
+    /// </summary>
+    public ReleaseMetadataRecord ApplyMergeSelections(
+        string releaseId,
+        string provider,
+        IReadOnlyList<(string Field, string Value)> selections,
+        ReleaseMetadataRecord current)
+    {
+        if (selections.Count == 0)
+            return current;
+
+        var fieldValues = GetFieldValues(current);
+        foreach (var (field, value) in selections)
+        {
+            fieldValues[field] = value;
+            SaveMetadataFieldState(releaseId, field, provider, provider, locked: false);
+            MarkMetadataProposalAccepted(releaseId, provider, field);
+        }
+
+        var merged = BuildRecord(releaseId, fieldValues, current.ScrapedAtUtc);
+        SaveReleaseMetadata(merged);
+        return merged;
+    }
+
+    // ── Provider proposal application ────────────────────────────────────────
+
+    /// <summary>
+    /// Saves provider proposals and optionally auto-applies them to empty unlocked canonical fields.
+    /// <para>
+    /// Rules applied to every non-empty proposed value:
+    /// <list type="bullet">
+    ///   <item>Field is locked or canonical value is non-empty → save proposal only (accepted=0).</item>
+    ///   <item>Canonical value empty + not locked + <paramref name="autoApplyEmptyFields"/> true →
+    ///         apply to release_metadata, field_state(source=provider, locked=false), proposal accepted=1.</item>
+    ///   <item>Canonical value empty + not locked + <paramref name="autoApplyEmptyFields"/> false →
+    ///         save proposal only (accepted=0); canonical and field_state unchanged.</item>
+    /// </list>
+    /// </para>
+    /// Returns the merged <see cref="ReleaseMetadataRecord"/> and the set of auto-applied field names.
+    /// When <paramref name="autoApplyEmptyFields"/> is false the merged record equals
+    /// <paramref name="current"/> and the auto-applied set is always empty.
+    /// </summary>
+    public (ReleaseMetadataRecord Merged, HashSet<string> AutoApplied) ApplyProviderProposals(
+        string releaseId,
+        string provider,
+        IReadOnlyDictionary<string, string> proposed,
+        ReleaseMetadataRecord current,
+        bool autoApplyEmptyFields = true)
+    {
+        if (proposed.Count == 0)
+            return (current, []);
+
+        var autoApplied = new HashSet<string>(StringComparer.Ordinal);
+        var lockedFields = LoadMetadataFieldStates(releaseId)
+            .Where(s => s.Locked)
+            .Select(s => s.Field)
+            .ToHashSet(StringComparer.Ordinal);
+        var fieldValues = GetFieldValues(current);
+
+        foreach (var (field, value) in proposed)
+        {
+            if (value.Length == 0) continue;
+
+            var canonical = fieldValues.GetValueOrDefault(field, "");
+
+            if (lockedFields.Contains(field) || canonical.Length > 0 || !autoApplyEmptyFields)
+            {
+                SaveMetadataProposal(releaseId, provider, field, value);
+            }
+            else
+            {
+                fieldValues[field] = value;
+                autoApplied.Add(field);
+                SaveMetadataProposal(releaseId, provider, field, value);
+                MarkMetadataProposalAccepted(releaseId, provider, field);
+                SaveMetadataFieldState(releaseId, field, provider, provider, locked: false);
+            }
+        }
+
+        if (autoApplied.Count == 0)
+            return (current, autoApplied);
+
+        var merged = BuildRecord(releaseId, fieldValues, DateTime.UtcNow.ToString("o"));
+        SaveReleaseMetadata(merged);
+        return (merged, autoApplied);
+    }
+
+    private static Dictionary<string, string> GetFieldValues(ReleaseMetadataRecord r) =>
+        new(StringComparer.Ordinal)
+        {
+            ["title"]            = r.Title,
+            ["original_title"]   = r.OriginalTitle,
+            ["sort_title"]       = r.SortTitle,
+            ["developer"]        = r.Developer,
+            ["publisher"]        = r.Publisher,
+            ["year"]             = r.Year,
+            ["languages"]        = r.Languages,
+            ["alternate_titles"] = r.AlternateTitles,
+            ["description"]      = r.Description,
+            ["genre"]            = r.Genre,
+            ["subgenre"]         = r.Subgenre,
+            ["players"]          = r.Players,
+            ["release_type"]     = r.ReleaseType,
+            ["rating"]           = r.Rating,
+            ["notes"]            = r.Notes,
+        };
+
+    private static ReleaseMetadataRecord BuildRecord(
+        string releaseId, Dictionary<string, string> f, string scrapedAtUtc) =>
+        new()
+        {
+            ReleaseId       = releaseId,
+            Title           = f.GetValueOrDefault("title",            ""),
+            OriginalTitle   = f.GetValueOrDefault("original_title",   ""),
+            SortTitle       = f.GetValueOrDefault("sort_title",       ""),
+            Developer       = f.GetValueOrDefault("developer",        ""),
+            Publisher       = f.GetValueOrDefault("publisher",        ""),
+            Year            = f.GetValueOrDefault("year",             ""),
+            Languages       = f.GetValueOrDefault("languages",        ""),
+            AlternateTitles = f.GetValueOrDefault("alternate_titles", ""),
+            Description     = f.GetValueOrDefault("description",      ""),
+            Genre           = f.GetValueOrDefault("genre",            ""),
+            Subgenre        = f.GetValueOrDefault("subgenre",         ""),
+            Players         = f.GetValueOrDefault("players",          ""),
+            ReleaseType     = f.GetValueOrDefault("release_type",     ""),
+            Rating          = f.GetValueOrDefault("rating",           ""),
+            Notes           = f.GetValueOrDefault("notes",            ""),
+            ScrapedAtUtc    = scrapedAtUtc,
+        };
+
+    // ── release_extra_notes ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the user-curated extra notes for the release, or null when none exist.
+    /// Extra notes are Arkadia-owned and are never overwritten by provider scrapes or cache imports.
+    /// </summary>
+    public string? GetReleaseExtraNotes(string releaseId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT notes FROM release_extra_notes WHERE release_id = $id";
+        cmd.Parameters.AddWithValue("$id", releaseId);
+        var value = cmd.ExecuteScalar();
+        if (value is null or DBNull) return null;
+        var text = (string)value;
+        return text.Length == 0 ? null : text;
+    }
+
+    /// <summary>
+    /// Saves user-curated extra notes for the release.
+    /// Whitespace-only or null input deletes the row (keeps DB clean).
+    /// created_at is preserved on updates; updated_at is always refreshed.
+    /// </summary>
+    public void SaveReleaseExtraNotes(string releaseId, string? notes)
+    {
+        var trimmed = notes?.Trim() ?? "";
+        using var conn = Open();
+
+        if (trimmed.Length == 0)
+        {
+            using var del = conn.CreateCommand();
+            del.CommandText = "DELETE FROM release_extra_notes WHERE release_id = $id";
+            del.Parameters.AddWithValue("$id", releaseId);
+            del.ExecuteNonQuery();
+            return;
+        }
+
+        var now = DateTime.UtcNow.ToString("o");
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO release_extra_notes(release_id, notes, created_at, updated_at)
+            VALUES ($id, $notes, $now, $now)
+            ON CONFLICT(release_id) DO UPDATE SET
+                notes      = excluded.notes,
+                updated_at = excluded.updated_at
+            """;
+        cmd.Parameters.AddWithValue("$id",    releaseId);
+        cmd.Parameters.AddWithValue("$notes", trimmed);
+        cmd.Parameters.AddWithValue("$now",   now);
+        cmd.ExecuteNonQuery();
+    }
+
+    // ── release_media_curation ────────────────────────────────────────────────
+
+    public IReadOnlyList<MediaCurationRow> LoadMediaCurationRows(string releaseId)
+    {
+        var list = new List<MediaCurationRow>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT release_id, media_type, file_path, file_sha256,
+                   is_preferred, is_excluded, excluded_reason, credits, notes
+            FROM release_media_curation
+            WHERE release_id = $releaseId
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new MediaCurationRow(
+                ReleaseId:      r.GetString(0),
+                MediaType:      r.GetString(1),
+                FilePath:       r.GetString(2),
+                FileSha256:     r.IsDBNull(3) ? null : r.GetString(3),
+                IsPreferred:    r.GetInt64(4) != 0,
+                IsExcluded:     r.GetInt64(5) != 0,
+                ExcludedReason: r.IsDBNull(6) ? null : r.GetString(6),
+                Credits:        r.IsDBNull(7) ? null : r.GetString(7),
+                Notes:          r.IsDBNull(8) ? null : r.GetString(8)));
+        return list;
+    }
+
+    public void UpsertMediaCurationRow(MediaCurationRow row)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO release_media_curation
+                (release_id, media_type, file_path, file_sha256,
+                 is_preferred, is_excluded, excluded_reason, credits, notes,
+                 created_at, updated_at)
+            VALUES
+                ($releaseId, $mediaType, $filePath, $sha256,
+                 $isPref, $isExcl, $reason, $credits, $notes,
+                 $now, $now)
+            ON CONFLICT(release_id, media_type, file_path) DO UPDATE SET
+                file_sha256     = excluded.file_sha256,
+                is_preferred    = excluded.is_preferred,
+                is_excluded     = excluded.is_excluded,
+                excluded_reason = excluded.excluded_reason,
+                credits         = excluded.credits,
+                notes           = excluded.notes,
+                updated_at      = excluded.updated_at
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", row.ReleaseId);
+        cmd.Parameters.AddWithValue("$mediaType", row.MediaType);
+        cmd.Parameters.AddWithValue("$filePath",  row.FilePath);
+        cmd.Parameters.AddWithValue("$sha256",    (object?)row.FileSha256 ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$isPref",    row.IsPreferred ? 1 : 0);
+        cmd.Parameters.AddWithValue("$isExcl",    row.IsExcluded  ? 1 : 0);
+        cmd.Parameters.AddWithValue("$reason",    (object?)row.ExcludedReason ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$credits",   (object?)row.Credits  ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$notes",     (object?)row.Notes    ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$now",       now);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void ClearPreferredForType(string releaseId, string mediaType)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE release_media_curation
+            SET is_preferred = 0, updated_at = $now
+            WHERE release_id = $releaseId AND media_type = $mediaType
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        cmd.Parameters.AddWithValue("$mediaType", mediaType);
+        cmd.Parameters.AddWithValue("$now",       DateTime.UtcNow.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    // Atomically clears is_preferred for all rows of release_id+media_type, then marks
+    // the specified file as preferred in a single transaction. Existing credits, notes,
+    // excluded state, and sha256 are preserved if the row already exists.
+    public void SetPreferredMediaCuration(string releaseId, string mediaType, string filePath)
+    {
+        var now = DateTime.UtcNow.ToString("o");
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+        try
+        {
+            using var clear = conn.CreateCommand();
+            clear.Transaction = tx;
+            clear.CommandText = """
+                UPDATE release_media_curation
+                SET is_preferred = 0, updated_at = $now
+                WHERE release_id = $releaseId AND media_type = $mediaType
+                """;
+            clear.Parameters.AddWithValue("$releaseId", releaseId);
+            clear.Parameters.AddWithValue("$mediaType", mediaType);
+            clear.Parameters.AddWithValue("$now",       now);
+            clear.ExecuteNonQuery();
+
+            using var upsert = conn.CreateCommand();
+            upsert.Transaction = tx;
+            upsert.CommandText = """
+                INSERT INTO release_media_curation
+                    (release_id, media_type, file_path, file_sha256,
+                     is_preferred, is_excluded, excluded_reason, credits, notes,
+                     created_at, updated_at)
+                VALUES
+                    ($releaseId, $mediaType, $filePath, NULL,
+                     1, 0, NULL, NULL, NULL,
+                     $now, $now)
+                ON CONFLICT(release_id, media_type, file_path) DO UPDATE SET
+                    is_preferred    = 1,
+                    file_sha256     = release_media_curation.file_sha256,
+                    is_excluded     = release_media_curation.is_excluded,
+                    excluded_reason = release_media_curation.excluded_reason,
+                    credits         = release_media_curation.credits,
+                    notes           = release_media_curation.notes,
+                    updated_at      = $now
+                """;
+            upsert.Parameters.AddWithValue("$releaseId", releaseId);
+            upsert.Parameters.AddWithValue("$mediaType", mediaType);
+            upsert.Parameters.AddWithValue("$filePath",  filePath);
+            upsert.Parameters.AddWithValue("$now",       now);
+            upsert.ExecuteNonQuery();
+
+            tx.Commit();
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
     }
 
     private SqliteConnection Open()

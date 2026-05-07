@@ -1,0 +1,283 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.EditMetadataDialog"
+        Title="Edit Metadata"
+        Width="700"
+        Height="760"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0D0D12"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="TextBlock.field-label">
+            <Setter Property="FontSize"     Value="10"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="Foreground"   Value="#555566"/>
+            <Setter Property="LetterSpacing" Value="1.2"/>
+            <Setter Property="Margin"       Value="0,0,0,4"/>
+        </Style>
+        <Style Selector="TextBox.field">
+            <Setter Property="Background"       Value="#181826"/>
+            <Setter Property="Foreground"       Value="#D0D0E8"/>
+            <Setter Property="BorderBrush"      Value="#2A2A44"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="CornerRadius"     Value="4"/>
+            <Setter Property="Padding"          Value="10,7"/>
+            <Setter Property="FontSize"         Value="13"/>
+            <Setter Property="CaretBrush"       Value="#9FA4FF"/>
+        </Style>
+        <Style Selector="TextBox.field:focus /template/ Border#PART_BorderElement">
+            <Setter Property="BorderBrush" Value="#7B68EE"/>
+        </Style>
+        <Style Selector="TextBlock.dat-value">
+            <Setter Property="FontSize"    Value="13"/>
+            <Setter Property="Foreground"  Value="#3A3A52"/>
+            <Setter Property="Margin"      Value="0,6,0,0"/>
+        </Style>
+        <Style Selector="Button.primary">
+            <Setter Property="Background"   Value="#7B68EE"/>
+            <Setter Property="Foreground"   Value="#FFFFFF"/>
+            <Setter Property="Padding"      Value="22,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="FontWeight"   Value="SemiBold"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"   Value="#1E1E2C"/>
+            <Setter Property="Foreground"   Value="#AAAACC"/>
+            <Setter Property="Padding"      Value="22,8"/>
+            <Setter Property="FontSize"     Value="13"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Cursor"       Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="24,20,24,16" Spacing="4">
+            <TextBlock Text="EDIT METADATA"
+                       FontSize="11" FontWeight="SemiBold" LetterSpacing="1.8"
+                       Foreground="#9FA4FF"/>
+            <TextBlock x:Name="SubtitleLabel"
+                       FontSize="13" Foreground="#666677"
+                       TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+
+        <!-- Fields -->
+        <ScrollViewer Grid.Row="1"
+                      HorizontalScrollBarVisibility="Disabled"
+                      VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="24,0,24,12" Spacing="14">
+
+                <!-- Row: Title | Original Title -->
+                <Grid ColumnDefinitions="*,16,*">
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Classes="field-label" Text="TITLE"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldTitle" Classes="field"/>
+                            <CheckBox x:Name="LockTitle" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Classes="field-label" Text="ORIGINAL TITLE"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldOriginalTitle" Classes="field"/>
+                            <CheckBox x:Name="LockOriginalTitle" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Row: Sort Title | Developer -->
+                <Grid ColumnDefinitions="*,16,*">
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Classes="field-label" Text="SORT TITLE"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldSortTitle" Classes="field"/>
+                            <CheckBox x:Name="LockSortTitle" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Classes="field-label" Text="DEVELOPER"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldDeveloper" Classes="field"/>
+                            <CheckBox x:Name="LockDeveloper" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Row: Publisher | Year -->
+                <Grid ColumnDefinitions="*,16,*">
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Classes="field-label" Text="PUBLISHER"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldPublisher" Classes="field"/>
+                            <CheckBox x:Name="LockPublisher" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Classes="field-label" Text="YEAR"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldYear" Classes="field"/>
+                            <CheckBox x:Name="LockYear" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Row: Region | Languages -->
+                <Grid ColumnDefinitions="*,16,*">
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Classes="field-label" Text="REGION"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldRegion" Classes="field"/>
+                            <CheckBox x:Name="LockRegion" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Classes="field-label" Text="LANGUAGES"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldLanguages" Classes="field"/>
+                            <CheckBox x:Name="LockLanguages" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Row: Genre | Subgenre -->
+                <Grid ColumnDefinitions="*,16,*">
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Classes="field-label" Text="GENRE"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldGenre" Classes="field"/>
+                            <CheckBox x:Name="LockGenre" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Classes="field-label" Text="SUBGENRE"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldSubgenre" Classes="field"/>
+                            <CheckBox x:Name="LockSubgenre" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Row: Players | Release Type -->
+                <Grid ColumnDefinitions="*,16,*">
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Classes="field-label" Text="PLAYERS"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldPlayers" Classes="field"/>
+                            <CheckBox x:Name="LockPlayers" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Classes="field-label" Text="RELEASE TYPE"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldReleaseType" Classes="field"/>
+                            <CheckBox x:Name="LockReleaseType" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Row: Rating | Alternate Titles -->
+                <Grid ColumnDefinitions="*,16,*">
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Classes="field-label" Text="RATING"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldRating" Classes="field"/>
+                            <CheckBox x:Name="LockRating" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Classes="field-label" Text="ALTERNATE TITLES (comma-separated)"/>
+                        <Grid ColumnDefinitions="*,28">
+                            <TextBox x:Name="FieldAlternateTitles" Classes="field"/>
+                            <CheckBox x:Name="LockAlternateTitles" Grid.Column="1" Margin="6,0,0,0"
+                                      VerticalAlignment="Center"
+                                      ToolTip.Tip="Lock this field from automated updates"/>
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Description -->
+                <StackPanel>
+                    <Grid ColumnDefinitions="*,28">
+                        <TextBlock Classes="field-label" Text="DESCRIPTION"/>
+                        <CheckBox x:Name="LockDescription" Grid.Column="1" Margin="6,0,0,4"
+                                  VerticalAlignment="Center"
+                                  ToolTip.Tip="Lock this field from automated updates"/>
+                    </Grid>
+                    <TextBox x:Name="FieldDescription" Classes="field"
+                             AcceptsReturn="True" TextWrapping="Wrap"
+                             Height="90" VerticalContentAlignment="Top"/>
+                </StackPanel>
+
+                <!-- Notes -->
+                <StackPanel>
+                    <Grid ColumnDefinitions="*,28">
+                        <TextBlock Classes="field-label" Text="NOTES"/>
+                        <CheckBox x:Name="LockNotes" Grid.Column="1" Margin="6,0,0,4"
+                                  VerticalAlignment="Center"
+                                  ToolTip.Tip="Lock this field from automated updates"/>
+                    </Grid>
+                    <TextBox x:Name="FieldNotes" Classes="field"
+                             AcceptsReturn="True" TextWrapping="Wrap"
+                             Height="70" VerticalContentAlignment="Top"/>
+                </StackPanel>
+
+                <!-- Read-only: Technical Format | Size -->
+                <Border Height="1" Background="#181826"/>
+                <Grid ColumnDefinitions="*,16,*">
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Classes="field-label" Text="TECHNICAL FORMAT (DAT)"/>
+                        <TextBlock x:Name="FieldFormat" Classes="dat-value"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Classes="field-label" Text="SIZE (DAT)"/>
+                        <TextBlock x:Name="FieldSize" Classes="dat-value"/>
+                    </StackPanel>
+                </Grid>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Footer -->
+        <Border Grid.Row="2" Padding="24,12,24,18"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                <Button Classes="secondary" Content="Cancel" Click="OnCancel"/>
+                <Button Classes="primary"   Content="Save"   Click="OnSave"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

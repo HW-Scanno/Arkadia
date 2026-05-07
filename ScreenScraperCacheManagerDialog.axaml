@@ -1,0 +1,167 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.ScreenScraperCacheManagerDialog"
+        Title="ScreenScraper Cache Packages"
+        Width="640"
+        SizeToContent="Height"
+        MaxHeight="620"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.action">
+            <Setter Property="Background"      Value="{DynamicResource ArkAccent}"/>
+            <Setter Property="Foreground"      Value="#FFFFFF"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"      Value="#1A1A2C"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="Button.danger">
+            <Setter Property="Background"      Value="#2A1215"/>
+            <Setter Property="Foreground"      Value="#EF7070"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderBrush"     Value="#3A2025"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding"         Value="16,10"/>
+            <Setter Property="BorderBrush"     Value="#1A1A28"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,Auto">
+
+        <!-- ── Header ───────────────────────────────────────────────────── -->
+        <StackPanel Grid.Row="0" Margin="20,18,20,14" Spacing="4">
+            <TextBlock Text="ScreenScraper Cache Packages"
+                       FontSize="15" FontWeight="SemiBold" Foreground="#EEEEFF"/>
+            <TextBlock Text="Manage registered offline ScreenScraper cache packages."
+                       FontSize="11" Foreground="#555577"/>
+        </StackPanel>
+
+        <!-- ── Package list ──────────────────────────────────────────────── -->
+        <Border Grid.Row="1" Margin="20,0,20,0"
+                Background="#0A0A12" BorderBrush="#1E1E2C"
+                BorderThickness="1" CornerRadius="6">
+            <StackPanel>
+                <ListBox x:Name="PackageList"
+                         SelectionMode="Single"
+                         SelectionChanged="OnSelectionChanged"
+                         MinHeight="52"
+                         MaxHeight="360"
+                         Background="Transparent"
+                         Padding="0">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:CompileBindings="False">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <StackPanel Grid.Column="0" Spacing="4">
+                                    <TextBlock Text="{Binding FileName}"
+                                               FontSize="12" FontWeight="SemiBold"
+                                               Foreground="#EEEEFF"/>
+                                    <TextBlock FontSize="11" Foreground="#666680"
+                                               TextWrapping="Wrap">
+                                        <Run Text="{Binding SystemName}"/>
+                                        <Run Text=" · "/>
+                                        <Run Text="{Binding SystemId}"/>
+                                        <Run Text=" · "/>
+                                        <Run Text="{Binding GameCount}"/>
+                                        <Run Text=" games · "/>
+                                        <Run Text="{Binding MediaCount}"/>
+                                        <Run Text=" media · built "/>
+                                        <Run Text="{Binding BuiltAtShort}"/>
+                                        <Run Text=" · indexed "/>
+                                        <Run Text="{Binding IndexedAtShort}"/>
+                                    </TextBlock>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center"
+                                            Margin="12,0,0,0">
+                                    <Border IsVisible="{Binding IsAvailable}"
+                                            Background="#152415" CornerRadius="4" Padding="7,3">
+                                        <TextBlock Text="Available"
+                                                   Foreground="#4CAF50"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   LetterSpacing="0.5"/>
+                                    </Border>
+                                    <Border IsVisible="{Binding IsMissing}"
+                                            Background="#2A1515" CornerRadius="4" Padding="7,3">
+                                        <TextBlock Text="Missing"
+                                                   Foreground="#EF5350"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   LetterSpacing="0.5"/>
+                                    </Border>
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <TextBlock x:Name="EmptyMsg"
+                           IsVisible="False"
+                           Text="No cache packages registered. Use Register Package… to add one."
+                           FontSize="11" Foreground="#444455"
+                           HorizontalAlignment="Center"
+                           Margin="20,18,20,18"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Bottom bar ────────────────────────────────────────────────── -->
+        <Border Grid.Row="2" Padding="20,12,20,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock x:Name="ValidationMsg"
+                           Grid.Column="0"
+                           IsVisible="False"
+                           FontSize="11"
+                           VerticalAlignment="Center"
+                           Margin="0,0,12,0"
+                           TextWrapping="Wrap"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <Button Classes="action"
+                            Content="Register Package…"
+                            Click="OnRegisterPackage"/>
+                    <Button Classes="secondary"
+                            Content="Refresh"
+                            Click="OnRefresh"/>
+                    <Button x:Name="VerifyBtn"
+                            Classes="secondary"
+                            Content="Verify Package…"
+                            IsEnabled="False"
+                            Click="OnVerifyPackage"/>
+                    <Button x:Name="DetachBtn"
+                            Classes="secondary"
+                            Content="Detach"
+                            IsEnabled="False"
+                            Click="OnDetach"/>
+                    <Button x:Name="DeleteBtn"
+                            Classes="danger"
+                            Content="Delete File + Detach"
+                            IsEnabled="False"
+                            Click="OnDeleteAndDetach"/>
+                    <Button Classes="secondary"
+                            Content="Close"
+                            Click="OnClose"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

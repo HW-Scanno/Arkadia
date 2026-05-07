@@ -212,6 +212,71 @@ public sealed class CatalogService
                 working_note  TEXT,
                 is_manual     INTEGER NOT NULL DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS metadata_value_mappings (
+                field          TEXT NOT NULL,
+                match_value    TEXT NOT NULL,
+                replacement    TEXT NOT NULL,
+                enabled        INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (field, match_value)
+            );
+
+            CREATE TABLE IF NOT EXISTS cache_packages (
+                id                INTEGER PRIMARY KEY,
+                package_path      TEXT NOT NULL UNIQUE,
+                provider          TEXT NOT NULL,
+                cache_provider_id TEXT NOT NULL,
+                system_id         TEXT NOT NULL,
+                system_name       TEXT NOT NULL,
+                game_count        INTEGER NOT NULL DEFAULT 0,
+                built_at_utc      TEXT NOT NULL DEFAULT '',
+                indexed_at_utc    TEXT NOT NULL DEFAULT '',
+                manifest_json     TEXT NOT NULL DEFAULT '',
+                status            TEXT NOT NULL DEFAULT 'indexed'
+            );
+
+            CREATE TABLE IF NOT EXISTS cache_package_games (
+                id                INTEGER PRIMARY KEY,
+                package_id        INTEGER NOT NULL REFERENCES cache_packages(id) ON DELETE CASCADE,
+                provider_game_id  TEXT NOT NULL,
+                system_id         TEXT NOT NULL,
+                title             TEXT NOT NULL,
+                has_payload       INTEGER NOT NULL DEFAULT 0,
+                has_media         INTEGER NOT NULL DEFAULT 0,
+                payload_zip_entry TEXT NOT NULL DEFAULT '',
+                scraped_at_utc    TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cpg_package_id    ON cache_package_games(package_id);
+            CREATE INDEX IF NOT EXISTS idx_cpg_system_title  ON cache_package_games(system_id, title);
+            CREATE INDEX IF NOT EXISTS idx_cpg_provider_game ON cache_package_games(provider_game_id);
+
+            CREATE TABLE IF NOT EXISTS cache_package_media (
+                id               INTEGER PRIMARY KEY,
+                game_row_id      INTEGER NOT NULL REFERENCES cache_package_games(id) ON DELETE CASCADE,
+                provider_game_id TEXT NOT NULL,
+                media_type       TEXT NOT NULL,
+                region           TEXT NOT NULL DEFAULT '',
+                index_n          INTEGER NOT NULL DEFAULT 0,
+                zip_entry        TEXT NOT NULL,
+                file_ext         TEXT NOT NULL DEFAULT '',
+                file_size        INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cpm_game_type ON cache_package_media(game_row_id, media_type);
+            CREATE INDEX IF NOT EXISTS idx_cpm_prov_type ON cache_package_media(provider_game_id, media_type);
+
+            CREATE TABLE IF NOT EXISTS cache_package_search_terms (
+                id              INTEGER PRIMARY KEY,
+                package_game_id INTEGER NOT NULL REFERENCES cache_package_games(id) ON DELETE CASCADE,
+                term            TEXT NOT NULL,
+                term_type       TEXT NOT NULL,
+                normalized_term TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_cpst_normalized_term ON cache_package_search_terms(normalized_term);
+            CREATE INDEX IF NOT EXISTS idx_cpst_game_id         ON cache_package_search_terms(package_game_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_cpst_unique   ON cache_package_search_terms(package_game_id, normalized_term);
             """;
         cmd.ExecuteNonQuery();
 
@@ -369,6 +434,34 @@ public sealed class CatalogService
                 ('custom',  'Custom',        1);
             """;
         authSeed.ExecuteNonQuery();
+
+        // ── Seed metadata_value_mappings (INSERT OR IGNORE — safe to re-run) ─
+        using var mapSeed = conn.CreateCommand();
+        mapSeed.CommandText = """
+            INSERT OR IGNORE INTO metadata_value_mappings(field, match_value, replacement, enabled) VALUES
+                -- region
+                ('region', 'wor',    'World',         1),
+                ('region', 'world',  'World',         1),
+                ('region', 'eu',     'Europe',        1),
+                ('region', 'eur',    'Europe',        1),
+                ('region', 'europe', 'Europe',        1),
+                ('region', 'us',     'USA',           1),
+                ('region', 'usa',    'USA',           1),
+                ('region', 'jp',     'Japan',         1),
+                ('region', 'jap',    'Japan',         1),
+                ('region', 'japan',  'Japan',         1),
+                ('region', 'ss',     'ScreenScraper', 1),
+                -- release_type
+                ('release_type', 'fantranslation',  'Fan Translation', 1),
+                ('release_type', 'fan-translation', 'Fan Translation', 1),
+                ('release_type', 'homebrew',        'Homebrew',        1),
+                ('release_type', 'demo',            'Demo',            1),
+                ('release_type', 'prototype',       'Prototype',       1),
+                ('release_type', 'proto',           'Prototype',       1),
+                ('release_type', 'hack',            'Hack',            1),
+                ('release_type', 'retail',          'Retail',          1);
+            """;
+        mapSeed.ExecuteNonQuery();
     }
 
     // ── Hardware Families ─────────────────────────────────────────────────────
@@ -2112,6 +2205,130 @@ public sealed class CatalogService
         cmd.Parameters.AddWithValue("$itemId", itemId);
         cmd.Parameters.AddWithValue("$state",  state);
         cmd.Parameters.AddWithValue("$note",   (object?)note ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    // ── Metadata Value Mappings ───────────────────────────────────────────────
+
+    public List<MetadataValueMappingRecord> LoadMetadataValueMappings()
+    {
+        var list = new List<MetadataValueMappingRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT field, match_value, replacement, enabled FROM metadata_value_mappings";
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            list.Add(new MetadataValueMappingRecord(
+                Field:       reader.GetString(0),
+                MatchValue:  reader.GetString(1),
+                Replacement: reader.GetString(2),
+                Enabled:     reader.GetInt32(3) != 0));
+        return list;
+    }
+
+    public void SaveMetadataValueMapping(string field, string matchValue, string replacement, bool enabled)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO metadata_value_mappings(field, match_value, replacement, enabled)
+            VALUES($field, $matchValue, $replacement, $enabled)
+            ON CONFLICT(field, match_value) DO UPDATE SET
+                replacement = excluded.replacement,
+                enabled     = excluded.enabled
+            """;
+        cmd.Parameters.AddWithValue("$field",       field);
+        cmd.Parameters.AddWithValue("$matchValue",  matchValue);
+        cmd.Parameters.AddWithValue("$replacement", replacement);
+        cmd.Parameters.AddWithValue("$enabled",     enabled ? 1 : 0);
+        cmd.ExecuteNonQuery();
+    }
+
+    public void DeleteMetadataValueMapping(string field, string matchValue)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM metadata_value_mappings WHERE field=$field AND match_value=$matchValue";
+        cmd.Parameters.AddWithValue("$field",      field);
+        cmd.Parameters.AddWithValue("$matchValue", matchValue);
+        cmd.ExecuteNonQuery();
+    }
+
+    public string NormalizeMetadataValue(string field, string value)
+        => MetadataValueNormalizer.Normalize(field, value, LoadMetadataValueMappings());
+
+    public string DbPath => Path.Combine(_dataDir, "catalog.db");
+
+    /// <summary>
+    /// Returns true when at least one indexed cache package exists on disk,
+    /// has status='indexed', and contains at least one game with a payload.
+    /// </summary>
+    public bool HasUsableCachePackages()
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT cp.package_path
+            FROM cache_packages cp
+            WHERE EXISTS (
+                SELECT 1 FROM cache_package_games g
+                WHERE g.package_id = cp.id AND g.has_payload = 1)
+            LIMIT 50
+            """;
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            if (File.Exists(reader.GetString(0))) return true;
+        }
+        return false;
+    }
+
+    // ── Cache package management ──────────────────────────────────────────────
+
+    public IReadOnlyList<ScreenScraperCachePackageRecord> LoadCachePackages()
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT  cp.id,
+                    cp.package_path,
+                    cp.system_name,
+                    cp.system_id,
+                    cp.game_count,
+                    cp.built_at_utc,
+                    cp.indexed_at_utc,
+                    (SELECT COUNT(*) FROM cache_package_media m
+                     INNER JOIN cache_package_games g ON g.id = m.game_row_id
+                     WHERE g.package_id = cp.id) AS media_count
+            FROM    cache_packages cp
+            WHERE   cp.provider = 'screenscraper'
+            ORDER BY cp.indexed_at_utc DESC
+            """;
+        var list = new List<ScreenScraperCachePackageRecord>();
+        using var rdr = cmd.ExecuteReader();
+        while (rdr.Read())
+        {
+            var path = rdr.GetString(1);
+            list.Add(new ScreenScraperCachePackageRecord(
+                Id:          rdr.GetInt32(0),
+                PackagePath: path,
+                SystemName:  rdr.GetString(2),
+                SystemId:    rdr.GetString(3),
+                GameCount:   rdr.GetInt32(4),
+                BuiltAt:     rdr.GetString(5),
+                IndexedAt:   rdr.GetString(6),
+                MediaCount:  (int)rdr.GetInt64(7),
+                Status:      File.Exists(path) ? "Available" : "Missing"));
+        }
+        return list;
+    }
+
+    public void DetachCachePackage(int packageId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM cache_packages WHERE id = @id";
+        cmd.Parameters.AddWithValue("@id", packageId);
         cmd.ExecuteNonQuery();
     }
 

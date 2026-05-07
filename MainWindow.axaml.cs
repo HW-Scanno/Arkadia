@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Threading.Tasks;
@@ -9,6 +11,7 @@ using System.Text;
 using Arkadia.Data;
 using Arkadia.Ingestion;
 using Arkadia.Library;
+using Arkadia.Providers;
 using Arkadia.Pending;
 using Arkadia.Disks;
 using Arkadia.Staging;
@@ -36,11 +39,18 @@ public partial class MainWindow : Window
     private static readonly string _dataDir = Path.Combine(AppContext.BaseDirectory, "data");
 
     private readonly CatalogService _catalog = new(_dataDir);
+    private IReadOnlyList<Arkadia.Data.MetadataValueMappingRecord> _metadataMappings = [];
+    private readonly ObservableCollection<MappingRowVm> _mappingRows = [];
+    private readonly Arkadia.Providers.ScreenScraperImportService _scrapeImport = new(_dataDir);
+    private Arkadia.Providers.ScreenScraperCacheImportService? _cacheImport;
     private bool _showDebugArtifactInfo;
 
     public MainWindow()
     {
         InitializeComponent();
+        ArkadiaFolders.EnsureCreated(AppContext.BaseDirectory);
+        SizeChanged += (_, _) => UpdateCatalogResponsiveLayout();
+        _metadataMappings      = _catalog.LoadMetadataValueMappings();
         _showDebugArtifactInfo = _catalog.GetBoolSetting("show_debug_artifact_info");
 
         _navButtons.AddRange([
@@ -1075,6 +1085,7 @@ public partial class MainWindow : Window
         ScraperSSPassword.Text    = _catalog.GetSetting("screenscraper_password");
         ScraperSSDevId.Text       = _catalog.GetSetting("screenscraper_dev_id");
         ScraperSSDevPassword.Text = _catalog.GetSetting("screenscraper_dev_password");
+        ScraperSSSoftname.Text = _catalog.GetSetting("screenscraper_softname");
         ScraperTestStatus.IsVisible = false;
     }
 
@@ -1084,6 +1095,15 @@ public partial class MainWindow : Window
         _catalog.SetSetting("screenscraper_password",     ScraperSSPassword.Text?.Trim()    ?? "");
         _catalog.SetSetting("screenscraper_dev_id",       ScraperSSDevId.Text?.Trim()       ?? "");
         _catalog.SetSetting("screenscraper_dev_password", ScraperSSDevPassword.Text?.Trim() ?? "");
+        var rawSoftname = ScraperSSSoftname.Text?.Trim() ?? "";
+        if (rawSoftname.Length == 0)
+        {
+            ScraperTestStatus.Text      = "ScreenScraper Softname is required.";
+            ScraperTestStatus.Foreground = new SolidColorBrush(Color.Parse("#EF5350"));
+            ScraperTestStatus.IsVisible  = true;
+            return;
+        }
+        _catalog.SetSetting("screenscraper_softname", rawSoftname);
         ScraperTestStatus.Text      = "Saved.";
         ScraperTestStatus.Foreground = new SolidColorBrush(Color.Parse("#4CAF50"));
         ScraperTestStatus.IsVisible  = true;
@@ -1095,11 +1115,19 @@ public partial class MainWindow : Window
         var password    = ScraperSSPassword.Text?.Trim()    ?? "";
         var devId       = ScraperSSDevId.Text?.Trim()       ?? "";
         var devPassword = ScraperSSDevPassword.Text?.Trim() ?? "";
+        var softName    = ScraperSSSoftname.Text?.Trim() ?? "";
 
         if (username.Length == 0 || password.Length == 0 || devId.Length == 0 || devPassword.Length == 0)
         {
             ScraperTestStatus.Text      = "ScreenScraper API requires both user credentials and API developer credentials.";
             ScraperTestStatus.Foreground = new SolidColorBrush(Color.Parse("#FFD54F"));
+            ScraperTestStatus.IsVisible  = true;
+            return;
+        }
+        if (softName.Length == 0)
+        {
+            ScraperTestStatus.Text      = "ScreenScraper Softname is required.";
+            ScraperTestStatus.Foreground = new SolidColorBrush(Color.Parse("#EF5350"));
             ScraperTestStatus.IsVisible  = true;
             return;
         }
@@ -1112,7 +1140,7 @@ public partial class MainWindow : Window
         try
         {
             var display = await Arkadia.Providers.ScreenScraperClient.TestConnectionAsync(
-                devId, devPassword, username, password);
+                devId, devPassword, username, password, softName: softName);
             ScraperTestStatus.Text      = $"Connected — logged in as {display}.";
             ScraperTestStatus.Foreground = new SolidColorBrush(Color.Parse("#4CAF50"));
         }
@@ -6427,6 +6455,47 @@ public partial class MainWindow : Window
         DashPipelineSource.Text   = CountFiles(Path.Combine(appRoot, "source")).ToString("N0");
         DashPipelineArchive.Text  = artifactsStored.ToString("N0");
 
+        // ── Scrape Staging ────────────────────────────────────────────────────
+        var stagingService = new Arkadia.Data.ScreenScraperStagingService(appRoot);
+        var topStaging     = stagingService.LoadTopBySize(5);
+        DashStagingPanel.Children.Clear();
+        DashStagingEmpty.IsVisible = topStaging.Count == 0;
+        foreach (var rec in topStaging)
+        {
+            var row = new Grid
+            {
+                ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("*,Auto,Auto"),
+                Margin            = new Avalonia.Thickness(0, 0, 0, 3),
+            };
+            var name = new TextBlock
+            {
+                Text       = rec.PackageName,
+                FontSize   = 11,
+                Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#CCCCDD")),
+            };
+            var size = new TextBlock
+            {
+                Text       = rec.SizeDisplay,
+                FontSize   = 11,
+                Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#888899")),
+                Margin     = new Avalonia.Thickness(12, 0, 0, 0),
+            };
+            var pct = new TextBlock
+            {
+                Text       = rec.CompletionDisplay,
+                FontSize   = 11,
+                Foreground = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#666680")),
+                Margin     = new Avalonia.Thickness(12, 0, 0, 0),
+            };
+            Avalonia.Controls.Grid.SetColumn(name, 0);
+            Avalonia.Controls.Grid.SetColumn(size, 1);
+            Avalonia.Controls.Grid.SetColumn(pct,  2);
+            row.Children.Add(name);
+            row.Children.Add(size);
+            row.Children.Add(pct);
+            DashStagingPanel.Children.Add(row);
+        }
+
         LoadLatestLogs();
     }
 
@@ -7419,11 +7488,17 @@ public partial class MainWindow : Window
     private List<LibraryEntry> _catalogDatasetEntries = [];
     private List<LibraryEntry> _filteredCatalogEntries = [];
     private LibraryEntry?      _catalogSelected;
-    private record struct GalleryItem(string Path, bool IsVideo, string Label);
 
     private bool               _catalogGridMode;
     private Bitmap?            _catalogCoverBitmap;
     private Bitmap?            _catalogPhysicalBitmap;
+    private readonly List<CoverItem> _coverItems = [];
+    private int                _coverIndex;
+    private readonly List<ExtrasItem> _extrasItems = [];
+    private int                _extrasIndex;
+    private Bitmap?            _extrasBitmap;
+    private readonly List<string> _manualPaths = [];
+    private readonly Dictionary<string, Bitmap?> _badgeIconCache = new();
     private Bitmap?            _galleryBitmap;
     private readonly List<GalleryItem> _galleryItems = [];
     private int                _galleryIndex;
@@ -7431,6 +7506,8 @@ public partial class MainWindow : Window
     private MediaPlayer?       _mediaPlayer;
     private LibVLCSharp.Avalonia.VideoView? _videoView;
     private bool               _libVlcInitFailed;
+    private double             _catalogLayoutScale = -1;
+    private readonly MediaDiscoveryService _mediaDiscovery = new(_dataDir);
 
     private void InitCatalog()
     {
@@ -7462,6 +7539,7 @@ public partial class MainWindow : Window
         CatalogContextDatLine.SelectionChanged  += OnCatalogContextDatLineChanged;
 
         LoadCatalogDataset(activePlatform, CatalogContextDatLine.SelectedItem as string);
+        UpdateCatalogResponsiveLayout();
     }
 
     private void OnCatalogContextPlatformChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
@@ -7680,9 +7758,51 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnCatalogManageMedia(object? sender, RoutedEventArgs e)
+    {
+        if (_catalogSelected is null) return;
+        var dialog = new CatalogManageMediaDialog(_catalogSelected, _dataDir);
+        dialog.ShowDialog(this);
+    }
+
+    private void OnCatalogBulkScrape(object? sender, RoutedEventArgs e)
+    {
+        _cacheImport ??= new Arkadia.Providers.ScreenScraperCacheImportService(_dataDir, _catalog);
+        var svc    = new CatalogBulkScrapeService(_dataDir, _catalog, _cacheImport);
+        var dialog = new CatalogBulkScrapeDialog(
+            svc, _catalogDatasetEntries, _catalogSelected, _metadataMappings);
+        dialog.ShowDialog(this);
+    }
+
+    private async void OnCatalogEditExtraNotes(object? sender, RoutedEventArgs e)
+    {
+        if (_catalogSelected is null) return;
+        var entry        = _catalogSelected;
+        var displayTitle = LibraryTitleResolver.Resolve(entry.Name, "catalog", entry.Metadata?.Title);
+        var store        = new Arkadia.Data.DatLineStore(entry.DbPath);
+        var current      = store.GetReleaseExtraNotes(entry.ReleaseId);
+
+        var dialog = new CatalogEditExtraNotesDialog(displayTitle, current);
+        var result = await dialog.ShowDialog<string?>(this);
+        if (result is null) return; // cancelled
+
+        store.SaveReleaseExtraNotes(entry.ReleaseId, result);
+        RefreshCatalogExtraNotes(store, entry.ReleaseId);
+    }
+
+    private void RefreshCatalogExtraNotes(Arkadia.Data.DatLineStore store, string releaseId)
+    {
+        var notes = store.GetReleaseExtraNotes(releaseId) ?? "";
+        CatalogExtraNotes.Text       = notes.Length > 0 ? notes : "No extra notes.";
+        CatalogExtraNotes.Foreground = new SolidColorBrush(
+            Color.Parse(notes.Length > 0 ? "#AAAABC" : "#666677"));
+    }
+
     private void UpdateCatalogHero(LibraryEntry? entry)
     {
         _catalogSelected = entry;
+        CatalogManageMediaBtn.IsEnabled = entry is not null;
+        CatalogEditNotesBtn.IsEnabled   = entry is not null;
 
         if (entry is null)
         {
@@ -7704,14 +7824,14 @@ public partial class MainWindow : Window
         var alts = string.Empty;
         if (entry.Metadata?.AlternateTitles is { Length: > 0 } rawAlts)
         {
-            alts = string.Join(", ", rawAlts
+            alts = string.Join(" · ", rawAlts
                 .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
                 .Where(t => !t.Equals(displayTitle, StringComparison.OrdinalIgnoreCase) &&
                             !t.Equals(entry.Name,    StringComparison.OrdinalIgnoreCase))
                 .Take(3));
         }
-        CatalogHeroAlts.Text      = alts;
-        CatalogHeroAlts.IsVisible = alts.Length > 0;
+        CatalogHeroAltNames.Text      = alts;
+        CatalogHeroAltNames.IsVisible = alts.Length > 0;
 
         // TODO: add a large region flag to the hero header once region-keyed flag assets are available.
         //       The flag asset system is currently language-keyed (FlagImageLoader uses language codes).
@@ -7729,25 +7849,9 @@ public partial class MainWindow : Window
             });
         }
 
-        // Cover image — clear Source before Dispose so Avalonia's render pipeline
-        // never accesses the native bitmap handle after it has been freed.
-        CatalogHeroCover.Source = null;
-        _catalogCoverBitmap?.Dispose();
-        _catalogCoverBitmap = null;
-
-        var coverPath = MediaStore.FindCoverFront(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name);
-        _catalogCoverBitmap = CoverLoader.TryLoad(coverPath);
-        if (_catalogCoverBitmap is not null)
-        {
-            CatalogHeroCover.Source      = _catalogCoverBitmap;
-            CatalogHeroCover.IsVisible   = true;
-            CatalogHeroNoCover.IsVisible = false;
-        }
-        else
-        {
-            CatalogHeroCover.IsVisible   = false;
-            CatalogHeroNoCover.IsVisible = true;
-        }
+        // Cover gallery
+        BuildCoverGallery(entry);
+        ShowCoverItem(0);
 
         // Physical media — texture first, fallback to flat.
         CatalogPhysicalMediaImage.Source = null;
@@ -7773,29 +7877,27 @@ public partial class MainWindow : Window
         BuildGallery(entry);
         ShowGalleryItem(0);
 
-        // Badges — hide rows whose value is unavailable
-        static void SetBadge(Avalonia.Controls.Border border, Avalonia.Controls.TextBlock text, string value)
-        {
-            text.Text        = value;
-            border.IsVisible = value != "—";
-        }
+        // Extras gallery
+        BuildExtras(entry);
+        ShowExtrasItem(0);
 
-        SetBadge(CatalogBadgeStatusBorder,  CatalogBadgeStatus,  entry.Status);
-        SetBadge(CatalogBadgeRegionBorder,  CatalogBadgeRegion,  entry.Region.Length  > 0 ? entry.Region  : "—");
-        SetBadge(CatalogBadgeSystemBorder,  CatalogBadgeSystem,  entry.Platform.Length > 0 ? entry.Platform : entry.HardwareFamilyId);
-        SetBadge(CatalogBadgeYearBorder,    CatalogBadgeYear,    entry.Metadata?.Year is { Length: > 0 } y ? y : "—");
+        // Manuals
+        BuildManuals(entry);
+        RefreshManualButtons();
+
+        // Badges — hide rows whose value is unavailable
+        var badgeRegion = Arkadia.Data.MetadataValueNormalizer.Normalize(
+            "region", entry.Region, _metadataMappings);
+        var badgeType   = Arkadia.Data.MetadataValueNormalizer.Normalize(
+            "release_type", entry.Metadata?.ReleaseType ?? "", _metadataMappings);
+        SetBadge(CatalogBadgeStatusBorder,  CatalogBadgeStatusIcon,  CatalogBadgeStatus,  entry.Status,                                                                 "status", entry.Status);
+        SetBadge(CatalogBadgeRegionBorder,  CatalogBadgeRegionIcon,  CatalogBadgeRegion,  badgeRegion.Length > 0 ? badgeRegion : "—",                                   "region", badgeRegion);
+        SetBadge(CatalogBadgeSystemBorder,  CatalogBadgeSystemIcon,  CatalogBadgeSystem,  entry.Platform.Length > 0 ? entry.Platform : entry.HardwareFamilyId,           "system", entry.Platform.Length > 0 ? entry.Platform : entry.HardwareFamilyId);
+        SetBadge(CatalogBadgeYearBorder,    CatalogBadgeYearIcon,    CatalogBadgeYear,    entry.Metadata?.Year is { Length: > 0 } y ? y : "—",                          null,     null);
         CatalogBadgeGenreBorder.IsVisible   = false;
         CatalogBadgePlayersBorder.IsVisible = false;
-        SetBadge(CatalogBadgeTypeBorder,    CatalogBadgeType,    entry.Format.Length  > 0 ? entry.Format  : "—");
-        SetBadge(CatalogBadgeSizeBorder,    CatalogBadgeSize,    entry.Size.Length    > 0 ? entry.Size    : "—");
-
-        // Metadata fields
-        CatalogHeroStatus.Text    = entry.Status;
-        CatalogHeroStatus.Foreground = entry.StatusBrush;
-        CatalogHeroRegion.Text    = entry.Region;
-        CatalogHeroLangs.Text     = entry.Languages;
-        CatalogHeroFormat.Text    = entry.Format;
-        CatalogHeroSize.Text      = entry.Size;
+        SetBadge(CatalogBadgeTypeBorder,    CatalogBadgeTypeIcon,    CatalogBadgeType,    badgeType.Length > 0 ? badgeType : "—",                                        "type",   badgeType);
+        SetBadge(CatalogBadgeSizeBorder,    CatalogBadgeSizeIcon,    CatalogBadgeSize,    entry.Size.Length    > 0 ? entry.Size    : "—",                                    null,     null);
 
         // Checklist
         static void SetChk(TextBlock icon, bool present)
@@ -7829,12 +7931,19 @@ public partial class MainWindow : Window
         CatalogHeroDesc.Text      = desc.Length > 0 ? desc : "No description available.";
         CatalogHeroDesc.Foreground = new SolidColorBrush(Color.Parse(desc.Length > 0 ? "#AAAABC" : "#666677"));
 
+        // Extra Notes — Arkadia-owned, never touched by provider scrapes
+        if (entry.DbPath.Length > 0 && entry.ReleaseId.Length > 0)
+            RefreshCatalogExtraNotes(new Arkadia.Data.DatLineStore(entry.DbPath), entry.ReleaseId);
+        else
+        {
+            CatalogExtraNotes.Text       = "No extra notes.";
+            CatalogExtraNotes.Foreground = new SolidColorBrush(Color.Parse("#666677"));
+        }
+
         // Scrape status — clear on hero change
         CatalogScrapeStatus.IsVisible = false;
         CatalogScrapeStatus.Text      = "";
 
-        // DAT name (technical identity)
-        CatalogHeroDatName.Text = entry.Name;
     }
 
     // ── Media gallery ─────────────────────────────────────────────────────────
@@ -7879,17 +7988,58 @@ public partial class MainWindow : Window
         }
     }
 
+    // ── Catalog scale-based layout ────────────────────────────────────────────
+    // Baseline: 2560×1080 (ultrawide workspace the layout was calibrated on).
+    // scale = min(w/2560, h/1080) clamped to [0.70, 1.45].
+
+    internal static double ComputeCatalogLayoutScale(double width, double height)
+    {
+        if (width <= 0 || height <= 0) return 1.0;
+        double scale = Math.Min(width / 2560.0, height / 1080.0);
+        return Math.Clamp(scale, 0.70, 1.45);
+    }
+
+    private void UpdateCatalogResponsiveLayout()
+    {
+        double newScale = ComputeCatalogLayoutScale(Bounds.Width, Bounds.Height);
+        if (Math.Abs(newScale - _catalogLayoutScale) <= 0.02) return;
+        _catalogLayoutScale = newScale;
+        Debug.WriteLine($"[CatalogLayout] scale={newScale:F3} width={Bounds.Width:F0} height={Bounds.Height:F0}");
+        ApplyCatalogLayout(newScale);
+    }
+
+    private void ApplyCatalogLayout(double scale)
+    {
+        CatalogCoverColumn.Width            = Math.Round(600 * scale);
+        CatalogCoverViewport.Width          = Math.Round(600 * scale);
+        CatalogCoverViewport.Height         = Math.Round(800 * scale);
+        CatalogMediaWide.Width              = Math.Round(470 * scale);
+        CatalogMediaViewport.Width          = Math.Round(470 * scale);
+        CatalogMediaViewport.Height         = Math.Round(330 * scale);
+        CatalogExtrasViewport.Width         = Math.Round(470 * scale);
+        CatalogExtrasViewport.Height        = Math.Round(140 * scale);
+        CatalogPhysicalMediaViewport.Width  = Math.Round(480 * scale);
+        CatalogPhysicalMediaViewport.Height = Math.Round(260 * scale);
+
+        double padH = Math.Clamp(Math.Round(22 * scale), 12, 32);
+        double padV = Math.Clamp(Math.Round(12 * scale), 6,  18);
+        var badgePad = new Avalonia.Thickness(padH, padV);
+
+        Border[] badgeBorders =
+        [
+            CatalogBadgeStatusBorder,  CatalogBadgeSystemBorder,
+            CatalogBadgeYearBorder,    CatalogBadgeRegionBorder,
+            CatalogBadgeGenreBorder,   CatalogBadgePlayersBorder,
+            CatalogBadgeTypeBorder,    CatalogBadgeSizeBorder,
+        ];
+        foreach (var b in badgeBorders)
+            b.Padding = badgePad;
+    }
+
     private void BuildGallery(LibraryEntry entry)
     {
         _galleryItems.Clear();
-        foreach (var p in MediaStore.FindVideos(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name))
-            _galleryItems.Add(new GalleryItem(p, true, "Video"));
-        foreach (var p in MediaStore.FindTitleScreenshots(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name))
-            _galleryItems.Add(new GalleryItem(p, false, "Title"));
-        foreach (var p in MediaStore.FindScreenshots(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name))
-            _galleryItems.Add(new GalleryItem(p, false, "Gameplay"));
-        foreach (var p in MediaStore.FindFanart(_dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name))
-            _galleryItems.Add(new GalleryItem(p, false, "Fanart"));
+        _galleryItems.AddRange(_mediaDiscovery.FindGalleryItems(entry));
     }
 
     private void ShowGalleryItem(int index)
@@ -7905,18 +8055,16 @@ public partial class MainWindow : Window
             CatalogMediaNoItem.Text           = "No media";
             CatalogMediaNoItem.IsVisible      = true;
             CatalogMediaImage.IsVisible       = false;
-            CatalogMediaTypeLabel.Text        = "";
             CatalogMediaPrev.IsVisible        = false;
             CatalogMediaNext.IsVisible        = false;
             CatalogVideoPlayOverlay.IsVisible = false;
-            RefreshDots();
+            RefreshMediaCounter();
             return;
         }
 
         _galleryIndex = Math.Clamp(index, 0, _galleryItems.Count - 1);
         var item = _galleryItems[_galleryIndex];
 
-        CatalogMediaTypeLabel.Text   = item.Label;
         CatalogMediaNoItem.IsVisible = false;
         CatalogMediaPrev.IsVisible   = _galleryItems.Count > 1;
         CatalogMediaNext.IsVisible   = _galleryItems.Count > 1;
@@ -7970,7 +8118,7 @@ public partial class MainWindow : Window
             }
         }
 
-        RefreshDots();
+        RefreshMediaCounter();
     }
 
     private void StopVideo()
@@ -7980,23 +8128,15 @@ public partial class MainWindow : Window
         CatalogVideoPlayOverlay.IsVisible = false;
     }
 
-    private void RefreshDots()
+    private void RefreshMediaCounter()
     {
-        CatalogMediaDots.Children.Clear();
-        int count = Math.Min(_galleryItems.Count, 12);
-        if (count == 0)
+        if (_galleryItems.Count == 0)
         {
-            CatalogMediaDots.Children.Add(new TextBlock
-                { Text = "●", FontSize = 11, Foreground = new SolidColorBrush(Color.Parse("#55557A")) });
+            CatalogMediaCounter.Text = string.Empty;
             return;
         }
-        for (int i = 0; i < count; i++)
-            CatalogMediaDots.Children.Add(new TextBlock
-            {
-                Text       = "●",
-                FontSize   = 11,
-                Foreground = new SolidColorBrush(Color.Parse(i == _galleryIndex ? "#9FA4FF" : "#55557A")),
-            });
+        var item = _galleryItems[_galleryIndex];
+        CatalogMediaCounter.Text = $"{item.Label} · {_galleryIndex + 1} of {_galleryItems.Count}";
     }
 
     private void OnCatalogVideoPlay(object? sender, RoutedEventArgs e)
@@ -8004,6 +8144,7 @@ public partial class MainWindow : Window
         CatalogVideoPlayOverlay.IsVisible = false;
         if (_galleryItems.Count == 0 || _galleryIndex >= _galleryItems.Count) return;
         var item = _galleryItems[_galleryIndex];
+
         if (!item.IsVideo) return;
 
         if (_libVlcInitFailed || _libVlc is null || _mediaPlayer is null)
@@ -8039,6 +8180,211 @@ public partial class MainWindow : Window
         ShowGalleryItem((_galleryIndex + 1) % _galleryItems.Count);
     }
 
+    // ── Cover gallery ─────────────────────────────────────────────────────────
+
+    private void BuildCoverGallery(LibraryEntry entry)
+    {
+        _coverItems.Clear();
+        _coverItems.AddRange(_mediaDiscovery.FindCoverItems(entry));
+    }
+
+    private void ShowCoverItem(int index)
+    {
+        CatalogHeroCover.Source = null;
+        _catalogCoverBitmap?.Dispose();
+        _catalogCoverBitmap = null;
+
+        if (_coverItems.Count == 0)
+        {
+            _coverIndex = 0;
+            CatalogHeroCover.IsVisible    = false;
+            CatalogHeroNoCover.IsVisible  = true;
+            CatalogCoverPrev.IsVisible    = false;
+            CatalogCoverNext.IsVisible    = false;
+            CatalogCoverCounter.Text      = string.Empty;
+            RefreshCoverCounter();
+            return;
+        }
+
+        _coverIndex = Math.Clamp(index, 0, _coverItems.Count - 1);
+        var item = _coverItems[_coverIndex];
+
+        _catalogCoverBitmap = CoverLoader.TryLoad(item.Path);
+        if (_catalogCoverBitmap is not null)
+        {
+            CatalogHeroCover.Source      = _catalogCoverBitmap;
+            CatalogHeroCover.IsVisible   = true;
+            CatalogHeroNoCover.IsVisible = false;
+        }
+        else
+        {
+            CatalogHeroCover.IsVisible   = false;
+            CatalogHeroNoCover.IsVisible = true;
+        }
+
+        bool multi = _coverItems.Count > 1;
+        CatalogCoverPrev.IsVisible  = multi;
+        CatalogCoverNext.IsVisible  = multi;
+        RefreshCoverCounter();
+    }
+
+    private void RefreshCoverCounter()
+    {
+        if (_coverItems.Count == 0)
+        {
+            CatalogCoverCounter.Text = string.Empty;
+            return;
+        }
+        var item = _coverItems[_coverIndex];
+        CatalogCoverCounter.Text = $"{item.Label} · {_coverIndex + 1} of {_coverItems.Count}";
+    }
+
+    private void OnCatalogCoverPrev(object? sender, RoutedEventArgs e)
+    {
+        if (_coverItems.Count == 0) return;
+        ShowCoverItem((_coverIndex - 1 + _coverItems.Count) % _coverItems.Count);
+    }
+
+    private void OnCatalogCoverNext(object? sender, RoutedEventArgs e)
+    {
+        if (_coverItems.Count == 0) return;
+        ShowCoverItem((_coverIndex + 1) % _coverItems.Count);
+    }
+
+    // ── Extras gallery ────────────────────────────────────────────────────────
+
+    private void BuildExtras(LibraryEntry entry)
+    {
+        _extrasBitmap?.Dispose();
+        _extrasBitmap = null;
+        _extrasItems.Clear();
+        _extrasItems.AddRange(_mediaDiscovery.FindExtrasItems(entry));
+    }
+
+    private void ShowExtrasItem(int index)
+    {
+        CatalogExtrasImage.Source = null;
+        _extrasBitmap?.Dispose();
+        _extrasBitmap = null;
+
+        if (_extrasItems.Count == 0)
+        {
+            _extrasIndex = 0;
+            CatalogExtrasImage.IsVisible  = false;
+            CatalogExtrasNoItem.IsVisible = true;
+            CatalogExtrasPrev.IsVisible   = false;
+            CatalogExtrasNext.IsVisible   = false;
+            CatalogExtrasCounter.Text     = string.Empty;
+            return;
+        }
+
+        _extrasIndex = Math.Clamp(index, 0, _extrasItems.Count - 1);
+        var item = _extrasItems[_extrasIndex];
+
+        _extrasBitmap = CoverLoader.TryLoad(item.Path);
+        CatalogExtrasImage.Source    = _extrasBitmap;
+        CatalogExtrasImage.IsVisible = _extrasBitmap is not null;
+        CatalogExtrasNoItem.IsVisible = _extrasBitmap is null;
+
+        bool multi = _extrasItems.Count > 1;
+        CatalogExtrasPrev.IsVisible  = multi;
+        CatalogExtrasNext.IsVisible  = multi;
+        CatalogExtrasCounter.Text    = $"{item.Label} · {_extrasIndex + 1} of {_extrasItems.Count}";
+    }
+
+    private void OnCatalogExtrasPrev(object? sender, RoutedEventArgs e)
+    {
+        if (_extrasItems.Count == 0) return;
+        ShowExtrasItem((_extrasIndex - 1 + _extrasItems.Count) % _extrasItems.Count);
+    }
+
+    private void OnCatalogExtrasNext(object? sender, RoutedEventArgs e)
+    {
+        if (_extrasItems.Count == 0) return;
+        ShowExtrasItem((_extrasIndex + 1) % _extrasItems.Count);
+    }
+
+    // ── Manuals ───────────────────────────────────────────────────────────────
+
+    private void BuildManuals(LibraryEntry entry)
+    {
+        _manualPaths.Clear();
+        _manualPaths.AddRange(_mediaDiscovery.FindManualPaths(entry));
+    }
+
+    private void RefreshManualButtons()
+    {
+        CatalogManualButtons.Children.Clear();
+        if (_manualPaths.Count == 0)
+        {
+            CatalogManualNoItem.IsVisible = true;
+            return;
+        }
+        CatalogManualNoItem.IsVisible = false;
+        for (int i = 0; i < _manualPaths.Count; i++)
+        {
+            var path = _manualPaths[i];
+            var btn = new Button
+            {
+                Content         = (i + 1).ToString(),
+                Width           = 32,
+                Height          = 32,
+                Margin          = new Avalonia.Thickness(0, 0, 6, 6),
+                FontSize        = 12,
+                FontWeight      = Avalonia.Media.FontWeight.SemiBold,
+                Foreground      = new SolidColorBrush(Color.Parse("#9FA4FF")),
+                Background      = new SolidColorBrush(Color.Parse("#1A1A2E")),
+                BorderBrush     = new SolidColorBrush(Color.Parse("#2A2A50")),
+                BorderThickness = new Avalonia.Thickness(1),
+                HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+                VerticalContentAlignment   = Avalonia.Layout.VerticalAlignment.Center,
+            };
+            btn.Click += (_, _) =>
+            {
+                if (!File.Exists(path)) return;
+                try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"[Manual] Open failed: {ex.Message}"); }
+            };
+            CatalogManualButtons.Children.Add(btn);
+        }
+    }
+
+    private static string NormalizeBadgeKey(string key)
+    {
+        var k = key.ToLowerInvariant().Replace(' ', '-');
+        if (k == "fan-translation") k = "fantranslation";
+        return k;
+    }
+
+    private Bitmap? TryLoadBadgeIcon(string category, string key)
+    {
+        var cacheKey = $"{category}/{key}";
+        if (_badgeIconCache.TryGetValue(cacheKey, out var cached)) return cached;
+        var path = Path.Combine(AppContext.BaseDirectory, "themes", "visual", "default", "badges", category, $"{NormalizeBadgeKey(key)}.png");
+        var bmp = File.Exists(path) ? CoverLoader.TryLoad(path) : null;
+        _badgeIconCache[cacheKey] = bmp;
+        return bmp;
+    }
+
+    private void SetBadge(Avalonia.Controls.Border border, Avalonia.Controls.Image icon,
+                          Avalonia.Controls.TextBlock text, string value,
+                          string? iconCategory = null, string? iconKey = null)
+    {
+        text.Text        = value;
+        border.IsVisible = value != "—";
+        if (border.IsVisible && iconCategory is not null && iconKey is not null)
+        {
+            var bmp = TryLoadBadgeIcon(iconCategory, iconKey);
+            icon.Source    = bmp;
+            icon.IsVisible = bmp is not null;
+        }
+        else
+        {
+            icon.Source    = null;
+            icon.IsVisible = false;
+        }
+    }
+
     private void OnCatalogOpenInLibrary(object? sender, RoutedEventArgs e)
     {
         // Sync library context to match catalog selection, then navigate
@@ -8069,6 +8415,52 @@ public partial class MainWindow : Window
         }
     }
 
+    // ── Catalog edit metadata ─────────────────────────────────────────────────
+
+    private async void OnCatalogEditMetadata(object? sender, RoutedEventArgs e)
+    {
+        var entry = _catalogSelected;
+        if (entry is null) return;
+
+        var dialog = new EditMetadataDialog(entry, _metadataMappings);
+        var result = await dialog.ShowDialog<EditMetadataResult?>(this);
+        if (result is null) return;
+
+        // Mutate the in-memory entry in place — the same object is referenced by
+        // _activeLibraryDatasets, _catalogDatasetEntries, and _filteredCatalogEntries,
+        // so the update propagates to all three caches without a full DB reload.
+        entry.Metadata = result.Metadata;
+        entry.Region   = result.Region;
+
+        System.Diagnostics.Debug.WriteLine(
+            $"[EditMetadata] saved: releaseId={entry.ReleaseId} region={result.Region} " +
+            $"changed=[{string.Join(",", result.ChangedFields)}]");
+
+        RebuildCatalogList(preserveSelection: true);
+        UpdateCatalogHero(_catalogSelected ?? entry);
+    }
+
+    // ── Catalog merge metadata ────────────────────────────────────────────────
+
+    private async void OnCatalogMergeMetadata(object? sender, RoutedEventArgs e)
+    {
+        var entry = _catalogSelected;
+        if (entry is null) return;
+
+        var dialog = new MergeMetadataDialog(entry);
+        var result = await dialog.ShowDialog<MergeMetadataResult?>(this);
+        if (result is null) return;
+
+        entry.Metadata = result.Metadata;
+
+        System.Diagnostics.Debug.WriteLine(
+            $"[MergeMetadata] applied: releaseId={entry.ReleaseId} " +
+            $"fields=[{string.Join(",", result.AppliedFields)}]");
+
+        RebuildCatalogList(preserveSelection: true);
+        UpdateCatalogHero(_catalogSelected ?? entry);
+    }
+
     // ── Catalog scrape ────────────────────────────────────────────────────────
 
     private async void OnCatalogScrape(object? sender, RoutedEventArgs e)
@@ -8076,20 +8468,98 @@ public partial class MainWindow : Window
         var entry = _catalogSelected;
         if (entry is null) return;
 
-        // Validate credentials
+        // Read credentials so dialog can show availability before the user commits.
         var username    = _catalog.GetSetting("screenscraper_username");
         var password    = _catalog.GetSetting("screenscraper_password");
         var devId       = _catalog.GetSetting("screenscraper_dev_id");
         var devPassword = _catalog.GetSetting("screenscraper_dev_password");
+        var softName    = _catalog.GetSetting("screenscraper_softname").Trim();
 
-        if (username.Length == 0 || password.Length == 0 || devId.Length == 0 || devPassword.Length == 0)
+        // ── Provider selection ───────────────────────────────────────────────
+        var hasCachePackages = _catalog.HasUsableCachePackages();
+        var providerDialog = new ScraperProviderDialog(
+        [
+            new ScraperProviderInfo(
+                ArkadiaProviders.ScreenScraper, ArkadiaProviders.ScreenScraperDisplayName,
+                ScraperProviderInfo.IsScreenScraperConfigured(username, password, devId, devPassword)),
+            new ScraperProviderInfo(
+                ArkadiaProviders.ScreenScraperCache, ArkadiaProviders.ScreenScraperCacheDisplayName,
+                hasCachePackages,
+                UnavailableText: hasCachePackages ? "Available" : "Needs build"),
+        ]);
+        var selectedProvider = await providerDialog.ShowDialog<string?>(this);
+        if (selectedProvider is null) return;
+
+        // ── Resolve platform ─────────────────────────────────────────────────
+        var family       = _catalog.GetHardwareFamily(entry.HardwareFamilyId);
+        var scrapeId     = family?.ScrapeSystemId is { Length: > 0 } s ? s : entry.HardwareFamilyId;
+
+        // ── ScreenScraper Cache path ─────────────────────────────────────────
+        if (selectedProvider == ArkadiaProviders.ScreenScraperCache)
         {
-            SetScrapeStatus("ScreenScraper API requires both user credentials and API developer credentials.", "#EF5350");
+            var initialCacheQuery = ScrapeReviewDialog.BuildInitialQuery(entry.CatalogTitle, entry.Name);
+            var searchSvc  = new Arkadia.Data.ScreenScraperCacheSearchService(_catalog);
+            var cacheDialog = new CacheReviewDialog(searchSvc, initialCacheQuery, scrapeId);
+            var candidate   = await cacheDialog.ShowDialog<Arkadia.Data.ScreenScraperCacheCandidate?>(this);
+            if (candidate is null) return;
+
+            CatalogScrapeBtn.IsEnabled = false;
+            try
+            {
+                _cacheImport ??= new Arkadia.Providers.ScreenScraperCacheImportService(_dataDir, _catalog);
+                var importProgress = new Progress<string>(msg => SetScrapeStatus(msg, "#888899"));
+                var cacheSummary = await _cacheImport.ImportAsync(
+                    entry, candidate, _metadataMappings, importProgress);
+
+                SetScrapeStatus("Review metadata…", "#888899");
+                var mergeDialog = new MergeMetadataDialog(entry, Arkadia.Providers.ScreenScraperCacheImportService.ProviderId);
+                var mergeResult = await mergeDialog.ShowDialog<MergeMetadataResult?>(this);
+
+                if (mergeResult is not null)
+                    entry.Metadata = mergeResult.Metadata;
+
+                RebuildCatalogList(preserveSelection: true);
+                UpdateCatalogHero(entry);
+
+                string metaMsg;
+                if (mergeResult is not null)
+                    metaMsg = "metadata applied";
+                else if (!cacheSummary.ProposalsSaved)
+                    metaMsg = "metadata skipped: no fields extracted";
+                else
+                    metaMsg = "metadata skipped";
+                var mediaMsg = cacheSummary.MediaExtracted > 0
+                    ? $" + {cacheSummary.MediaExtracted} media file{(cacheSummary.MediaExtracted == 1 ? "" : "s")}"
+                    : "";
+                SetScrapeStatus(
+                    $"Cache import — {metaMsg}{mediaMsg}.",
+                    mergeResult is not null ? "#4CAF50" : "#888899");
+            }
+            catch (OperationCanceledException)
+            {
+                SetScrapeStatus("Cache import cancelled.", "#888899");
+            }
+            catch (Exception ex)
+            {
+                SetScrapeStatus($"Cache import failed: {ex.Message}", "#EF5350");
+            }
+            finally
+            {
+                CatalogScrapeBtn.IsEnabled = true;
+            }
             return;
         }
 
-        var family   = _catalog.GetHardwareFamily(entry.HardwareFamilyId);
-        var scrapeId = family?.ScrapeSystemId is { Length: > 0 } s ? s : entry.HardwareFamilyId;
+        // ── Online ScreenScraper path ────────────────────────────────────────
+        if (selectedProvider != ArkadiaProviders.ScreenScraper) return;
+
+        if (softName.Length == 0)
+        {
+            SetScrapeStatus("ScreenScraper Softname is required. Configure it in Providers \u2192 ROM Scrapers.", "#FFD54F");
+            return;
+        }
+
+        var platformName = family?.Name is { Length: > 0 } n ? n : entry.HardwareFamilyId;
 
         if (!Arkadia.Providers.ScreenScraperClient.TryResolveSystemId(scrapeId, out _))
         {
@@ -8097,163 +8567,74 @@ public partial class MainWindow : Window
             return;
         }
 
+        // ── Candidate review dialog ──────────────────────────────────────────
         var isMame = string.Equals(entry.Authority, "mame",  StringComparison.OrdinalIgnoreCase)
                            || string.Equals(entry.Authority, "fbneo", StringComparison.OrdinalIgnoreCase);
 
-        CatalogScrapeBtn.IsEnabled    = false;
-        SetScrapeStatus("Querying ScreenScraper…", "#888899");
+        var initialQuery = ScrapeReviewDialog.BuildInitialQuery(entry.CatalogTitle, entry.Name);
+        var reviewDialog = new ScrapeReviewDialog(
+            devId, devPassword, username, password,
+            scrapeId, platformName, initialQuery,
+            entry.Name, isMame, softName);
+        var reviewResult = await reviewDialog.ShowDialog<ScrapeReviewResult?>(this);
+        if (reviewResult is null) return;
+
+        CatalogScrapeBtn.IsEnabled = false;
 
         try
         {
-            var result = await Arkadia.Providers.ScreenScraperClient.QueryAsync(
-                devId, devPassword,
-                username, password,
-                scrapeId, entry.Name,
-                isMame);
+            // Direct fallback path: result already fetched by ROM/DAT name lookup in dialog.
+            // Candidate path: fetch full details from ScreenScraper by provider game ID.
+            Arkadia.Providers.ScreenScraperResult? result;
+            if (reviewResult.IsDirectResult)
+            {
+                result = reviewResult.DirectResult;
+                SetScrapeStatus("Applying result from ScreenScraper…", "#888899");
+            }
+            else
+            {
+                SetScrapeStatus("Fetching details from ScreenScraper…", "#888899");
+                result = await Arkadia.Providers.ScreenScraperClient.FetchDetailsByGameIdAsync(
+                    devId, devPassword, username, password, reviewResult.Candidate!, softName: softName);
+            }
 
             if (result is null)
             {
-                SetScrapeStatus("No match found on ScreenScraper.", "#FFD54F");
+                SetScrapeStatus("No details found for selected candidate.", "#FFD54F");
                 return;
             }
 
-            // ── Save metadata ────────────────────────────────────────────────
-            var newMeta = new Arkadia.Data.ReleaseMetadataRecord
-            {
-                ReleaseId       = entry.ReleaseId,
-                Title           = result.Title,
-                OriginalTitle   = result.OriginalTitle,
-                Developer       = result.Developer,
-                Publisher       = result.Publisher,
-                Year            = result.Year,
-                Languages       = result.Languages.Length > 0
-                                    ? result.Languages
-                                    : (entry.Metadata?.Languages ?? ""),
-                AlternateTitles = entry.Metadata?.AlternateTitles ?? "",
-                Description     = result.Description,
-                ScrapedAtUtc    = DateTime.UtcNow.ToString("o"),
-            };
+            // ── Import proposals + payload + media via service ───────────────
+            var importProgress = new Progress<string>(msg => SetScrapeStatus(msg, "#888899"));
+            var summary = await _scrapeImport.ImportAsync(
+                entry, result, _metadataMappings, importProgress);
 
-            var store = new Arkadia.Data.DatLineStore(entry.DbPath);
-            store.SaveReleaseMetadata(newMeta);
+            // ── Open Merge Metadata dialog ───────────────────────────────────
+            SetScrapeStatus("Review metadata…", "#888899");
+            var mergeDialog = new MergeMetadataDialog(entry, ArkadiaProviders.ScreenScraper);
+            var mergeResult = await mergeDialog.ShowDialog<MergeMetadataResult?>(this);
 
-            // ── Save provider payload (DB + filesystem) ──────────────────────
-            var payloadJson = result.RawJson.Length > 0 ? result.RawJson : "{}";
-            store.SaveProviderPayload(entry.ReleaseId, "screenscraper", payloadJson);
+            if (mergeResult is not null)
+                entry.Metadata = mergeResult.Metadata;
 
-            var metaDir  = Path.Combine(
-                Arkadia.Data.MediaStore.DatLinePath(_dataDir, entry.HardwareFamilyId, entry.DatLineId),
-                "metadata");
-            Directory.CreateDirectory(metaDir);
-            var metaFile = Path.Combine(metaDir,
-                $"{Arkadia.Data.MediaStore.ReleaseStem(entry.Name)}_screenscraper.json");
-            await File.WriteAllTextAsync(metaFile, payloadJson);
-
-            // ── Download media ───────────────────────────────────────────────
-            Arkadia.Data.MediaStore.EnsureMediaFolders(_dataDir, entry.HardwareFamilyId, entry.DatLineId);
-
-            // Swallows per-asset errors; re-throws rate-limit so outer catch handles it.
-            static async Task<bool> TryDownloadAsync(
-                string url, string stem, string fmt, IReadOnlyList<string> exts, long? size = null)
-            {
-                try
-                {
-                    return await Arkadia.Providers.ScreenScraperClient
-                        .DownloadMediaAsync(url, stem, fmt, exts, size) is not null;
-                }
-                catch (Arkadia.Providers.ScreenScraperRateLimitException) { throw; }
-                catch { return false; }
-            }
-
-            string MediaStem(string sub) =>
-                Arkadia.Data.MediaStore.NextIndexedMediaStem(
-                    _dataDir, entry.HardwareFamilyId, entry.DatLineId, entry.Name, sub);
-
-            string CoverStem(string sub, string region) =>
-                Arkadia.Data.MediaStore.NextIndexedCoverStem(
-                    _dataDir, entry.HardwareFamilyId, entry.DatLineId,
-                    entry.Name, sub, region.Length > 0 ? region : "wor");
-
-            var imgExts = Arkadia.Providers.ScreenScraperClient.ValidImageExts;
-            var vidExts = Arkadia.Providers.ScreenScraperClient.ValidVideoExts;
-            var docExts = Arkadia.Providers.ScreenScraperClient.ValidDocumentExts;
-
-            int coversCount = 0, ssCount = 0, fanartCount = 0, logosCount = 0;
-            int marqueesCount = 0, flyersCount = 0, manualsCount = 0;
-            bool gotVideo = false;
-
-            // Covers
-            SetScrapeStatus("Downloading covers…", "#888899");
-            foreach (var c in result.CoverFront)
-                if (await TryDownloadAsync(c.Url, CoverStem("covers-front", c.Region), c.Format, imgExts, c.Size)) coversCount++;
-            foreach (var c in result.CoverBack)
-                if (await TryDownloadAsync(c.Url, CoverStem("covers-back",  c.Region), c.Format, imgExts, c.Size)) coversCount++;
-            foreach (var c in result.CoverSpine)
-                if (await TryDownloadAsync(c.Url, CoverStem("covers-spine", c.Region), c.Format, imgExts, c.Size)) coversCount++;
-            foreach (var c in result.CoverWrap)
-                if (await TryDownloadAsync(c.Url, CoverStem("covers-wrap",  c.Region), c.Format, imgExts, c.Size)) coversCount++;
-
-            // Screenshots
-            SetScrapeStatus("Downloading screenshots…", "#888899");
-            foreach (var ss in result.TitleScreenshots)
-                if (await TryDownloadAsync(ss.Url, MediaStem("screenshots-title"), ss.Format, imgExts, ss.Size)) ssCount++;
-            foreach (var ss in result.GameplayScreenshots)
-                if (await TryDownloadAsync(ss.Url, MediaStem("screenshots"),       ss.Format, imgExts, ss.Size)) ssCount++;
-
-            // Fanart
-            foreach (var f in result.Fanart)
-                if (await TryDownloadAsync(f.Url, MediaStem("fanart"), f.Format, imgExts, f.Size)) fanartCount++;
-
-            // Video
-            if (result.Video is { } vid)
-            {
-                SetScrapeStatus("Downloading video…", "#888899");
-                gotVideo = await TryDownloadAsync(vid.Url, MediaStem("videos"), vid.Format, vidExts, vid.Size);
-            }
-
-            // Logos
-            foreach (var l in result.LogosHd)
-                if (await TryDownloadAsync(l.Url, MediaStem("logos-hd"), l.Format, imgExts, l.Size)) logosCount++;
-            foreach (var l in result.Logos)
-                if (await TryDownloadAsync(l.Url, MediaStem("logos"),    l.Format, imgExts, l.Size)) logosCount++;
-
-            // Marquees
-            foreach (var m in result.Marquees)
-                if (await TryDownloadAsync(m.Url, MediaStem("marquees"), m.Format, imgExts, m.Size)) marqueesCount++;
-
-            // Flyers
-            foreach (var f in result.Flyers)
-                if (await TryDownloadAsync(f.Url, MediaStem("flyers"),   f.Format, imgExts, f.Size)) flyersCount++;
-
-            // Manuals
-            foreach (var m in result.Manuals)
-                if (await TryDownloadAsync(m.Url, MediaStem("manuals"),  m.Format, docExts, m.Size)) manualsCount++;
-
-            // Physical media (not surfaced in UI yet)
-            foreach (var p in result.PhysicalMedia)
-                await TryDownloadAsync(p.Url, MediaStem("physical"),         p.Format, imgExts, p.Size);
-            foreach (var p in result.PhysicalTexture)
-                await TryDownloadAsync(p.Url, MediaStem("physical-texture"), p.Format, imgExts, p.Size);
-
-            // ── Refresh hero ─────────────────────────────────────────────────
-            entry.Metadata = newMeta;
             RebuildCatalogList(preserveSelection: true);
             UpdateCatalogHero(entry);
 
             var parts = new List<string>();
-            if (coversCount   > 0) parts.Add($"{coversCount} cover{(coversCount   > 1 ? "s" : "")}");
-            if (ssCount       > 0) parts.Add($"{ssCount} screenshot{(ssCount       > 1 ? "s" : "")}");
-            if (fanartCount   > 0) parts.Add($"{fanartCount} fanart");
-            if (gotVideo)          parts.Add("video");
-            if (logosCount    > 0) parts.Add($"{logosCount} logo{(logosCount    > 1 ? "s" : "")}");
-            if (marqueesCount > 0) parts.Add($"{marqueesCount} marquee{(marqueesCount > 1 ? "s" : "")}");
-            if (flyersCount   > 0) parts.Add($"{flyersCount} flyer{(flyersCount   > 1 ? "s" : "")}");
-            if (manualsCount  > 0) parts.Add($"{manualsCount} manual{(manualsCount  > 1 ? "s" : "")}");
+            if (summary.Covers      > 0) parts.Add($"{summary.Covers} cover{(summary.Covers           > 1 ? "s" : "")}");
+            if (summary.Screenshots > 0) parts.Add($"{summary.Screenshots} screenshot{(summary.Screenshots > 1 ? "s" : "")}");
+            if (summary.Fanart      > 0) parts.Add($"{summary.Fanart} fanart");
+            if (summary.GotVideo)        parts.Add("video");
+            if (summary.Logos       > 0) parts.Add($"{summary.Logos} logo{(summary.Logos           > 1 ? "s" : "")}");
+            if (summary.Marquees    > 0) parts.Add($"{summary.Marquees} marquee{(summary.Marquees       > 1 ? "s" : "")}");
+            if (summary.Flyers      > 0) parts.Add($"{summary.Flyers} flyer{(summary.Flyers          > 1 ? "s" : "")}");
+            if (summary.Manuals     > 0) parts.Add($"{summary.Manuals} manual{(summary.Manuals         > 1 ? "s" : "")}");
 
+            var metaMsg = mergeResult is not null ? "metadata applied" : "metadata skipped";
             var msg = parts.Count > 0
-                ? $"Scraped — metadata + {string.Join(" + ", parts)}."
-                : "Scraped — metadata only (no media available).";
-            SetScrapeStatus(msg, "#4CAF50");
+                ? $"Scraped — {metaMsg} + {string.Join(" + ", parts)}."
+                : $"Scraped — {metaMsg} (no media available).";
+            SetScrapeStatus(msg, mergeResult is not null ? "#4CAF50" : "#888899");
         }
         catch (Arkadia.Providers.ScreenScraperRateLimitException)
         {
@@ -10187,6 +10568,7 @@ public partial class MainWindow : Window
 
     private void InitSettings()
     {
+        MappingsList.ItemsSource = _mappingRows;
         LoadAllSettings();
     }
 
@@ -10203,6 +10585,25 @@ public partial class MainWindow : Window
         SettingLogsToKeep.Text                     = _catalog.GetSetting("logs_to_keep_per_type", "5");
         SettingCatalogVideoAutoplay.IsChecked      = _catalog.GetBoolSetting("catalog_video_autoplay",        defaultValue: true);
         SettingCatalogVideoAudio.IsChecked         = _catalog.GetBoolSetting("catalog_video_audio",           defaultValue: false);
+        LoadMappingsSettings();
+    }
+
+    private async void OnOpenCacheBuilder(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new ScreenScraperCacheBuilderDialog(_catalog);
+        await dialog.ShowDialog(this);
+    }
+
+    private async void OnManageCachePackages(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new ScreenScraperCacheManagerDialog(_catalog);
+        await dialog.ShowDialog(this);
+    }
+
+    private async void OnManageStaging(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new ScreenScraperStagingManagerDialog(AppContext.BaseDirectory);
+        await dialog.ShowDialog(this);
     }
 
     private void OnSaveSettings(object? sender, RoutedEventArgs e)
@@ -10227,6 +10628,94 @@ public partial class MainWindow : Window
 
     private void OnReloadSettings(object? sender, RoutedEventArgs e)
         => LoadAllSettings();
+
+    // ── Metadata Value Mappings settings ─────────────────────────────────────
+
+    private void LoadMappingsSettings()
+    {
+        foreach (var old in _mappingRows)
+            old.PropertyChanged -= OnMappingRowPropertyChanged;
+        _mappingRows.Clear();
+        foreach (var m in _catalog.LoadMetadataValueMappings())
+        {
+            var vm = new MappingRowVm(m);
+            vm.PropertyChanged += OnMappingRowPropertyChanged;
+            _mappingRows.Add(vm);
+        }
+    }
+
+    private void OnMappingRowPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(MappingRowVm.Enabled)) return;
+        if (sender is not MappingRowVm vm) return;
+        _catalog.SaveMetadataValueMapping(vm.Field, vm.MatchValue, vm.Replacement, vm.Enabled);
+        RefreshMappingsCache();
+    }
+
+    private void RefreshMappingsCache()
+    {
+        _metadataMappings = _catalog.LoadMetadataValueMappings();
+        if (_catalogSelected is not null) UpdateCatalogHero(_catalogSelected);
+    }
+
+    private void OnMappingsSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (MappingsList.SelectedItem is not MappingRowVm vm)
+        {
+            MappingDeleteBtn.IsEnabled = false;
+            return;
+        }
+
+        MappingField.SelectedItem = MappingField.Items
+            .OfType<ComboBoxItem>()
+            .FirstOrDefault(i => string.Equals(i.Content?.ToString(), vm.Field, StringComparison.Ordinal));
+        MappingMatchValue.Text        = vm.MatchValue;
+        MappingReplacement.Text       = vm.Replacement;
+        MappingEnabled.IsChecked      = vm.Enabled;
+        MappingDeleteBtn.IsEnabled    = true;
+        MappingValidationMsg.IsVisible = false;
+    }
+
+    private void OnAddUpdateMapping(object? sender, RoutedEventArgs e)
+    {
+        var field = (MappingField.SelectedItem as ComboBoxItem)?.Content?.ToString()?.Trim() ?? "";
+        var match = MappingMatchValue.Text?.Trim() ?? "";
+        var repl  = MappingReplacement.Text?.Trim() ?? "";
+        var enabled = MappingEnabled.IsChecked == true;
+
+        if (field.Length == 0 || match.Length == 0 || repl.Length == 0)
+        {
+            MappingValidationMsg.Text      = "Field, Match Value, and Replacement are all required.";
+            MappingValidationMsg.IsVisible = true;
+            return;
+        }
+
+        MappingValidationMsg.IsVisible = false;
+        _catalog.SaveMetadataValueMapping(field, match, repl, enabled);
+        LoadMappingsSettings();
+        RefreshMappingsCache();
+        ClearMappingForm();
+    }
+
+    private void OnDeleteMapping(object? sender, RoutedEventArgs e)
+    {
+        if (MappingsList.SelectedItem is not MappingRowVm vm) return;
+        _catalog.DeleteMetadataValueMapping(vm.Field, vm.MatchValue);
+        LoadMappingsSettings();
+        RefreshMappingsCache();
+        ClearMappingForm();
+    }
+
+    private void ClearMappingForm()
+    {
+        MappingsList.SelectedItem      = null;
+        MappingField.SelectedItem      = null;
+        MappingMatchValue.Text         = "";
+        MappingReplacement.Text        = "";
+        MappingEnabled.IsChecked       = true;
+        MappingDeleteBtn.IsEnabled     = false;
+        MappingValidationMsg.IsVisible = false;
+    }
 
     private async void OnPruneLogs(object? sender, RoutedEventArgs e)
     {
@@ -12472,5 +12961,35 @@ public partial class MainWindow : Window
         sb.Append("</tbody></table>");
         sb.Append(AnalyticsHtmlFooter());
         return sb.ToString();
+    }
+}
+
+/// <summary>View-model row for the metadata value mappings settings table.</summary>
+public sealed class MappingRowVm : INotifyPropertyChanged
+{
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public string Field       { get; }
+    public string MatchValue  { get; }
+    public string Replacement { get; }
+
+    private bool _enabled;
+    public bool Enabled
+    {
+        get => _enabled;
+        set
+        {
+            if (_enabled == value) return;
+            _enabled = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
+        }
+    }
+
+    public MappingRowVm(Arkadia.Data.MetadataValueMappingRecord r)
+    {
+        Field       = r.Field;
+        MatchValue  = r.MatchValue;
+        Replacement = r.Replacement;
+        _enabled    = r.Enabled;
     }
 }

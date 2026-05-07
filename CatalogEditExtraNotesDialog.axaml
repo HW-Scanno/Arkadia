@@ -1,0 +1,81 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.CatalogEditExtraNotesDialog"
+        Title="Edit Extra Notes"
+        Width="560"
+        SizeToContent="Height"
+        MaxHeight="520"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.action">
+            <Setter Property="Background"      Value="{DynamicResource ArkAccent}"/>
+            <Setter Property="Foreground"      Value="#FFFFFF"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"      Value="#1A1A2C"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- ── Header ───────────────────────────────────────────────────── -->
+        <StackPanel Grid.Row="0" Margin="20,18,20,12" Spacing="4">
+            <TextBlock x:Name="HeaderTitle"
+                       FontSize="14" FontWeight="SemiBold" Foreground="#EEEEFF"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock Text="Optional curated notes for this release. Not affected by scraping."
+                       FontSize="11" Foreground="#555577"/>
+        </StackPanel>
+
+        <!-- ── Notes editor ─────────────────────────────────────────────── -->
+        <Border Grid.Row="1" Margin="20,0,20,0"
+                Background="#0A0A12" BorderBrush="#1E1E2C"
+                BorderThickness="1" CornerRadius="6">
+            <TextBox x:Name="NotesField"
+                     AcceptsReturn="True"
+                     TextWrapping="Wrap"
+                     MinHeight="160"
+                     MaxHeight="320"
+                     FontSize="12"
+                     Foreground="#CCCCDD"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     Padding="14,12"
+                     LineHeight="20"
+                     Watermark="Enter curated notes for this release…"/>
+        </Border>
+
+        <!-- ── Bottom bar ────────────────────────────────────────────────── -->
+        <Border Grid.Row="2" Padding="20,12,20,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0"
+                Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Spacing="8">
+                <Button Classes="action"
+                        Content="Save"
+                        Click="OnSave"/>
+                <Button Classes="secondary"
+                        Content="Cancel"
+                        Click="OnCancel"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

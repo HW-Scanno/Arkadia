@@ -25,7 +25,7 @@ public sealed class LibraryEntry
     /// <summary>Human-readable status: "Present", "Pending", "Missing", "Lost", or "Outdated".</summary>
     public required string Status   { get; init; }
 
-    public required string Region    { get; init; }
+    public required string Region    { get; set; }
     public required string Languages { get; init; }
     public required string Format   { get; init; }
     public required string Size     { get; init; }

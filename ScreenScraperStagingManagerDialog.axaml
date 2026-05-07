@@ -1,0 +1,160 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.ScreenScraperStagingManagerDialog"
+        Title="ScreenScraper Cache Staging"
+        Width="720"
+        SizeToContent="Height"
+        MaxHeight="620"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"      Value="#1A1A2C"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="Button.danger">
+            <Setter Property="Background"      Value="#2A1215"/>
+            <Setter Property="Foreground"      Value="#EF7070"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderBrush"     Value="#3A2025"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding"         Value="16,10"/>
+            <Setter Property="BorderBrush"     Value="#1A1A28"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,Auto">
+
+        <!-- ── Header ───────────────────────────────────────────────────────── -->
+        <StackPanel Grid.Row="0" Margin="20,18,20,14" Spacing="4">
+            <TextBlock Text="ScreenScraper Cache Staging"
+                       FontSize="15" FontWeight="SemiBold" Foreground="#EEEEFF"/>
+            <TextBlock Text="Inspect and manage resumable staging folders. Deletion cannot be undone."
+                       FontSize="11" Foreground="#555577"/>
+        </StackPanel>
+
+        <!-- ── Staging list ──────────────────────────────────────────────────── -->
+        <Border Grid.Row="1" Margin="20,0,20,0"
+                Background="#0A0A12" BorderBrush="#1E1E2C"
+                BorderThickness="1" CornerRadius="6">
+            <StackPanel>
+                <ListBox x:Name="StagingList"
+                         SelectionMode="Single"
+                         SelectionChanged="OnSelectionChanged"
+                         MinHeight="52"
+                         MaxHeight="400"
+                         Background="Transparent"
+                         Padding="0">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:CompileBindings="False">
+                            <Grid ColumnDefinitions="*,Auto">
+
+                                <!-- Left: info -->
+                                <StackPanel Grid.Column="0" Spacing="3">
+                                    <TextBlock Text="{Binding PackageName}"
+                                               FontSize="12" FontWeight="SemiBold"
+                                               Foreground="#EEEEFF"/>
+                                    <TextBlock FontSize="11" Foreground="#666680">
+                                        <Run Text="{Binding Provider}"/>
+                                        <Run Text="  ·  "/>
+                                        <Run Text="{Binding CompletionDisplay}"/>
+                                    </TextBlock>
+                                    <TextBlock FontSize="10" Foreground="#444455">
+                                        <Run Text="{Binding MediaFileCount}"/>
+                                        <Run Text=" media  ·  "/>
+                                        <Run Text="{Binding SizeDisplay}"/>
+                                        <Run Text="  ·  Updated "/>
+                                        <Run Text="{Binding LastUpdatedDisplay}"/>
+                                    </TextBlock>
+                                </StackPanel>
+
+                                <!-- Right: status badge -->
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center"
+                                            Margin="12,0,0,0">
+                                    <Border IsVisible="{Binding IsComplete}"
+                                            Background="#152415" CornerRadius="4" Padding="7,3">
+                                        <TextBlock Text="Complete"
+                                                   Foreground="#4CAF50"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   LetterSpacing="0.5"/>
+                                    </Border>
+                                    <Border IsVisible="{Binding IsResumable}"
+                                            Background="#1A1A2C" CornerRadius="4" Padding="7,3">
+                                        <TextBlock Text="Resumable"
+                                                   Foreground="#9FA4FF"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   LetterSpacing="0.5"/>
+                                    </Border>
+                                    <Border IsVisible="{Binding IsUnknown}"
+                                            Background="#1E1E28" CornerRadius="4" Padding="7,3">
+                                        <TextBlock Text="{Binding Status}"
+                                                   Foreground="#666680"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   LetterSpacing="0.5"/>
+                                    </Border>
+                                </StackPanel>
+
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <TextBlock x:Name="EmptyMsg"
+                           IsVisible="False"
+                           Text="No staging folders found under staging-cache/screenscraper/."
+                           FontSize="11" Foreground="#444455"
+                           HorizontalAlignment="Center"
+                           Margin="20,18,20,18"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Bottom bar ────────────────────────────────────────────────────── -->
+        <Border Grid.Row="2" Padding="20,12,20,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock x:Name="ValidationMsg"
+                           Grid.Column="0"
+                           IsVisible="False"
+                           FontSize="11"
+                           VerticalAlignment="Center"
+                           Margin="0,0,12,0"
+                           TextWrapping="Wrap"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <Button Classes="secondary"
+                            Content="Refresh"
+                            Click="OnRefresh"/>
+                    <Button x:Name="OpenFolderBtn"
+                            Classes="secondary"
+                            Content="Open Folder"
+                            IsEnabled="False"
+                            Click="OnOpenFolder"/>
+                    <Button x:Name="DeleteBtn"
+                            Classes="danger"
+                            Content="Delete Staging"
+                            IsEnabled="False"
+                            Click="OnDeleteStaging"/>
+                    <Button Classes="secondary"
+                            Content="Close"
+                            Click="OnClose"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

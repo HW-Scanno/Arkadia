@@ -315,4 +315,79 @@ public sealed class ScreenScraperParserTests
 
         Assert.Equal("Versão portuguesa", result!.Description);
     }
+
+    // ── Genre/subgenre normalization ──────────────────────────────────────────
+
+    [Fact]
+    public void NormalizeGenres_SlashCombined_SubgenreDuplicatesFirstPart_Splits()
+    {
+        var (genre, subgenre) = ScreenScraperClient.NormalizeGenres(
+            "Action / Breakout games", "Action");
+        Assert.Equal("Action",         genre);
+        Assert.Equal("Breakout games", subgenre);
+    }
+
+    [Fact]
+    public void NormalizeGenres_SlashCombined_EmptySubgenre_Splits()
+    {
+        var (genre, subgenre) = ScreenScraperClient.NormalizeGenres("Sports / Basketball", "");
+        Assert.Equal("Sports",     genre);
+        Assert.Equal("Basketball", subgenre);
+    }
+
+    [Fact]
+    public void NormalizeGenres_SlashCombined_DifferentSubgenre_KeepsOriginal()
+    {
+        var (genre, subgenre) = ScreenScraperClient.NormalizeGenres(
+            "Action / Breakout games", "Arcade");
+        Assert.Equal("Action / Breakout games", genre);
+        Assert.Equal("Arcade",                  subgenre);
+    }
+
+    [Fact]
+    public void NormalizeGenres_NoSlash_Unchanged()
+    {
+        var (genre, subgenre) = ScreenScraperClient.NormalizeGenres("Action", "Arcade");
+        Assert.Equal("Action", genre);
+        Assert.Equal("Arcade", subgenre);
+    }
+
+    [Fact]
+    public void NormalizeGenres_WhitespaceAroundParts_IsTrimmed()
+    {
+        var (genre, subgenre) = ScreenScraperClient.NormalizeGenres("  Sports  /  Basketball  ", "");
+        Assert.Equal("Sports",     genre);
+        Assert.Equal("Basketball", subgenre);
+    }
+
+    [Fact]
+    public void NormalizeGenres_CaseInsensitiveMatch_Splits()
+    {
+        var (genre, subgenre) = ScreenScraperClient.NormalizeGenres(
+            "Action / Breakout games", "action");
+        Assert.Equal("Action",         genre);
+        Assert.Equal("Breakout games", subgenre);
+    }
+
+    [Fact]
+    public void ParseGameJson_SlashGenre_NormalizesIntoSeparateFields()
+    {
+        var json = Wrap($$"""
+            {
+              "noms": [], "developpeur": { "text": "" }, "editeur": { "text": "" },
+              "dates": [], "synopsis": [], "langues": [], "medias": [],
+              "genres": [
+                {
+                  "noms": [{ "langue": "en", "text": "Action / Breakout games" }]
+                }
+              ]
+            }
+            """);
+
+        var result = ScreenScraperClient.ParseGameJson(json);
+
+        Assert.NotNull(result);
+        Assert.Equal("Action",         result!.Genre);
+        Assert.Equal("Breakout games", result.Subgenre);
+    }
 }

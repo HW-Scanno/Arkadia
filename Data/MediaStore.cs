@@ -34,6 +34,22 @@ public static class MediaStore
     public static string DatLinePath(string dataDir, string hardwareFamilyId, string datLineId) =>
         Path.Combine(dataDir, "media", hardwareFamilyId, datLineId);
 
+    /// <summary>
+    /// Maps provider/cache media type aliases to the Arkadia canonical media type.
+    /// "physical-media" (ScreenScraper cache alias) normalizes to canonical "physical".
+    /// Null, empty, or whitespace-only input returns an empty string.
+    /// All other values are returned trimmed and unchanged.
+    /// </summary>
+    public static string NormalizeMediaType(string? mediaType)
+    {
+        if (string.IsNullOrWhiteSpace(mediaType)) return "";
+        return mediaType.Trim() switch
+        {
+            "physical-media" => "physical",
+            var t            => t,
+        };
+    }
+
     /// <summary>Creates all standard media folders. Idempotent — safe to call repeatedly.</summary>
     public static void EnsureMediaFolders(string dataDir, string hardwareFamilyId, string datLineId)
     {

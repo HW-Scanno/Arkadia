@@ -28,6 +28,12 @@ public sealed class ScreenScraperResult
     public string Description   { get; init; } = "";
     /// <summary>Comma-separated uppercase language codes, e.g. "EN, FR".</summary>
     public string Languages     { get; init; } = "";
+    public string Genre         { get; init; } = "";
+    public string Subgenre      { get; init; } = "";
+    /// <summary>Player count string from ScreenScraper nplayers field, e.g. "1-2".</summary>
+    public string Players       { get; init; } = "";
+    /// <summary>Age rating from classifications (ESRB/PEGI preferred).</summary>
+    public string Rating        { get; init; } = "";
     /// <summary>Raw JSON string received from the ScreenScraper API.</summary>
     public string RawJson       { get; init; } = "{}";
 
@@ -57,8 +63,15 @@ public sealed class ScreenScraperResult
 /// </summary>
 public static class ScreenScraperClient
 {
-    private const string BaseUrl  = "https://www.screenscraper.fr/api2/jeuInfos.php";
-    private const string SoftName = "Arkadia";
+    private const string BaseUrl   = "https://www.screenscraper.fr/api2/jeuInfos.php";
+    private const string SearchUrl = "https://www.screenscraper.fr/api2/jeuRecherche.php";
+
+    /// <summary>Default softname sent when none is configured.</summary>
+    public const string DefaultSoftName = "Arkadia";
+
+    /// <summary>Returns the configured softname, or "Arkadia" when <paramref name="raw"/> is null, empty, or whitespace.</summary>
+    public static string ResolveSoftName(string? raw)
+        => string.IsNullOrWhiteSpace(raw) ? DefaultSoftName : raw.Trim();
 
     // ── Platform ID mapping ───────────────────────────────────────────────────
     // Arkadia platformId → ScreenScraper systemeid
@@ -143,7 +156,8 @@ public static class ScreenScraperClient
         string username, string password,
         string platformId, string releaseName,
         bool   isMame,
-        CancellationToken ct = default)
+        CancellationToken ct       = default,
+        string softName            = DefaultSoftName)
     {
         if (!TryResolveSystemId(platformId, out var systemId))
             throw new InvalidOperationException(
@@ -152,24 +166,94 @@ public static class ScreenScraperClient
         var stem = releaseName;
 
         // First attempt: romnom with .zip extension
-        var url1 = BuildUrl(devId, devPassword, username, password, systemId, $"{stem}.zip", false);
+        var url1 = BuildUrl(devId, devPassword, username, password, systemId, $"{stem}.zip", false, softName);
         var result = await TryFetchAsync(url1, ct);
 
         if (result is null && isMame)
         {
             // MAME fallback: bare shortname without extension
-            var url2 = BuildUrl(devId, devPassword, username, password, systemId, stem, false);
+            var url2 = BuildUrl(devId, devPassword, username, password, systemId, stem, false, softName);
             result = await TryFetchAsync(url2, ct);
         }
 
         if (result is null)
         {
             // Final fallback: text search by name
-            var url3 = BuildUrl(devId, devPassword, username, password, systemId, stem, true);
+            var url3 = BuildUrl(devId, devPassword, username, password, systemId, stem, true, softName);
             result = await TryFetchAsync(url3, ct);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Searches ScreenScraper for candidates matching <paramref name="query"/>.
+    /// Returns an empty list when no candidates are found or on HTTP error.
+    /// Throws <see cref="ScreenScraperRateLimitException"/> on HTTP 429.
+    /// </summary>
+    public static async Task<IReadOnlyList<ScraperCandidate>> SearchCandidatesAsync(
+        string devId, string devPassword,
+        string username, string password,
+        string platformId, string query,
+        CancellationToken ct       = default,
+        string softName            = DefaultSoftName)
+    {
+        TryResolveSystemId(platformId, out var systemId);
+
+        var url = $"{SearchUrl}?devid={Uri.EscapeDataString(devId)}" +
+                  $"&devpassword={Uri.EscapeDataString(devPassword)}" +
+                  $"&ssid={Uri.EscapeDataString(username)}" +
+                  $"&sspassword={Uri.EscapeDataString(password)}" +
+                  $"&softname={Uri.EscapeDataString(softName)}" +
+                  $"&output=json" +
+                  (systemId > 0 ? $"&systemeid={systemId}" : "") +
+                  $"&recherche={Uri.EscapeDataString(query)}";
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await ProviderHelpers.Http.GetAsync(url, ct);
+        }
+        catch (HttpRequestException)
+        {
+            return [];
+        }
+
+        if ((int)response.StatusCode == 429)
+            throw new ScreenScraperRateLimitException();
+
+        if (!response.IsSuccessStatusCode)
+            return [];
+
+        var json = await response.Content.ReadAsStringAsync(ct);
+        return ParseSearchJson(json);
+    }
+
+    /// <summary>
+    /// Fetches full ScreenScraper details for the given candidate by its provider game ID.
+    /// Throws <see cref="ArgumentException"/> when <paramref name="candidate"/> has a
+    /// <c>ProviderId</c> other than "screenscraper" or an empty <c>ProviderGameId</c>.
+    /// Returns null when the game record is not found.
+    /// Throws <see cref="ScreenScraperRateLimitException"/> on HTTP 429.
+    /// </summary>
+    public static async Task<ScreenScraperResult?> FetchDetailsByGameIdAsync(
+        string devId, string devPassword,
+        string username, string password,
+        ScraperCandidate candidate,
+        CancellationToken ct       = default,
+        string softName            = DefaultSoftName)
+    {
+        if (candidate.ProviderId != "screenscraper")
+            throw new ArgumentException(
+                $"Candidate provider '{candidate.ProviderId}' is not supported; expected 'screenscraper'.",
+                nameof(candidate));
+        if (candidate.ProviderGameId.Length == 0)
+            throw new ArgumentException(
+                "Candidate ProviderGameId must not be empty.", nameof(candidate));
+
+        var url = BuildGameIdUrl(devId, devPassword, username, password,
+                                 candidate.ProviderGameId, softName);
+        return await TryFetchAsync(url, ct);
     }
 
     // ── Test connection ───────────────────────────────────────────────────────
@@ -182,14 +266,15 @@ public static class ScreenScraperClient
     public static async Task<string> TestConnectionAsync(
         string devId, string devPassword,
         string username, string password,
-        CancellationToken ct = default)
+        CancellationToken ct       = default,
+        string softName            = DefaultSoftName)
     {
         var url = $"https://www.screenscraper.fr/api2/ssuserInfos.php" +
                   $"?devid={Uri.EscapeDataString(devId)}" +
                   $"&devpassword={Uri.EscapeDataString(devPassword)}" +
                   $"&ssid={Uri.EscapeDataString(username)}" +
                   $"&sspassword={Uri.EscapeDataString(password)}" +
-                  $"&softname={SoftName}" +
+                  $"&softname={Uri.EscapeDataString(softName)}" +
                   $"&output=json";
 
         var response = await ProviderHelpers.Http.GetAsync(url, ct);
@@ -396,7 +481,7 @@ public static class ScreenScraperClient
     private static string BuildUrl(
         string devId, string devPassword,
         string username, string password,
-        int systemId, string queryValue, bool isSearch)
+        int systemId, string queryValue, bool isSearch, string softName)
     {
         var encoded    = Uri.EscapeDataString(queryValue);
         var queryParam = isSearch ? $"recherche={encoded}" : $"romnom={encoded}";
@@ -404,7 +489,7 @@ public static class ScreenScraperClient
                $"&devpassword={Uri.EscapeDataString(devPassword)}" +
                $"&ssid={Uri.EscapeDataString(username)}" +
                $"&sspassword={Uri.EscapeDataString(password)}" +
-               $"&softname={SoftName}" +
+               $"&softname={Uri.EscapeDataString(softName)}" +
                $"&output=json" +
                $"&systemeid={systemId}" +
                $"&{queryParam}";
@@ -461,6 +546,8 @@ public static class ScreenScraperClient
             static string Decode(string s) =>
                 s.Length > 0 ? WebUtility.HtmlDecode(s) : s;
 
+            var (rawGenre, rawSubgenre) = PickGenres(jeu);
+            var (genre, subgenre) = NormalizeGenres(Decode(rawGenre), Decode(rawSubgenre));
             return new ScreenScraperResult
             {
                 Title               = Decode(PickName(jeu, ["wor", "us", "eu", "jp"])),
@@ -470,6 +557,10 @@ public static class ScreenScraperClient
                 Year                = PickDate(jeu),
                 Description         = Decode(PickSynopsis(jeu)),
                 Languages           = PickLanguages(jeu),
+                Genre               = genre,
+                Subgenre            = subgenre,
+                Players             = Decode(GetText(jeu, "nplayers")),
+                Rating              = Decode(PickClassification(jeu)),
                 RawJson             = json,
                 TitleScreenshots    = CollectMediaItems(jeu, "sstitle",     "png"),
                 GameplayScreenshots = CollectMediaItems(jeu, "ss",          "png"),
@@ -492,6 +583,98 @@ public static class ScreenScraperClient
         {
             return null;
         }
+    }
+
+    internal static IReadOnlyList<ScraperCandidate> ParseSearchJson(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("header", out var header) &&
+                header.TryGetProperty("success", out var success) &&
+                success.GetString() == "false")
+                return [];
+
+            if (!root.TryGetProperty("response", out var response))
+                return [];
+
+            if (response.TryGetProperty("jeux", out var jeux) && jeux.ValueKind == JsonValueKind.Array)
+            {
+                var list = new List<ScraperCandidate>();
+                foreach (var jeu in jeux.EnumerateArray())
+                    list.Add(ParseCandidateJeu(jeu));
+                return list;
+            }
+
+            if (response.TryGetProperty("jeu", out var singleJeu))
+                return [ParseCandidateJeu(singleJeu)];
+
+            return [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static ScraperCandidate ParseCandidateJeu(JsonElement jeu)
+    {
+        static string Decode(string s) => s.Length > 0 ? WebUtility.HtmlDecode(s) : s;
+
+        var gameId = "";
+        if (jeu.TryGetProperty("id", out var id))
+            gameId = id.ValueKind == JsonValueKind.String ? (id.GetString() ?? "") : id.GetRawText();
+
+        var platformName = Decode(GetText(jeu, "systeme"));
+        var platformId   = "";
+        if (jeu.TryGetProperty("systeme", out var sys) && sys.TryGetProperty("id", out var sysId))
+            platformId = sysId.ValueKind == JsonValueKind.String ? (sysId.GetString() ?? "") : sysId.GetRawText();
+
+        return new ScraperCandidate
+        {
+            ProviderId       = "screenscraper",
+            ProviderGameId   = gameId,
+            Title            = Decode(PickName(jeu, ["wor", "us", "eu", "jp"])),
+            PlatformName     = platformName,
+            PlatformId       = platformId,
+            Year             = PickDate(jeu),
+            Developer        = Decode(GetText(jeu, "developpeur")),
+            Publisher        = Decode(GetText(jeu, "editeur")),
+            Region           = PickRegionForCandidate(jeu),
+            Description      = Decode(PickSynopsis(jeu)),
+            ThumbnailUrl     = PickThumbnailUrl(jeu),
+            RawCandidateJson = jeu.GetRawText(),
+        };
+    }
+
+    private static string PickRegionForCandidate(JsonElement jeu)
+    {
+        if (!jeu.TryGetProperty("noms", out var noms) || noms.ValueKind != JsonValueKind.Array)
+            return "";
+        foreach (var region in new[] { "wor", "us", "eu", "jp" })
+        {
+            foreach (var nom in noms.EnumerateArray())
+            {
+                if (nom.TryGetProperty("region", out var r) && r.GetString() == region)
+                    return region;
+            }
+        }
+        foreach (var nom in noms.EnumerateArray())
+        {
+            if (nom.TryGetProperty("region", out var r) && r.GetString() is { Length: > 0 } reg)
+                return reg;
+        }
+        return "";
+    }
+
+    private static string PickThumbnailUrl(JsonElement jeu)
+    {
+        var ssTitle = CollectMediaItems(jeu, "sstitle", "png");
+        if (ssTitle.Count > 0) return ssTitle[0].Url;
+        var box = CollectMediaItems(jeu, "box-2D", "jpg");
+        return box.Count > 0 ? box[0].Url : "";
     }
 
     // Cover regions emitted by ScreenScraper that we do not download.
@@ -571,6 +754,70 @@ public static class ScreenScraperClient
             if (t == "video" && standard is null) standard = new ScreenScraperMediaItem(url, fmt, size);
         }
         return standard;
+    }
+
+    private static (string Genre, string Subgenre) PickGenres(JsonElement jeu)
+    {
+        if (!jeu.TryGetProperty("genres", out var genres) || genres.ValueKind != JsonValueKind.Array)
+            return ("", "");
+        var names = new List<string>();
+        foreach (var genre in genres.EnumerateArray())
+        {
+            if (!genre.TryGetProperty("noms", out var noms) || noms.ValueKind != JsonValueKind.Array)
+                continue;
+            string? name = null;
+            foreach (var n in noms.EnumerateArray())
+            {
+                if (n.TryGetProperty("langue", out var l) && l.GetString() == "en" &&
+                    n.TryGetProperty("text",   out var t))
+                { name = t.GetString(); break; }
+            }
+            if (name is null)
+                foreach (var n in noms.EnumerateArray())
+                    if (n.TryGetProperty("text", out var t)) { name = t.GetString(); break; }
+            if (name is { Length: > 0 })
+                names.Add(name);
+        }
+        return (names.Count > 0 ? names[0] : "", names.Count > 1 ? names[1] : "");
+    }
+
+    /// <summary>
+    /// Splits a slash-combined genre string (e.g. "Action / Breakout games") into separate
+    /// Genre and Subgenre values, but only when Subgenre is empty or duplicates the first part.
+    /// </summary>
+    internal static (string Genre, string Subgenre) NormalizeGenres(string genre, string subgenre)
+    {
+        var slashIdx = genre.IndexOf('/');
+        if (slashIdx < 0)
+            return (genre, subgenre);
+
+        var part1 = genre[..slashIdx].Trim();
+        var part2 = genre[(slashIdx + 1)..].Trim();
+
+        if (subgenre.Length == 0 ||
+            string.Equals(subgenre, part1, StringComparison.OrdinalIgnoreCase))
+            return (part1, part2);
+
+        return (genre, subgenre);
+    }
+
+    private static string PickClassification(JsonElement jeu)
+    {
+        if (!jeu.TryGetProperty("classifications", out var classifications) ||
+            classifications.ValueKind != JsonValueKind.Array)
+            return "";
+        string? first = null;
+        foreach (var c in classifications.EnumerateArray())
+        {
+            if (!c.TryGetProperty("text", out var t)) continue;
+            var text = t.GetString();
+            if (text is null or { Length: 0 }) continue;
+            first ??= text;
+            if (c.TryGetProperty("type", out var typeProp) &&
+                typeProp.GetString() is "ESRB" or "PEGI")
+                return text;
+        }
+        return first ?? "";
     }
 
     private static string PickName(JsonElement jeu, string[] preferredRegions)
@@ -673,6 +920,23 @@ public static class ScreenScraperClient
         }
         return "";
     }
+
+    // systemeid is intentionally omitted: gameid is globally unique in ScreenScraper's
+    // database, and including systemeid causes the API to return null when the game is not
+    // catalogued under that exact system, even though the game exists under a different system.
+    // Parameter name is "gameid" (confirmed from ScreenScraper reference implementation).
+    internal static string BuildGameIdUrl(
+        string devId, string devPassword,
+        string username, string password,
+        string gameId,
+        string softName = DefaultSoftName)
+        => $"{BaseUrl}?devid={Uri.EscapeDataString(devId)}" +
+           $"&devpassword={Uri.EscapeDataString(devPassword)}" +
+           $"&ssid={Uri.EscapeDataString(username)}" +
+           $"&sspassword={Uri.EscapeDataString(password)}" +
+           $"&softname={Uri.EscapeDataString(softName)}" +
+           $"&output=json" +
+           $"&gameid={Uri.EscapeDataString(gameId)}";
 
     private static void TryDelete(string path)
     {

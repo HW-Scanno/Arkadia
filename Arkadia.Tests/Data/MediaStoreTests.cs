@@ -567,4 +567,38 @@ public sealed class MediaStoreTests : IDisposable
         Assert.True(Directory.Exists(Path.GetDirectoryName(stem)));
         Assert.EndsWith("sonic_us_001", stem);
     }
+
+    // ── NormalizeMediaType ────────────────────────────────────────────────────
+
+    [Fact]
+    public void NormalizeMediaType_PhysicalMedia_ReturnsPhysical()
+        => Assert.Equal("physical", MediaStore.NormalizeMediaType("physical-media"));
+
+    [Fact]
+    public void NormalizeMediaType_Physical_ReturnsPhysical()
+        => Assert.Equal("physical", MediaStore.NormalizeMediaType("physical"));
+
+    [Fact]
+    public void NormalizeMediaType_Null_ReturnsEmpty()
+        => Assert.Equal("", MediaStore.NormalizeMediaType(null));
+
+    [Fact]
+    public void NormalizeMediaType_Empty_ReturnsEmpty()
+        => Assert.Equal("", MediaStore.NormalizeMediaType(""));
+
+    [Fact]
+    public void NormalizeMediaType_Whitespace_ReturnsEmpty()
+        => Assert.Equal("", MediaStore.NormalizeMediaType("   "));
+
+    [Fact]
+    public void NormalizeMediaType_CoverFront_Unchanged()
+        => Assert.Equal("cover-front", MediaStore.NormalizeMediaType("cover-front"));
+
+    [Fact]
+    public void NormalizeMediaType_Video_Unchanged()
+        => Assert.Equal("video", MediaStore.NormalizeMediaType("video"));
+
+    [Fact]
+    public void NormalizeMediaType_PhysicalTexture_Unchanged()
+        => Assert.Equal("physical-texture", MediaStore.NormalizeMediaType("physical-texture"));
 }

@@ -1,0 +1,182 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.ScrapeReviewDialog"
+        Title="Scrape Review"
+        Width="760"
+        Height="520"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0D0D12"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.primary">
+            <Setter Property="Background"      Value="#7B68EE"/>
+            <Setter Property="Foreground"      Value="#FFFFFF"/>
+            <Setter Property="Padding"         Value="22,8"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="FontWeight"      Value="SemiBold"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"      Value="#1E1E2C"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="Padding"         Value="22,8"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
+
+        <!-- Header -->
+        <Border Grid.Row="0" Padding="24,18,24,14"
+                BorderBrush="#181826" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Spacing="4">
+                    <TextBlock Text="SCRAPING IN PROGRESS"
+                               FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                               Foreground="#9FA4FF"/>
+                    <TextBlock x:Name="PlatformLabel"
+                               FontSize="12" Foreground="#888899"/>
+                </StackPanel>
+                <TextBlock x:Name="GameCountLabel"
+                           Grid.Column="1"
+                           Text="Game 1 of 1"
+                           FontSize="11" Foreground="#555566"
+                           VerticalAlignment="Bottom"/>
+            </Grid>
+        </Border>
+
+        <!-- Search bar -->
+        <Border Grid.Row="1" Padding="24,10,24,10">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBox x:Name="SearchBox"
+                         Grid.Column="0"
+                         Watermark="Search title…"
+                         Margin="0,0,8,0"/>
+                <Button x:Name="RetryBtn"
+                        Grid.Column="1"
+                        Classes="secondary"
+                        Content="Search"
+                        Click="OnRetry"/>
+            </Grid>
+        </Border>
+
+        <!-- Body: candidate list (left) + preview (right) -->
+        <Grid Grid.Row="2" ColumnDefinitions="*,*">
+
+            <!-- Left: candidates -->
+            <Border Grid.Column="0" Padding="24,4,12,4"
+                    BorderBrush="#181826" BorderThickness="0,0,1,0">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top"
+                               Text="CANDIDATES"
+                               FontSize="9" FontWeight="SemiBold" LetterSpacing="1.5"
+                               Foreground="#555566" Margin="0,4,0,6"/>
+                    <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto">
+                        <StackPanel x:Name="CandidatePanel" Spacing="4"/>
+                    </ScrollViewer>
+                </DockPanel>
+            </Border>
+
+            <!-- Right: preview -->
+            <Border Grid.Column="1" Padding="12,4,24,4">
+                <DockPanel>
+                    <TextBlock DockPanel.Dock="Top"
+                               Text="PREVIEW"
+                               FontSize="9" FontWeight="SemiBold" LetterSpacing="1.5"
+                               Foreground="#555566" Margin="0,4,0,6"/>
+                    <!-- Placeholder and content share the same cell; toggled by IsVisible -->
+                    <Grid>
+                        <TextBlock x:Name="PreviewPlaceholder"
+                                   Text="Select a candidate to preview."
+                                   FontSize="12" Foreground="#555566"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                        <ScrollViewer x:Name="PreviewScroll"
+                                      IsVisible="False"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel Spacing="6" Margin="0,2,0,0">
+                                <TextBlock x:Name="PreviewTitle"
+                                           FontSize="13" FontWeight="SemiBold"
+                                           Foreground="#D0D0E8" TextWrapping="Wrap"/>
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock x:Name="PreviewPlatform"
+                                               FontSize="11" Foreground="#9FA4FF"/>
+                                    <TextBlock x:Name="PreviewYear"
+                                               FontSize="11" Foreground="#888899"/>
+                                </StackPanel>
+                                <Border Height="1" Background="#2A2A44" Margin="0,4,0,4"/>
+                                <!-- Field rows: label (col 0) + value (col 1) -->
+                                <Grid ColumnDefinitions="80,*" RowDefinitions="Auto,Auto,Auto,Auto,*">
+                                    <!-- Developer -->
+                                    <TextBlock Grid.Row="0" Grid.Column="0"
+                                               Text="Developer" FontSize="11" Foreground="#555566"
+                                               VerticalAlignment="Top"/>
+                                    <TextBlock x:Name="PreviewDeveloper"
+                                               Grid.Row="0" Grid.Column="1"
+                                               FontSize="11" Foreground="#AAAACC" TextWrapping="Wrap"/>
+                                    <!-- Publisher -->
+                                    <TextBlock Grid.Row="1" Grid.Column="0"
+                                               Text="Publisher" FontSize="11" Foreground="#555566"
+                                               Margin="0,6,0,0" VerticalAlignment="Top"/>
+                                    <TextBlock x:Name="PreviewPublisher"
+                                               Grid.Row="1" Grid.Column="1"
+                                               FontSize="11" Foreground="#AAAACC" TextWrapping="Wrap"
+                                               Margin="0,6,0,0"/>
+                                    <!-- Region -->
+                                    <TextBlock Grid.Row="2" Grid.Column="0"
+                                               Text="Region" FontSize="11" Foreground="#555566"
+                                               Margin="0,6,0,0"/>
+                                    <TextBlock x:Name="PreviewRegion"
+                                               Grid.Row="2" Grid.Column="1"
+                                               FontSize="11" Foreground="#AAAACC"
+                                               Margin="0,6,0,0"/>
+                                    <!-- Description label -->
+                                    <TextBlock Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2"
+                                               Text="Description"
+                                               FontSize="11" Foreground="#555566"
+                                               Margin="0,10,0,4"/>
+                                    <!-- Description value -->
+                                    <TextBlock x:Name="PreviewDescription"
+                                               Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2"
+                                               FontSize="11" Foreground="#888899"
+                                               TextWrapping="Wrap" MaxLines="6"/>
+                                </Grid>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </DockPanel>
+            </Border>
+
+        </Grid>
+
+        <!-- Footer -->
+        <Border Grid.Row="3" Padding="24,12,24,18"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock x:Name="StatusLabel"
+                           Grid.Column="0"
+                           FontSize="11" Foreground="#888899"
+                           VerticalAlignment="Center"
+                           IsVisible="False"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                    <Button Classes="secondary" Content="Cancel" Click="OnCancel"/>
+                    <Button x:Name="AcceptBtn"
+                            Classes="primary"
+                            Content="Accept"
+                            IsEnabled="False"
+                            Click="OnAccept"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+    </Grid>
+</Window>

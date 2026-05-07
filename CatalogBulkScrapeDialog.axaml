@@ -1,0 +1,204 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.CatalogBulkScrapeDialog"
+        Title="Bulk Scraping"
+        Width="560"
+        SizeToContent="Height"
+        MaxHeight="720"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.action">
+            <Setter Property="Background"      Value="{DynamicResource ArkAccent}"/>
+            <Setter Property="Foreground"      Value="#FFFFFF"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"      Value="#1A1A2C"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="RadioButton">
+            <Setter Property="Foreground" Value="#CCCCDD"/>
+            <Setter Property="FontSize"   Value="12"/>
+        </Style>
+        <Style Selector="CheckBox">
+            <Setter Property="Foreground" Value="#CCCCDD"/>
+            <Setter Property="FontSize"   Value="12"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- ── Header ───────────────────────────────────────────────────── -->
+        <StackPanel Grid.Row="0" Margin="20,18,20,12" Spacing="4">
+            <TextBlock Text="Bulk Scraping — ScreenScraper Cache"
+                       FontSize="14" FontWeight="SemiBold" Foreground="#EEEEFF"/>
+            <TextBlock x:Name="HeaderSubtitle"
+                       FontSize="11" Foreground="#555577"/>
+        </StackPanel>
+
+        <!-- ── Body ─────────────────────────────────────────────────────── -->
+        <ScrollViewer Grid.Row="1" MaxHeight="520"
+                      VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="20,0,20,0" Spacing="0">
+
+                <!-- ── Settings panel ─────────────────────────────────── -->
+                <StackPanel x:Name="SettingsPanel" Spacing="18">
+
+                    <!-- Scope -->
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="SCOPE"
+                                   FontSize="9" FontWeight="SemiBold"
+                                   LetterSpacing="1.8" Foreground="#444455"/>
+                        <RadioButton x:Name="ScopeCurrentRelease"
+                                     Content="Current Release — selected entry only"
+                                     GroupName="Scope"/>
+                        <RadioButton x:Name="ScopeMissingOnly"
+                                     Content="Missing Only — entries lacking complete metadata or cover"
+                                     GroupName="Scope"
+                                     IsChecked="True"/>
+                        <RadioButton x:Name="ScopeEntireDat"
+                                     Content="Entire DAT — every entry in the current DAT line"
+                                     GroupName="Scope"/>
+                    </StackPanel>
+
+                    <!-- Metadata -->
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="METADATA"
+                                   FontSize="9" FontWeight="SemiBold"
+                                   LetterSpacing="1.8" Foreground="#444455"/>
+                        <CheckBox x:Name="OptAutoApplyEmpty"
+                                  Content="Auto-apply proposals to empty fields only"
+                                  IsChecked="True"/>
+                    </StackPanel>
+
+                    <!-- Media -->
+                    <StackPanel Spacing="8">
+                        <TextBlock Text="MEDIA"
+                                   FontSize="9" FontWeight="SemiBold"
+                                   LetterSpacing="1.8" Foreground="#444455"/>
+                        <CheckBox x:Name="OptExtractMedia"
+                                  Content="Extract missing media files"
+                                  IsChecked="True"/>
+                        <CheckBox x:Name="OptRespectExcluded"
+                                  Content="Respect excluded media hashes"
+                                  IsChecked="True"/>
+                        <CheckBox x:Name="OptOverwriteExisting"
+                                  Content="Overwrite existing media files"
+                                  IsChecked="False"/>
+                    </StackPanel>
+
+                </StackPanel>
+
+                <!-- ── Progress panel ─────────────────────────────────── -->
+                <StackPanel x:Name="ProgressPanel" IsVisible="False" Spacing="14">
+
+                    <TextBlock x:Name="ProgressCurrentLabel"
+                               Text="Preparing…"
+                               FontSize="12" Foreground="#CCCCDD"
+                               TextTrimming="CharacterEllipsis"/>
+
+                    <ProgressBar x:Name="ProgressBar"
+                                 Height="6"
+                                 Minimum="0" Maximum="100" Value="0"
+                                 Background="#1A1A2C"
+                                 Foreground="{DynamicResource ArkAccent}"
+                                 CornerRadius="3"/>
+
+                    <Grid ColumnDefinitions="*,*,*,*,*" Margin="0,2,0,0">
+                        <StackPanel Grid.Column="0" Spacing="2">
+                            <TextBlock Text="PROCESSED" FontSize="9" Foreground="#444455"
+                                       FontWeight="SemiBold" LetterSpacing="1.4"/>
+                            <TextBlock x:Name="StatProcessed" Text="0 / 0"
+                                       FontSize="13" Foreground="#CCCCDD"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Spacing="2">
+                            <TextBlock Text="MATCHED" FontSize="9" Foreground="#444455"
+                                       FontWeight="SemiBold" LetterSpacing="1.4"/>
+                            <TextBlock x:Name="StatMatched" Text="0"
+                                       FontSize="13" Foreground="#4CAF50"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Spacing="2">
+                            <TextBlock Text="NO MATCH" FontSize="9" Foreground="#444455"
+                                       FontWeight="SemiBold" LetterSpacing="1.4"/>
+                            <TextBlock x:Name="StatNoMatch" Text="0"
+                                       FontSize="13" Foreground="#888899"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="3" Spacing="2">
+                            <TextBlock Text="AMBIGUOUS" FontSize="9" Foreground="#444455"
+                                       FontWeight="SemiBold" LetterSpacing="1.4"/>
+                            <TextBlock x:Name="StatAmbiguous" Text="0"
+                                       FontSize="13" Foreground="#FFD54F"/>
+                        </StackPanel>
+                        <StackPanel Grid.Column="4" Spacing="2">
+                            <TextBlock Text="ERRORS" FontSize="9" Foreground="#444455"
+                                       FontWeight="SemiBold" LetterSpacing="1.4"/>
+                            <TextBlock x:Name="StatErrors" Text="0"
+                                       FontSize="13" Foreground="#EF5350"/>
+                        </StackPanel>
+                    </Grid>
+
+                </StackPanel>
+
+                <!-- ── Report panel ───────────────────────────────────── -->
+                <StackPanel x:Name="ReportPanel" IsVisible="False" Spacing="12">
+
+                    <TextBlock x:Name="ReportSummary"
+                               FontSize="12" Foreground="#CCCCDD"
+                               TextWrapping="Wrap" LineHeight="20"/>
+
+                    <Border Background="#0A0A12"
+                            BorderBrush="#1E1E2C"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="12,8">
+                        <ScrollViewer MaxHeight="320"
+                                      VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="ReportListPanel"
+                                        Spacing="2"/>
+                        </ScrollViewer>
+                    </Border>
+
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ── Bottom bar ────────────────────────────────────────────────── -->
+        <Border Grid.Row="2" Padding="20,12,20,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0"
+                Margin="0,12,0,0">
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Spacing="8">
+                <Button x:Name="StartBtn"
+                        Content="Start"
+                        Classes="action"
+                        Click="OnStart"/>
+                <Button x:Name="StopBtn"
+                        Content="Stop"
+                        IsVisible="False"
+                        Classes="secondary"
+                        Click="OnStop"/>
+                <Button x:Name="CloseBtn"
+                        Content="Close"
+                        Classes="secondary"
+                        Click="OnClose"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>
