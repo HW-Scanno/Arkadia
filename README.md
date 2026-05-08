@@ -5,7 +5,7 @@
 ![Status](https://img.shields.io/badge/status-active%20development-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-Arkadia is a preservation-grade desktop application for managing large offline ROM archives across multiple physical disks, with an integrated metadata catalog and online/offline scraping workflow with coming Arkadia Media Packs.
+Arkadia is a preservation-grade desktop application for managing large offline ROM archives across multiple physical disks, with an integrated metadata catalog, offline-first scraping workflow, and coming Arkadia Media Packs.
 
 It provides a structured, integrity-first approach to organizing, verifying, and distributing artifact collections derived from DAT files — ensuring filesystem state and catalog state are always aligned, and that no artifact is ever considered present without independent verification.
 
@@ -18,7 +18,7 @@ Arkadia is being developed toward a complete personal preservation workflow tool
 1. Import DAT files from preservation authorities (No-Intro, Redump, TOSEC, MAME, FBNeo, EggmansWorld)
 2. Manage a multi-disk physical archive with integrity verification
 3. Browse the full collection via a rich Catalog with cover art, screenshots, metadata, and media previews
-4. Scrape metadata and media from ScreenScraper with a review-before-apply flow
+4. Scrape metadata and media from online scraping providers with a review-before-apply flow
 5. Normalize metadata values consistently via configurable mapping rules
 
 ---
@@ -30,11 +30,11 @@ Arkadia.sln
 ├── Arkadia.csproj          — Avalonia 11 / .NET 8 desktop app (Windows)
 │   ├── Data/               — DatLineStore, CatalogService, MediaStore, normalizers
 │   ├── Library/            — LibraryEntry, title resolution
-│   ├── Providers/          — ScreenScraperClient, ScreenScraperImportService
+│   ├── Providers/          — scraping provider clients and import services
 │   ├── Ingestion/          — DAT parsing and ingest pipeline
 │   ├── Themes/             — Theme engine, palette management
 │   └── MainWindow.axaml    — Single-window UI with view switching
-└── Arkadia.Tests.csproj    — xUnit test project (~590 tests)
+└── Arkadia.Tests.csproj    — xUnit test project (~975 tests)
 ```
 
 The application is a single-window app with a left nav bar switching between views: Dashboard, Analytics, Providers, Systems, Operations, Catalog, Settings.
@@ -66,11 +66,15 @@ data/
         manuals/
         physical/                     — physical media photos
         physical-texture/
-        metadata/                     — raw provider JSON payloads
+        metadata/                     — raw provider metadata payloads
   platforms/
     <hardwareFamilyId>/
       <datLineId>/
         releases.db                   — per-DAT SQLite DB (releases, artifacts, proposals, etc.)
+
+incoming-media/                      — manual media intake source folder
+scrape-cache/                        — registered provider cache packages
+staging-cache/                       — provider cache builder staging
 
 libraries/
   lib-vlc/win-x64/                   — LibVLC runtime (not committed; place manually)
@@ -83,7 +87,7 @@ logs/
   integrity/
 
 themes/
-  visual/default/badges/             — badge icon assets (committed)
+  visual/default/                    — theme and badge icon assets (committed)
 
 tools/                               — external tools (7zip, chdman — not committed)
 ```
@@ -94,7 +98,7 @@ tools/                               — external tools (7zip, chdman — not co
 
 ### DAT Providers
 
-A **DAT provider** is an authority that defines release identity and technical catalog data. DAT provider data is canonical technical input — it determines what a release *is* (name, region, format, size, checksum, parent/clone relationships). It is entirely separate from **metadata providers** such as ScreenScraper, which enrich entries with titles, artwork, and descriptions but do not replace DAT identity.
+A **DAT provider** is an authority that defines release identity and technical catalog data. DAT provider data is canonical technical input — it determines what a release *is* (name, region, format, size, checksum, parent/clone relationships). It is entirely separate from **online scraping providers**, which enrich entries with titles, artwork, and descriptions but do not replace DAT identity.
 
 Supported DAT providers:
 
@@ -122,15 +126,15 @@ The **Catalog** view is the primary browsing interface. It shows all releases ac
 - Extras (logos, flyers, marquees)
 - Manuals (PDF/image files, opened in the system viewer)
 - Physical media photos
-- Metadata badges (region, system, year, type, size)
+- Metadata grid (status, system, year, region, genre, developer, publisher, language, rating, players)
 - Metadata quality checklist and quality indicator
-- Description
+- Description and Extra Notes
 
 ### MAME Provider
 
 MAME DATs describe arcade drivers, BIOS sets, devices, and software lists. Release identifiers are **shortnames** (e.g., `anmlbskt`) — not human-readable titles. When scraping MAME releases, set **Scrape As System** to `arcade` so lookups target the correct external provider system. Because shortnames rarely match title searches, use the **exact ROM fallback** in `ScrapeReviewDialog` to locate the correct game by hash.
 
-Future MAME-specific complementary extraction (driver metadata, parent/clone relationships, working state, technical flags) will be stored separately from provider metadata and will not be overwritten by ScreenScraper.
+Future MAME-specific complementary extraction (driver metadata, parent/clone relationships, working state, technical flags) will be stored separately from provider metadata and will not be overwritten by online metadata providers.
 
 ### DAT vs Metadata Provider Separation
 
@@ -141,19 +145,25 @@ Future MAME-specific complementary extraction (driver metadata, parent/clone rel
 | Size, checksum | DAT provider |
 | Parent / clone / software-list relationships | DAT provider |
 | Technical flags (working state, BIOS, device) | DAT provider |
-| Title, original title, description | Metadata provider (ScreenScraper) |
-| Developer, publisher, year, genre | Metadata provider |
-| Rating, players | Metadata provider |
-| Screenshots, video, covers, manuals | Metadata provider |
+| Title, original title, description | Online metadata provider |
+| Developer, publisher, year, genre | Online metadata provider |
+| Rating, players | Online metadata provider |
+| Screenshots, video, covers, manuals | Online metadata provider |
 
 DAT-derived facts feed badges, quality indicators, and future filters. They are never overwritten by metadata scraping.
 
+### Online Scraping Providers
+
+Arkadia is designed around a provider-based scraping model. Online providers can be used to build local, sanitized cache packages. Once registered, those packages allow Arkadia to scrape and curate entirely offline. Provider-specific setup and workflow details are documented in the [Cache & Curation Pipeline](docs/CACHE_CURATION_PIPELINE.md).
+
+Provider metadata is always saved as pending proposals first — nothing is applied to the catalog without user review in the Merge Metadata dialog. Canonical metadata and DAT identity are kept strictly separate.
+
 ### Manual Scrape Flow
 
-1. **Provider selection** — choose ScreenScraper
+1. **Provider selection** — choose an online scraping provider
 2. **ScrapeReviewDialog** — search candidates by title, or accept an exact ROM match; review results before committing
 3. **Fetch details** — full metadata and media URLs are retrieved
-4. **ScreenScraperImportService** — normalizes fields, saves proposals as pending (`accepted=0`), stores raw JSON payload, downloads all media
+4. **Import service** — normalizes fields, saves proposals as pending (`accepted=0`), stores raw metadata payload, downloads all media
 5. **MergeMetadataDialog** — review each proposed field; fields with existing values show SAME/MANUAL/LOCKED status; user selects which to apply; LOCKED fields cannot be overwritten without explicit override
 
 ### Recommended Workflows
@@ -186,7 +196,17 @@ A global table of normalization rules (`field`, `match_value`, `replacement`, `e
 
 ### Media Filesystem Layout
 
-Media files use indexed stems: `<releaseStem>_<index>.<ext>` (screenshots, fanart, logos, etc.) or `<releaseStem>_<region>_<index>.<ext>` (regional covers). The `ScreenScraperClient` deduplicates by expected byte size before downloading.
+Media files use indexed stems: `<releaseStem>_<index>.<ext>` (screenshots, fanart, logos, etc.) or `<releaseStem>_<region>_<index>.<ext>` (regional covers). The provider import service deduplicates by expected byte size before downloading.
+
+### Arkadia Media Pack (AMP)
+
+**AMP** (`.amp`) is the planned Arkadia-native curated package format: provider-agnostic, suitable for offline reuse and distribution where legally permissible. AMP packages carry accepted media, canonical metadata, credits, Extra Notes, preferred state, and exclusion hashes — but no raw provider payloads and no visible provider provenance.
+
+**ARK** (`.ark`) is the separate planned format for Arkadia database and application state backup/restore. It is not a media pack.
+
+> **AMP is not a backup. ARK is not a media pack.**
+
+AMP v1 specification: [docs/SPECS/ARKADIA_MEDIA_PACK_V1_SPEC.md](docs/SPECS/ARKADIA_MEDIA_PACK_V1_SPEC.md)
 
 ### LibVLC
 
@@ -229,15 +249,19 @@ The `publish/` directory contains the self-contained executable. Copy `libraries
 | Volume plan / build / append / reabsorb | Stable |
 | Repair workflow | Stable |
 | Catalog browse with cover/media gallery | Stable |
-| ScreenScraper manual scrape | Stable |
+| Manual scrape with review-before-apply | Stable |
+| Offline scraping from registered cache packages | Stable |
+| Bulk scraping from registered cache packages | Stable |
+| Online provider cache builder | Stable |
 | Metadata proposals + Merge dialog | Stable |
 | Edit Metadata with field locks | Stable |
 | Metadata value mappings (Settings) | Stable |
+| Media curation (Manage Media workbench) | Stable |
+| Extra Notes per release | Stable |
 | Theme engine with palette support | Stable |
 | LibVLC video preview | Stable |
-| Bulk / automatic scrape | Planned |
-| Scrape from cached payload | Planned |
-| Additional providers | Planned |
+| Arkadia Media Pack (.amp) export/import | Planned |
+| Additional online providers | Planned |
 
 ---
 
@@ -245,7 +269,8 @@ The `publish/` directory contains the self-contained executable. Copy `libraries
 
 - [User Manual](docs/USER_MANUAL.md)
 - [Developer Notes](docs/DEVELOPER_NOTES.md)
-- [Cache & Curation Pipeline](docs/CACHE_CURATION_PIPELINE.md) — ScreenScraper Cache Builder, Manage Staging, Registered Cache Manager, Verify Package, offline / bulk scraping, Manage Media, Extra Notes, AMP future direction
+- [Cache & Curation Pipeline](docs/CACHE_CURATION_PIPELINE.md) — provider cache builder, staging, registered cache manager, verify package, offline / bulk scraping, Manage Media workbench, Extra Notes, AMP direction
+- [AMP v1 Specification](docs/SPECS/ARKADIA_MEDIA_PACK_V1_SPEC.md) — Arkadia Media Pack format specification
 - [Roadmap](docs/ROADMAP.md)
 
 ---
