@@ -1,8 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Collections.Generic;
 using Arkadia.Data;
 using Arkadia.Library;
 using Avalonia.Controls;
@@ -15,59 +15,149 @@ namespace Arkadia;
 
 public partial class CatalogManageMediaDialog : Window
 {
-    private readonly LibraryEntry                  _entry;
-    private readonly string                        _dataDir;
-    private readonly ReleaseMediaCurationService   _service;
+    private readonly IReadOnlyList<LibraryEntry>  _allEntries;
+    private int                                   _currentIndex;
+    private readonly string                       _baseDir;
+    private readonly string                       _dataDir;
+    private readonly string                       _incomingDir;
+    private readonly ReleaseMediaCurationService  _service;
 
-    private List<MediaAssetVm>  _allVms    = [];
-    private MediaAssetVm?       _selected;
-    private Bitmap?             _previewBitmap;
-    private string?             _addMediaSourcePath;
+    // Left pane
+    private List<MediaAssetVm>   _allVms   = [];
+    private MediaAssetVm?        _selected;
+    private Bitmap?              _previewBitmap;
+    private string?              _typeFilter;
 
-    public CatalogManageMediaDialog() : this(null!, null!) { }
+    // Right pane
+    private string               _incomingBrowseDir;
+    private List<IncomingFileVm> _incomingFiles = [];
+    private IncomingFileVm?      _incomingSelected;
+    private Bitmap?              _incomingPreviewBitmap;
 
-    public CatalogManageMediaDialog(LibraryEntry entry, string dataDir)
+    private LibraryEntry? CurrentEntry =>
+        _allEntries?.Count > 0 && _currentIndex >= 0 && _currentIndex < _allEntries.Count
+            ? _allEntries[_currentIndex] : null;
+
+    public CatalogManageMediaDialog() : this(null!, 0, null!) { }
+
+    public CatalogManageMediaDialog(IReadOnlyList<LibraryEntry> allEntries, int initialIndex, string baseDir)
     {
         InitializeComponent();
-        _entry   = entry;
-        _dataDir = dataDir;
-        _service = new ReleaseMediaCurationService(dataDir);
+        _allEntries        = allEntries;
+        _currentIndex      = Math.Max(0, Math.Min(initialIndex, Math.Max((allEntries?.Count ?? 1) - 1, 0)));
+        _baseDir           = baseDir ?? "";
+        _dataDir           = string.IsNullOrEmpty(baseDir) ? "" : Path.Combine(baseDir, "data");
+        _incomingDir       = string.IsNullOrEmpty(baseDir) ? "" : Path.Combine(baseDir, ArkadiaFolders.IncomingMedia);
+        _incomingBrowseDir = _incomingDir;
+        _service           = string.IsNullOrEmpty(_dataDir) ? null! : new ReleaseMediaCurationService(_dataDir);
     }
 
     protected override void OnLoaded(RoutedEventArgs e)
     {
         base.OnLoaded(e);
+        if (_allEntries is null || _allEntries.Count == 0) return;
 
-        var displayTitle = LibraryTitleResolver.Resolve(_entry.Name, "catalog", _entry.Metadata?.Title);
+        PopulateTypeFilter();
+        PopulateImportTypes();
+        EnsureIncomingDir();
+        LoadRelease();
+        RefreshIncoming();
+    }
+
+    // ── Setup ─────────────────────────────────────────────────────────────────
+
+    private void PopulateTypeFilter()
+    {
+        var items = new List<string> { "All" };
+        items.AddRange(ReleaseMediaCurationService.MediaTypeOrder);
+        TypeFilterPicker.ItemsSource   = items;
+        TypeFilterPicker.SelectedIndex = 0;
+        _typeFilter = null;
+    }
+
+    private void PopulateImportTypes()
+    {
+        ImportTypePicker.ItemsSource   = ReleaseMediaCurationService.MediaTypeOrder;
+        ImportTypePicker.SelectedIndex = 0;
+    }
+
+    private void EnsureIncomingDir()
+    {
+        if (!string.IsNullOrEmpty(_incomingDir))
+            try { Directory.CreateDirectory(_incomingDir); } catch { }
+    }
+
+    // ── Release navigation ────────────────────────────────────────────────────
+
+    private void LoadRelease()
+    {
+        var entry = CurrentEntry;
+        if (entry is null) return;
+
+        var displayTitle = LibraryTitleResolver.Resolve(entry.Name, "catalog", entry.Metadata?.Title);
         HeaderTitle.Text = $"Manage Media — {displayTitle}";
         Title            = $"Manage Media — {displayTitle}";
 
-        PopulateAddMediaTypes();
+        var total              = _allEntries?.Count ?? 0;
+        NavLabel.Text          = total > 1 ? $"{_currentIndex + 1} of {total}" : "";
+        PrevEntryBtn.IsEnabled = _currentIndex > 0;
+        NextEntryBtn.IsEnabled = _currentIndex < (total - 1);
+
         RefreshAssets();
     }
 
-    // ── Populate ──────────────────────────────────────────────────────────────
+    private void OnPrevEntry(object? sender, RoutedEventArgs e)
+    {
+        if (_currentIndex <= 0) return;
+        _currentIndex--;
+        LoadRelease();
+    }
+
+    private void OnNextEntry(object? sender, RoutedEventArgs e)
+    {
+        var total = _allEntries?.Count ?? 0;
+        if (_currentIndex >= total - 1) return;
+        _currentIndex++;
+        LoadRelease();
+    }
+
+    // ── Left pane: asset list ─────────────────────────────────────────────────
 
     private void RefreshAssets()
     {
+        var entry = CurrentEntry;
+        if (entry is null) return;
+
         _previewBitmap?.Dispose();
-        _previewBitmap = null;
+        _previewBitmap      = null;
         PreviewImage.Source = null;
 
         var assets = _service.LoadAssets(
-            _entry.DbPath, _entry.ReleaseId, _entry.Name,
-            _entry.HardwareFamilyId, _entry.DatLineId);
+            entry.DbPath, entry.ReleaseId, entry.Name,
+            entry.HardwareFamilyId, entry.DatLineId);
 
         _allVms = assets.Select(a => new MediaAssetVm(a)).ToList();
+        ApplyTypeFilter();
+    }
 
-        var prev = _selected?.Asset.FilePath;
-        AssetList.ItemsSource  = _allVms;
-        EmptyMsg.IsVisible     = _allVms.Count == 0;
+    private void ApplyTypeFilter()
+    {
+        var filtered = _typeFilter is null
+            ? _allVms
+            : _allVms.Where(v => v.Asset.MediaType == _typeFilter).ToList();
+
+        IReadOnlyList<object> display = _typeFilter is null
+            ? CatalogMediaListHelpers.BuildGroupedDisplay(filtered)
+            : filtered.Cast<object>().ToList();
+
+        var prev              = _selected?.Asset.FilePath;
+        AssetList.ItemsSource = display;
+        EmptyMsg.IsVisible    = _allVms.Count == 0;
 
         _selected = null;
         if (prev is not null)
         {
-            var match = _allVms.FirstOrDefault(v =>
+            var match = display.OfType<MediaAssetVm>().FirstOrDefault(v =>
                 string.Equals(v.Asset.FilePath, prev, StringComparison.OrdinalIgnoreCase));
             if (match is not null)
             {
@@ -76,22 +166,24 @@ public partial class CatalogManageMediaDialog : Window
             }
         }
 
-        if (_selected is null)
-            ShowDetailEmpty();
-
+        if (_selected is null) ShowDetailEmpty();
         HideValidation();
     }
 
-    private void PopulateAddMediaTypes()
+    private void OnTypeFilterChanged(object? sender, SelectionChangedEventArgs e)
     {
-        AddMediaTypePicker.ItemsSource   = ReleaseMediaCurationService.MediaTypeOrder;
-        AddMediaTypePicker.SelectedIndex = 0;
+        var sel = TypeFilterPicker.SelectedItem as string;
+        _typeFilter = sel == "All" ? null : sel;
+        ApplyTypeFilter();
     }
-
-    // ── Selection ─────────────────────────────────────────────────────────────
 
     private void OnAssetSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
+        if (AssetList.SelectedItem is MediaGroupHeaderVm)
+        {
+            AssetList.SelectedItem = null;
+            return;
+        }
         _selected = AssetList.SelectedItem as MediaAssetVm;
         UpdateDetailPanel();
     }
@@ -108,21 +200,21 @@ public partial class CatalogManageMediaDialog : Window
         DetailPanel.IsVisible = true;
         DetailEmpty.IsVisible = false;
 
-        // Info fields
         InfoFilename.Text = a.FileName;
         InfoType.Text     = a.MediaType;
         InfoSize.Text     = a.SizeDisplay;
         InfoStatus.Text   = a.StatusLabel;
-        InfoSha256.Text   = a.Sha256 ?? "—";
+        var hasSha = a.Sha256 is not null;
+        InfoSha256Key.IsVisible = hasSha;
+        InfoSha256.IsVisible    = hasSha;
+        InfoSha256.Text         = a.Sha256 ?? "";
 
-        // Credits
         CreditsField.Text = a.Credits ?? "";
 
-        // Preview
         _previewBitmap?.Dispose();
         _previewBitmap = null;
-        PreviewImage.IsVisible      = false;
-        PreviewPlaceholder.IsVisible = true;
+        PreviewImage.IsVisible        = false;
+        PreviewPlaceholder.IsVisible  = true;
 
         if (a.Exists)
         {
@@ -131,35 +223,25 @@ public partial class CatalogManageMediaDialog : Window
             {
                 try
                 {
-                    _previewBitmap = new Bitmap(a.FilePath);
-                    PreviewImage.Source     = _previewBitmap;
-                    PreviewImage.IsVisible  = true;
+                    _previewBitmap               = new Bitmap(a.FilePath);
+                    PreviewImage.Source          = _previewBitmap;
+                    PreviewImage.IsVisible       = true;
                     PreviewPlaceholder.IsVisible = false;
                 }
-                catch
-                {
-                    PreviewPlaceholder.Text = "Preview unavailable";
-                }
+                catch { PreviewPlaceholder.Text = "Preview unavailable"; }
             }
             else if (ext is ".mp4" or ".avi" or ".mkv" or ".mov" or ".webm")
-            {
                 PreviewPlaceholder.Text = "▶  Video file";
-            }
             else if (ext is ".pdf")
-            {
                 PreviewPlaceholder.Text = "📄  PDF document";
-            }
             else
-            {
-                PreviewPlaceholder.Text = Path.GetExtension(a.FilePath).TrimStart('.').ToUpperInvariant() + " file";
-            }
+                PreviewPlaceholder.Text = ext.TrimStart('.').ToUpperInvariant() + " file";
         }
         else
         {
             PreviewPlaceholder.Text = "File missing from disk";
         }
 
-        // Action button states
         SetPreferredBtn.IsEnabled = a.Exists && !a.IsPreferred && !a.IsExcluded;
         ExcludeBtn.IsEnabled      = !a.IsExcluded;
         RestoreBtn.IsEnabled      = a.IsExcluded;
@@ -178,15 +260,15 @@ public partial class CatalogManageMediaDialog : Window
         PreviewImage.Source = null;
     }
 
-    // ── Asset actions ─────────────────────────────────────────────────────────
+    // ── Left pane: curation actions ───────────────────────────────────────────
 
     private void OnSetPreferred(object? sender, RoutedEventArgs e)
     {
-        if (_selected is null) return;
+        if (_selected is null || CurrentEntry is null) return;
         var a = _selected.Asset;
         try
         {
-            _service.SetPreferred(_entry.DbPath, a.ReleaseId, a.MediaType, a.FilePath);
+            _service.SetPreferred(CurrentEntry.DbPath, a.ReleaseId, a.MediaType, a.FilePath);
             RefreshAssets();
         }
         catch (Exception ex) { ShowValidation($"Error: {ex.Message}"); }
@@ -194,11 +276,11 @@ public partial class CatalogManageMediaDialog : Window
 
     private void OnExclude(object? sender, RoutedEventArgs e)
     {
-        if (_selected is null) return;
+        if (_selected is null || CurrentEntry is null) return;
         var a = _selected.Asset;
         try
         {
-            _service.Exclude(_entry.DbPath, a.ReleaseId, a.MediaType, a.FilePath, reason: null);
+            _service.Exclude(CurrentEntry.DbPath, a.ReleaseId, a.MediaType, a.FilePath, reason: null);
             RefreshAssets();
         }
         catch (Exception ex) { ShowValidation($"Error: {ex.Message}"); }
@@ -206,11 +288,11 @@ public partial class CatalogManageMediaDialog : Window
 
     private void OnRestore(object? sender, RoutedEventArgs e)
     {
-        if (_selected is null) return;
+        if (_selected is null || CurrentEntry is null) return;
         var a = _selected.Asset;
         try
         {
-            _service.Restore(_entry.DbPath, a.ReleaseId, a.MediaType, a.FilePath);
+            _service.Restore(CurrentEntry.DbPath, a.ReleaseId, a.MediaType, a.FilePath);
             RefreshAssets();
         }
         catch (Exception ex) { ShowValidation($"Error: {ex.Message}"); }
@@ -218,12 +300,11 @@ public partial class CatalogManageMediaDialog : Window
 
     private void OnSaveCredits(object? sender, RoutedEventArgs e)
     {
-        if (_selected is null) return;
+        if (_selected is null || CurrentEntry is null) return;
         var a = _selected.Asset;
         try
         {
-            _service.SaveCredits(_entry.DbPath, a.ReleaseId, a.MediaType, a.FilePath,
-                CreditsField.Text);
+            _service.SaveCredits(CurrentEntry.DbPath, a.ReleaseId, a.MediaType, a.FilePath, CreditsField.Text);
             ShowValidation("Credits saved.", isError: false);
             RefreshAssets();
         }
@@ -233,18 +314,13 @@ public partial class CatalogManageMediaDialog : Window
     private void OnOpenFile(object? sender, RoutedEventArgs e)
     {
         if (_selected?.Asset.FilePath is not string path || !File.Exists(path)) return;
-        try
-        {
-            Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true });
-        }
+        try { Process.Start(new ProcessStartInfo { FileName = path, UseShellExecute = true }); }
         catch (Exception ex) { ShowValidation($"Could not open file: {ex.Message}"); }
     }
 
     private void OnOpenFolder(object? sender, RoutedEventArgs e)
     {
         if (_selected?.Asset.FilePath is not string path || !File.Exists(path)) return;
-        var dir = Path.GetDirectoryName(path);
-        if (dir is null) return;
         try
         {
             Process.Start(new ProcessStartInfo
@@ -259,83 +335,200 @@ public partial class CatalogManageMediaDialog : Window
 
     private async void OnDeleteFile(object? sender, RoutedEventArgs e)
     {
-        if (_selected is null) return;
+        if (_selected is null || CurrentEntry is null) return;
         var a    = _selected.Asset;
         var name = Path.GetFileName(a.FilePath);
 
-        var confirmed = await new ConfirmDialog(
-            "Delete Media File",
-            $"Delete \"{name}\" from disk?\n\n" +
-            "The curation record will remain excluded so this asset is not reintroduced later.\n\n" +
-            "This cannot be undone.")
+        var body = a.IsExcluded
+            ? $"This asset is currently excluded.\n\n" +
+              $"Deleting \"{name}\" will remove both the file and its exclusion record, " +
+              $"so it may be reintroduced by a future scrape or import.\n\n" +
+              $"If you want to keep the exclusion, close this dialog and do not delete."
+            : $"Delete \"{name}\" from disk and remove its media record from Arkadia?\n\n" +
+              $"This will not create an exclusion, so the asset may be reintroduced by a future " +
+              $"scrape or import. Use Exclude instead to permanently reject an asset.";
+
+        var confirmed = await new ConfirmDialog("Delete Media File", body)
             .ShowDialog<bool>(this);
         if (!confirmed) return;
 
         try
         {
-            _service.DeleteMediaFile(_entry.DbPath, a.ReleaseId, a.MediaType, a.FilePath);
+            _service.DeleteMediaFile(CurrentEntry.DbPath, a.ReleaseId, a.MediaType, a.FilePath);
             RefreshAssets();
         }
         catch (Exception ex) { ShowValidation($"Delete failed: {ex.Message}"); }
     }
 
-    // ── Add Media flow ────────────────────────────────────────────────────────
+    // ── Right pane: incoming media ────────────────────────────────────────────
 
-    private async void OnAddMedia(object? sender, RoutedEventArgs e)
+    private void RefreshIncoming()
     {
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        _incomingFiles.Clear();
+        _incomingSelected          = null;
+        IncomingList.ItemsSource   = null;
+        IncomingFolderLabel.Text   = _incomingBrowseDir;
+        ImportBtn.IsEnabled        = false;
+
+        if (!Directory.Exists(_incomingBrowseDir))
         {
-            Title         = "Select Media File",
-            AllowMultiple = false,
-            FileTypeFilter =
-            [
-                new FilePickerFileType("Image Files")   { Patterns = ["*.png", "*.jpg", "*.jpeg", "*.webp"] },
-                new FilePickerFileType("Video Files")   { Patterns = ["*.mp4", "*.avi", "*.mkv", "*.mov", "*.webm"] },
-                new FilePickerFileType("Document Files"){ Patterns = ["*.pdf"] },
-                new FilePickerFileType("All Files")     { Patterns = ["*.*"] },
-            ],
-        });
-
-        if (files.Count == 0) return;
-        if (files[0].TryGetLocalPath() is not string path) return;
-
-        _addMediaSourcePath            = path;
-        AddMediaSourceLabel.Text       = path;
-        AddMediaPanel.IsVisible        = true;
-        AddMediaTypePicker.SelectedIndex = 0;
-        HideValidation();
-    }
-
-    private void OnAddMediaConfirm(object? sender, RoutedEventArgs e)
-    {
-        if (_addMediaSourcePath is null) return;
-        var mediaType = AddMediaTypePicker.SelectedItem as string;
-        if (mediaType is null) return;
+            IncomingEmptyMsg.Text      = "Folder not found.";
+            IncomingEmptyMsg.IsVisible = true;
+            ShowIncomingPreviewEmpty();
+            return;
+        }
 
         try
         {
-            _service.AddMediaFile(
-                _entry.DbPath, _entry.ReleaseId, _entry.Name,
-                _entry.HardwareFamilyId, _entry.DatLineId,
-                _addMediaSourcePath, mediaType);
-
-            AddMediaPanel.IsVisible = false;
-            _addMediaSourcePath     = null;
-            ShowValidation($"Media added as {mediaType}.", isError: false);
-            RefreshAssets();
+            _incomingFiles = Directory
+                .EnumerateFiles(_incomingBrowseDir)
+                .OrderBy(f => Path.GetFileName(f), StringComparer.OrdinalIgnoreCase)
+                .Select(f => new IncomingFileVm(f))
+                .ToList();
         }
-        catch (Exception ex) { ShowValidation($"Add failed: {ex.Message}"); }
+        catch (Exception ex)
+        {
+            IncomingEmptyMsg.Text      = $"Error reading folder: {ex.Message}";
+            IncomingEmptyMsg.IsVisible = true;
+            ShowIncomingPreviewEmpty();
+            return;
+        }
+
+        IncomingList.ItemsSource   = _incomingFiles;
+        IncomingEmptyMsg.IsVisible = _incomingFiles.Count == 0;
+        if (_incomingFiles.Count == 0)
+            IncomingEmptyMsg.Text = "No files found in this folder.";
+
+        ShowIncomingPreviewEmpty();
     }
 
-    private void OnAddMediaCancel(object? sender, RoutedEventArgs e)
+    private void OnIncomingSelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        AddMediaPanel.IsVisible = false;
-        _addMediaSourcePath     = null;
+        _incomingSelected   = IncomingList.SelectedItem as IncomingFileVm;
+        ImportBtn.IsEnabled = _incomingSelected is not null && CurrentEntry is not null;
+        UpdateIncomingPreview();
+    }
+
+    private void UpdateIncomingPreview()
+    {
+        _incomingPreviewBitmap?.Dispose();
+        _incomingPreviewBitmap = null;
+        IncomingPreview.IsVisible            = false;
+        IncomingPreviewPlaceholder.IsVisible = true;
+
+        if (_incomingSelected is null)
+        {
+            IncomingPreviewPlaceholder.Text = "Select a file to preview.";
+            return;
+        }
+
+        var f = _incomingSelected;
+        if (f.IsImage && File.Exists(f.FilePath))
+        {
+            try
+            {
+                _incomingPreviewBitmap               = new Bitmap(f.FilePath);
+                IncomingPreview.Source               = _incomingPreviewBitmap;
+                IncomingPreview.IsVisible            = true;
+                IncomingPreviewPlaceholder.IsVisible = false;
+                return;
+            }
+            catch { }
+        }
+
+        var ext = Path.GetExtension(f.FilePath).ToLowerInvariant();
+        IncomingPreviewPlaceholder.Text = ext switch
+        {
+            ".mp4" or ".avi" or ".mkv" or ".mov" or ".webm" => "▶  Video file",
+            ".pdf"                                           => "📄  PDF document",
+            _                                               => ext.TrimStart('.').ToUpperInvariant() + " file",
+        };
+    }
+
+    private void ShowIncomingPreviewEmpty()
+    {
+        _incomingPreviewBitmap?.Dispose();
+        _incomingPreviewBitmap               = null;
+        IncomingPreview.IsVisible            = false;
+        IncomingPreviewPlaceholder.IsVisible = true;
+        IncomingPreviewPlaceholder.Text      = "Select a file to preview.";
+        if (IncomingPreview.Source is not null)
+            IncomingPreview.Source = null;
+    }
+
+    private async void OnBrowseFolder(object? sender, RoutedEventArgs e)
+    {
+        var result = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title         = "Select Incoming Media Folder",
+            AllowMultiple = false,
+        });
+
+        if (result.Count == 0) return;
+        var picked = result[0].TryGetLocalPath();
+        if (picked is null) return;
+
+        _incomingBrowseDir = picked;
+        RefreshIncoming();
+    }
+
+    private void OnOpenIncomingFolder(object? sender, RoutedEventArgs e)
+    {
+        var dir = Directory.Exists(_incomingBrowseDir) ? _incomingBrowseDir :
+                  Directory.Exists(_incomingDir)       ? _incomingDir : null;
+        if (dir is null) return;
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName        = "explorer.exe",
+                Arguments       = $"\"{dir}\"",
+                UseShellExecute = true,
+            });
+        }
+        catch { }
+    }
+
+    private void OnImport(object? sender, RoutedEventArgs e)
+    {
+        var entry = CurrentEntry;
+        if (entry is null || _incomingSelected is null) return;
+
+        var mediaType = ImportTypePicker.SelectedItem as string;
+        if (mediaType is null) return;
+
+        var deleteAfter = DeleteSourceCheck.IsChecked == true;
+
+        try
+        {
+            var result = _service.ImportFromIncoming(
+                entry.DbPath, entry.ReleaseId, entry.Name,
+                entry.HardwareFamilyId, entry.DatLineId,
+                _incomingSelected.FilePath, mediaType, deleteAfter);
+
+            if (!result.Success)
+            {
+                ShowValidation($"Import failed: {result.ErrorMessage}");
+                return;
+            }
+
+            ShowValidation($"Imported as {mediaType}.", isError: false);
+            RefreshAssets();
+            RefreshIncoming();
+        }
+        catch (Exception ex)
+        {
+            ShowValidation($"Import error: {ex.Message}");
+        }
     }
 
     // ── Global ────────────────────────────────────────────────────────────────
 
-    private void OnRefresh(object? sender, RoutedEventArgs e) => RefreshAssets();
+    private void OnRefresh(object? sender, RoutedEventArgs e)
+    {
+        RefreshAssets();
+        RefreshIncoming();
+    }
 
     private void OnClose(object? sender, RoutedEventArgs e) => Close();
 
@@ -353,23 +546,22 @@ public partial class CatalogManageMediaDialog : Window
     private void HideValidation() => ValidationMsg.IsVisible = false;
 }
 
-// ── View model ────────────────────────────────────────────────────────────────
+// ── Left-pane view model ──────────────────────────────────────────────────────
 
 internal sealed class MediaAssetVm(ReleaseMediaAsset asset)
 {
-    public ReleaseMediaAsset Asset => asset;
-
-    public string FileName      => asset.FileName;
-    public string MediaTypeLabel => asset.MediaType.ToUpperInvariant();
-    public string SizeDisplay   => asset.SizeDisplay;
-    public string StatusLabel   => asset.StatusLabel;
+    public ReleaseMediaAsset Asset        => asset;
+    public string            FileName     => asset.FileName;
+    public string            MediaTypeLabel => asset.MediaType.ToUpperInvariant();
+    public string            SizeDisplay  => asset.SizeDisplay;
+    public string            StatusLabel  => asset.StatusLabel;
 
     public IBrush StatusBackground => asset.StatusLabel switch
     {
-        "Preferred"    => new SolidColorBrush(Color.Parse("#152415")),
-        "Excluded"     => new SolidColorBrush(Color.Parse("#2A1215")),
-        "Missing"      => new SolidColorBrush(Color.Parse("#1A1215")),
-        _              => new SolidColorBrush(Color.Parse("#141430")),
+        "Preferred" => new SolidColorBrush(Color.Parse("#152415")),
+        "Excluded"  => new SolidColorBrush(Color.Parse("#2A1215")),
+        "Missing"   => new SolidColorBrush(Color.Parse("#1A1215")),
+        _           => new SolidColorBrush(Color.Parse("#141430")),
     };
 
     public IBrush StatusForeground => asset.StatusLabel switch
@@ -379,4 +571,41 @@ internal sealed class MediaAssetVm(ReleaseMediaAsset asset)
         "Missing"   => new SolidColorBrush(Color.Parse("#FF8A65")),
         _           => new SolidColorBrush(Color.Parse("#7070AA")),
     };
+}
+
+// ── Right-pane view model ─────────────────────────────────────────────────────
+
+internal sealed class IncomingFileVm
+{
+    public string FilePath    { get; }
+    public string FileName    { get; }
+    public string Extension   { get; }
+    public string SizeDisplay { get; }
+    public bool   IsImage     { get; }
+
+    public IncomingFileVm(string filePath)
+    {
+        FilePath    = filePath;
+        FileName    = Path.GetFileName(filePath);
+        var ext     = Path.GetExtension(filePath).ToLowerInvariant();
+        Extension   = ext.TrimStart('.').ToUpperInvariant();
+        IsImage     = MediaStore.ImageExtensions.Contains(ext);
+        SizeDisplay = TryGetSize(filePath);
+    }
+
+    private static string TryGetSize(string path)
+    {
+        try
+        {
+            var bytes = new FileInfo(path).Length;
+            return bytes switch
+            {
+                < 1024               => $"{bytes} B",
+                < 1024 * 1024        => $"{bytes / 1024.0:F1} KB",
+                < 1024 * 1024 * 1024 => $"{bytes / (1024.0 * 1024):F1} MB",
+                _                    => $"{bytes / (1024.0 * 1024 * 1024):F2} GB",
+            };
+        }
+        catch { return "?"; }
+    }
 }

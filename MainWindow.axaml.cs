@@ -7761,7 +7761,9 @@ public partial class MainWindow : Window
     private void OnCatalogManageMedia(object? sender, RoutedEventArgs e)
     {
         if (_catalogSelected is null) return;
-        var dialog = new CatalogManageMediaDialog(_catalogSelected, _dataDir);
+        var idx    = _filteredCatalogEntries.IndexOf(_catalogSelected);
+        var baseDir = Path.GetDirectoryName(_dataDir)!;
+        var dialog = new CatalogManageMediaDialog(_filteredCatalogEntries, idx < 0 ? 0 : idx, baseDir);
         dialog.ShowDialog(this);
     }
 
@@ -7833,6 +7835,12 @@ public partial class MainWindow : Window
         CatalogHeroAltNames.Text      = alts;
         CatalogHeroAltNames.IsVisible = alts.Length > 0;
 
+        // Original title — shown when present and different from the resolved display title and the DAT name
+        var origTitle = entry.Metadata?.OriginalTitle ?? "";
+        var showOrig  = CatalogHeroHelpers.ShouldShowOriginalTitle(origTitle, displayTitle, entry.Name);
+        CatalogHeroOriginalTitle.Text      = showOrig ? $"Original: {origTitle}" : "";
+        CatalogHeroOriginalTitle.IsVisible = showOrig;
+
         // TODO: add a large region flag to the hero header once region-keyed flag assets are available.
         //       The flag asset system is currently language-keyed (FlagImageLoader uses language codes).
         //       For v0 we show the same language flags in the subheader as a placeholder.
@@ -7898,6 +7906,25 @@ public partial class MainWindow : Window
         CatalogBadgePlayersBorder.IsVisible = false;
         SetBadge(CatalogBadgeTypeBorder,    CatalogBadgeTypeIcon,    CatalogBadgeType,    badgeType.Length > 0 ? badgeType : "—",                                        "type",   badgeType);
         SetBadge(CatalogBadgeSizeBorder,    CatalogBadgeSizeIcon,    CatalogBadgeSize,    entry.Size.Length    > 0 ? entry.Size    : "—",                                    null,     null);
+
+        // Secondary metadata badges
+        var sm = entry.Metadata;
+        SetSecondaryBadge(CatalogBadge2GenreBorder,     CatalogBadge2Genre,
+            CatalogHeroHelpers.FormatGenreLabel(sm?.Genre ?? "", sm?.Subgenre ?? ""));
+        SetSecondaryBadge(CatalogBadge2PlayersBorder,   CatalogBadge2Players,
+            sm?.Players   is { Length: > 0 } p  ? $"Players: {p}"  : "");
+        SetSecondaryBadge(CatalogBadge2DeveloperBorder, CatalogBadge2Developer,
+            sm?.Developer is { Length: > 0 } d  ? $"Dev: {d}"      : "");
+        SetSecondaryBadge(CatalogBadge2PublisherBorder, CatalogBadge2Publisher,
+            sm?.Publisher is { Length: > 0 } pb ? $"Pub: {pb}"     : "");
+        SetSecondaryBadge(CatalogBadge2LangBorder,      CatalogBadge2Lang,
+            sm?.Languages is { Length: > 0 } l  ? $"Lang: {l}"     : "");
+        SetSecondaryBadge(CatalogBadge2RatingBorder,    CatalogBadge2Rating,
+            sm?.Rating    is { Length: > 0 } r  ? $"Rating: {r}"   : "");
+        CatalogSecondaryBadgesPanel.IsVisible =
+            CatalogBadge2GenreBorder.IsVisible     || CatalogBadge2PlayersBorder.IsVisible  ||
+            CatalogBadge2DeveloperBorder.IsVisible || CatalogBadge2PublisherBorder.IsVisible ||
+            CatalogBadge2LangBorder.IsVisible      || CatalogBadge2RatingBorder.IsVisible;
 
         // Checklist
         static void SetChk(TextBlock icon, bool present)
@@ -8383,6 +8410,13 @@ public partial class MainWindow : Window
             icon.Source    = null;
             icon.IsVisible = false;
         }
+    }
+
+    private static void SetSecondaryBadge(
+        Avalonia.Controls.Border border, Avalonia.Controls.TextBlock text, string value)
+    {
+        border.IsVisible = value.Length > 0;
+        text.Text        = value;
     }
 
     private void OnCatalogOpenInLibrary(object? sender, RoutedEventArgs e)

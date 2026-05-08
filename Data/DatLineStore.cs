@@ -2329,6 +2329,22 @@ public sealed class DatLineStore
         }
     }
 
+    public void DeleteMediaCurationRow(string releaseId, string mediaType, string filePath)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            DELETE FROM release_media_curation
+            WHERE release_id = $releaseId
+              AND media_type  = $mediaType
+              AND file_path   = $filePath
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        cmd.Parameters.AddWithValue("$mediaType", mediaType);
+        cmd.Parameters.AddWithValue("$filePath",  filePath);
+        cmd.ExecuteNonQuery();
+    }
+
     private SqliteConnection Open()
     {
         var conn = new SqliteConnection(_connectionString);

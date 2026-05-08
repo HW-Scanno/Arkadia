@@ -3422,6 +3422,15 @@
                                             HorizontalAlignment="Center"
                                             CornerRadius="1"
                                             Margin="0,0,0,6"/>
+                                    <TextBlock x:Name="CatalogHeroOriginalTitle"
+                                               IsVisible="False"
+                                               FontSize="13"
+                                               FontStyle="Italic"
+                                               Foreground="#555566"
+                                               TextWrapping="NoWrap"
+                                               TextTrimming="CharacterEllipsis"
+                                               HorizontalAlignment="Center"
+                                               Margin="0,0,0,4"/>
                                     <TextBlock x:Name="CatalogHeroAltNames"
                                                IsVisible="False"
                                                FontSize="12"
@@ -3508,6 +3517,89 @@
                                         </WrapPanel>
                                     </StackPanel>
 
+                                    <!-- ─── Secondary metadata badges ─── -->
+                                    <WrapPanel x:Name="CatalogSecondaryBadgesPanel"
+                                               HorizontalAlignment="Center"
+                                               Orientation="Horizontal"
+                                               Margin="0,0,0,16"
+                                               IsVisible="False">
+                                        <Border x:Name="CatalogBadge2GenreBorder" IsVisible="False"
+                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
+                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
+                                            <TextBlock x:Name="CatalogBadge2Genre"
+                                                       FontSize="12" Foreground="#7070A8"/>
+                                        </Border>
+                                        <Border x:Name="CatalogBadge2PlayersBorder" IsVisible="False"
+                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
+                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
+                                            <TextBlock x:Name="CatalogBadge2Players"
+                                                       FontSize="12" Foreground="#7070A8"/>
+                                        </Border>
+                                        <Border x:Name="CatalogBadge2DeveloperBorder" IsVisible="False"
+                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
+                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
+                                            <TextBlock x:Name="CatalogBadge2Developer"
+                                                       FontSize="12" Foreground="#7070A8"/>
+                                        </Border>
+                                        <Border x:Name="CatalogBadge2PublisherBorder" IsVisible="False"
+                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
+                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
+                                            <TextBlock x:Name="CatalogBadge2Publisher"
+                                                       FontSize="12" Foreground="#7070A8"/>
+                                        </Border>
+                                        <Border x:Name="CatalogBadge2LangBorder" IsVisible="False"
+                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
+                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
+                                            <TextBlock x:Name="CatalogBadge2Lang"
+                                                       FontSize="12" Foreground="#7070A8"/>
+                                        </Border>
+                                        <Border x:Name="CatalogBadge2RatingBorder" IsVisible="False"
+                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
+                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
+                                            <TextBlock x:Name="CatalogBadge2Rating"
+                                                       FontSize="12" Foreground="#7070A8"/>
+                                        </Border>
+                                    </WrapPanel>
+
+                                    <!-- Actions -->
+                                    <StackPanel HorizontalAlignment="Center" Spacing="6" Margin="0,0,0,20">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Button Content="Open in Library"
+                                                    Background="#7B68EE" Foreground="#FFFFFF"
+                                                    BorderThickness="0"
+                                                    CornerRadius="4" Padding="14,7" FontSize="12"
+                                                    Click="OnCatalogOpenInLibrary"/>
+                                            <Button x:Name="CatalogScrapeBtn"
+                                                    Content="Scrape"
+                                                    Background="#1E2A1E" Foreground="#4CAF50"
+                                                    BorderBrush="#2A3D2A" BorderThickness="1"
+                                                    CornerRadius="4" Padding="14,7" FontSize="12"
+                                                    Click="OnCatalogScrape"/>
+                                            <Button Content="Edit Metadata"
+                                                    Background="#1A1A2E" Foreground="#9FA4FF"
+                                                    BorderBrush="#2A2A50" BorderThickness="1"
+                                                    CornerRadius="4" Padding="14,7" FontSize="12"
+                                                    Click="OnCatalogEditMetadata"/>
+                                            <Button x:Name="CatalogEditNotesBtn"
+                                                    Content="Edit Extra Notes"
+                                                    Background="#1A1A2E" Foreground="#9FA4FF"
+                                                    BorderBrush="#2A2A50" BorderThickness="1"
+                                                    CornerRadius="4" Padding="14,7" FontSize="12"
+                                                    IsEnabled="False"
+                                                    Click="OnCatalogEditExtraNotes"/>
+                                            <Button Content="Merge Metadata"
+                                                    Background="#141E14" Foreground="#6FCF97"
+                                                    BorderBrush="#233223" BorderThickness="1"
+                                                    CornerRadius="4" Padding="14,7" FontSize="12"
+                                                    Click="OnCatalogMergeMetadata"/>
+                                        </StackPanel>
+                                        <TextBlock x:Name="CatalogScrapeStatus"
+                                                   IsVisible="False"
+                                                   FontSize="11"
+                                                   Foreground="#888899"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+
                                     <!-- ─── Description ─── -->
                                     <TextBlock Text="DESCRIPTION"
                                                FontSize="9" FontWeight="SemiBold" LetterSpacing="1.8"
@@ -3529,53 +3621,10 @@
                                                Foreground="#666677"
                                                TextWrapping="Wrap"
                                                LineHeight="20"
+                                               Margin="0,0,0,16"
                                                Text="No extra notes."/>
-                                    <Button x:Name="CatalogEditNotesBtn"
-                                            Content="Edit Notes"
-                                            Background="#1A1A2E" Foreground="#9FA4FF"
-                                            BorderBrush="#2A2A50" BorderThickness="1"
-                                            CornerRadius="4" Padding="10,5" FontSize="11"
-                                            IsEnabled="False"
-                                            Margin="0,6,0,16"
-                                            Click="OnCatalogEditExtraNotes"/>
-
-                                    <!-- Section separator before actions -->
-                                    <Border Height="1" Background="#1A1A28" Margin="0,0,0,14"/>
-
-                                    <!-- Actions -->
-                                    <StackPanel Spacing="6" Margin="0,0,0,16">
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <Button Content="Open in Library"
-                                                    Background="#7B68EE" Foreground="#FFFFFF"
-                                                    BorderThickness="0"
-                                                    CornerRadius="4" Padding="14,7" FontSize="12"
-                                                    Click="OnCatalogOpenInLibrary"/>
-                                            <Button x:Name="CatalogScrapeBtn"
-                                                    Content="Scrape"
-                                                    Background="#1E2A1E" Foreground="#4CAF50"
-                                                    BorderBrush="#2A3D2A" BorderThickness="1"
-                                                    CornerRadius="4" Padding="14,7" FontSize="12"
-                                                    Click="OnCatalogScrape"/>
-                                            <Button Content="Edit Metadata"
-                                                    Background="#1A1A2E" Foreground="#9FA4FF"
-                                                    BorderBrush="#2A2A50" BorderThickness="1"
-                                                    CornerRadius="4" Padding="14,7" FontSize="12"
-                                                    Click="OnCatalogEditMetadata"/>
-                                            <Button Content="Merge Metadata"
-                                                    Background="#141E14" Foreground="#6FCF97"
-                                                    BorderBrush="#233223" BorderThickness="1"
-                                                    CornerRadius="4" Padding="14,7" FontSize="12"
-                                                    Click="OnCatalogMergeMetadata"/>
-                                        </StackPanel>
-                                        <TextBlock x:Name="CatalogScrapeStatus"
-                                                   IsVisible="False"
-                                                   FontSize="11"
-                                                   Foreground="#888899"
-                                                   TextWrapping="Wrap"/>
-                                    </StackPanel>
 
                                     <!-- ─── Physical Media ─── -->
-                                    <Border Height="1" Background="#1A1A28" Margin="0,20,0,14"/>
                                     <TextBlock Text="PHYSICAL MEDIA"
                                                Foreground="#9FA4FF"
                                                FontSize="11"
@@ -3584,7 +3633,6 @@
                                     <Border Height="1" Background="#2A2A50" Margin="0,4,0,8"/>
                                     <Border x:Name="CatalogPhysicalMediaViewport"
                                             ClipToBounds="True" CornerRadius="6"
-                                            BorderBrush="#2A2A42" BorderThickness="1"
                                             Width="480" Height="260"
                                             HorizontalAlignment="Center">
                                         <Panel>

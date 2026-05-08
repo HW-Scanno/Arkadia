@@ -62,6 +62,17 @@ public sealed class ArkadiaFoldersTests : IDisposable
         => Assert.Equal("incoming-csv", ArkadiaFolders.IncomingCsv);
 
     [Fact]
+    public void IncomingMedia_Constant_MatchesExpectedName()
+        => Assert.Equal("incoming-media", ArkadiaFolders.IncomingMedia);
+
+    [Fact]
+    public void EnsureCreated_Creates_IncomingMedia()
+    {
+        ArkadiaFolders.EnsureCreated(_base);
+        Assert.True(Directory.Exists(Path.Combine(_base, ArkadiaFolders.IncomingMedia)));
+    }
+
+    [Fact]
     public void DefaultOutputZipPath_IsUnderScrapeCacheScreenscraper()
     {
         var path = CacheBuilderHelper.DefaultOutputZipPath("test");

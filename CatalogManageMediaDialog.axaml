@@ -1,11 +1,13 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Arkadia"
         x:Class="Arkadia.CatalogManageMediaDialog"
         Title="Manage Media"
-        Width="900"
-        SizeToContent="Height"
-        MaxHeight="760"
-        CanResize="False"
+        Width="1380"
+        Height="820"
+        MinWidth="900"
+        MinHeight="600"
+        CanResize="True"
         WindowStartupLocation="CenterOwner"
         Background="#0F0F14"
         FontFamily="Inter,Segoe UI,sans-serif">
@@ -45,9 +47,15 @@
             <Setter Property="Foreground" Value="#555577"/>
         </Style>
         <Style Selector="TextBlock.val">
-            <Setter Property="FontSize"   Value="11"/>
-            <Setter Property="Foreground" Value="#CCCCDD"/>
+            <Setter Property="FontSize"     Value="11"/>
+            <Setter Property="Foreground"   Value="#CCCCDD"/>
             <Setter Property="TextWrapping" Value="Wrap"/>
+        </Style>
+        <Style Selector="TextBlock.pane-header">
+            <Setter Property="FontSize"       Value="10"/>
+            <Setter Property="FontWeight"     Value="SemiBold"/>
+            <Setter Property="Foreground"     Value="#444466"/>
+            <Setter Property="LetterSpacing"  Value="1"/>
         </Style>
         <Style Selector="ListBoxItem">
             <Setter Property="Padding"         Value="10,7"/>
@@ -56,203 +64,345 @@
         </Style>
     </Window.Styles>
 
-    <Grid RowDefinitions="Auto,*,Auto,Auto">
+    <Grid RowDefinitions="Auto,*,Auto">
 
         <!-- ── Header ───────────────────────────────────────────────────── -->
-        <StackPanel Grid.Row="0" Margin="20,18,20,10" Spacing="3">
-            <TextBlock x:Name="HeaderTitle"
-                       FontSize="15" FontWeight="SemiBold" Foreground="#EEEEFF"
-                       TextTrimming="CharacterEllipsis"/>
-            <TextBlock Text="Curate media assets for this release. Provider provenance is not shown."
-                       FontSize="11" Foreground="#555577"/>
-        </StackPanel>
-
-        <!-- ── Body: asset list | detail panel ──────────────────────────── -->
-        <Grid Grid.Row="1" ColumnDefinitions="360,1,*" Margin="20,0,20,0">
-
-            <!-- Left: asset list -->
-            <Border Grid.Column="0"
-                    Background="#0A0A12" BorderBrush="#1E1E2C"
-                    BorderThickness="1" CornerRadius="6">
-                <StackPanel>
-                    <ListBox x:Name="AssetList"
-                             Background="Transparent"
-                             MinHeight="52"
-                             MaxHeight="580"
-                             Padding="0"
-                             SelectionChanged="OnAssetSelectionChanged">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate x:CompileBindings="False">
-                                <Grid ColumnDefinitions="Auto,*,Auto">
-                                    <!-- Status badge -->
-                                    <Border Grid.Column="0"
-                                            Background="{Binding StatusBackground}"
-                                            CornerRadius="3" Padding="5,2"
-                                            Margin="0,0,8,0"
-                                            VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding StatusLabel}"
-                                                   Foreground="{Binding StatusForeground}"
-                                                   FontSize="9" FontWeight="SemiBold"
-                                                   LetterSpacing="0.5"/>
-                                    </Border>
-                                    <!-- Media type + filename -->
-                                    <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding MediaTypeLabel}"
-                                                   FontSize="9" Foreground="#555577"
-                                                   LetterSpacing="0.3"/>
-                                        <TextBlock Text="{Binding FileName}"
-                                                   FontSize="11" FontWeight="SemiBold"
-                                                   Foreground="#CCCCDD"
-                                                   TextTrimming="CharacterEllipsis"/>
-                                    </StackPanel>
-                                    <!-- Size -->
-                                    <TextBlock Grid.Column="2"
-                                               Text="{Binding SizeDisplay}"
-                                               FontSize="10" Foreground="#444455"
-                                               VerticalAlignment="Center"
-                                               Margin="8,0,0,0"/>
-                                </Grid>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
-                    <TextBlock x:Name="EmptyMsg"
-                               IsVisible="False"
-                               Text="No media files found for this release."
-                               FontSize="11" Foreground="#444455"
-                               HorizontalAlignment="Center"
-                               Margin="16,18,16,18"
-                               TextWrapping="Wrap"/>
+        <Border Grid.Row="0" Padding="20,14,20,12"
+                BorderBrush="#181826" BorderThickness="0,0,0,1">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Spacing="2">
+                    <TextBlock x:Name="HeaderTitle"
+                               FontSize="15" FontWeight="SemiBold" Foreground="#EEEEFF"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="Media Intake Workbench — curate existing assets and import incoming media."
+                               FontSize="11" Foreground="#555577"/>
                 </StackPanel>
-            </Border>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
+                            VerticalAlignment="Center">
+                    <Button x:Name="PrevEntryBtn" Classes="secondary" Content="← Prev"
+                            Click="OnPrevEntry"/>
+                    <TextBlock x:Name="NavLabel"
+                               FontSize="11" Foreground="#7070A8"
+                               VerticalAlignment="Center" MinWidth="50"
+                               TextAlignment="Center"/>
+                    <Button x:Name="NextEntryBtn" Classes="secondary" Content="Next →"
+                            Click="OnNextEntry"/>
+                </StackPanel>
+            </Grid>
+        </Border>
 
-            <!-- Divider -->
-            <Border Grid.Column="1" Background="#1A1A28" Margin="12,0"/>
+        <!-- ── Main panes ────────────────────────────────────────────────── -->
+        <Grid Grid.Row="1" ColumnDefinitions="*,480" Margin="20,12,20,0">
 
-            <!-- Right: detail panel -->
-            <Panel Grid.Column="2" MaxHeight="580">
-              <ScrollViewer HorizontalScrollBarVisibility="Disabled"
-                            VerticalScrollBarVisibility="Auto">
-                <StackPanel x:Name="DetailPanel" Spacing="10" IsVisible="False">
+            <!-- ── LEFT: Arkadia Media ──────────────────────────────────── -->
+            <Grid Grid.Column="0" RowDefinitions="Auto,*">
 
-                    <!-- Preview -->
-                    <Border x:Name="PreviewBorder"
-                            Height="180"
-                            Background="#0A0A12"
-                            BorderBrush="#1E1E2C"
-                            BorderThickness="1"
-                            CornerRadius="6"
-                            ClipToBounds="True">
+                <!-- Filter strip -->
+                <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,8">
+                    <TextBlock Grid.Column="0" Classes="pane-header"
+                               Text="ARKADIA MEDIA" VerticalAlignment="Center"/>
+                    <ComboBox x:Name="TypeFilterPicker"
+                              Grid.Column="1" Margin="12,0,0,0"
+                              FontSize="12" MaxWidth="220"
+                              HorizontalAlignment="Left"
+                              SelectionChanged="OnTypeFilterChanged"/>
+                    <Button x:Name="RefreshBtn" Grid.Column="2"
+                            Classes="secondary" Content="Refresh"
+                            Margin="8,0,0,0" Click="OnRefresh"/>
+                </Grid>
+
+                <!-- Asset list + detail split -->
+                <Grid Grid.Row="1" ColumnDefinitions="300,1,*">
+
+                    <!-- Asset list -->
+                    <Border Grid.Column="0"
+                            Background="#0A0A12" BorderBrush="#1E1E2C"
+                            BorderThickness="1" CornerRadius="6">
                         <Panel>
-                            <Image x:Name="PreviewImage"
-                                   Stretch="Uniform"
-                                   IsVisible="False"/>
-                            <TextBlock x:Name="PreviewPlaceholder"
-                                       FontSize="11" Foreground="#333348"
+                            <ListBox x:Name="AssetList"
+                                     Background="Transparent"
+                                     Padding="0"
+                                     SelectionChanged="OnAssetSelectionChanged">
+                                <ListBox.DataTemplates>
+                                    <!-- Group header row -->
+                                    <DataTemplate DataType="{x:Type local:MediaGroupHeaderVm}"
+                                                  x:CompileBindings="False">
+                                        <Border Background="#0D0D1A"
+                                                Margin="-10,-7,-10,-7"
+                                                Padding="10,6,10,5">
+                                            <TextBlock Text="{Binding Label}"
+                                                       FontSize="9" FontWeight="SemiBold"
+                                                       Foreground="#4A4A72"
+                                                       LetterSpacing="1.5"/>
+                                        </Border>
+                                    </DataTemplate>
+                                    <!-- Asset row -->
+                                    <DataTemplate DataType="{x:Type local:MediaAssetVm}"
+                                                  x:CompileBindings="False">
+                                        <Grid ColumnDefinitions="Auto,*,Auto">
+                                            <Border Grid.Column="0"
+                                                    Background="{Binding StatusBackground}"
+                                                    CornerRadius="3" Padding="5,2"
+                                                    Margin="0,0,8,0"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding StatusLabel}"
+                                                           Foreground="{Binding StatusForeground}"
+                                                           FontSize="9" FontWeight="SemiBold"
+                                                           LetterSpacing="0.5"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding MediaTypeLabel}"
+                                                           FontSize="9" Foreground="#555577"
+                                                           LetterSpacing="0.3"/>
+                                                <TextBlock Text="{Binding FileName}"
+                                                           FontSize="11" FontWeight="SemiBold"
+                                                           Foreground="#CCCCDD"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{Binding SizeDisplay}"
+                                                       FontSize="10" Foreground="#444455"
+                                                       VerticalAlignment="Center"
+                                                       Margin="8,0,0,0"/>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ListBox.DataTemplates>
+                            </ListBox>
+                            <TextBlock x:Name="EmptyMsg"
+                                       IsVisible="False"
+                                       Text="No media files found for this release."
+                                       FontSize="11" Foreground="#444455"
                                        HorizontalAlignment="Center"
-                                       VerticalAlignment="Center"/>
+                                       VerticalAlignment="Center"
+                                       Margin="16" TextWrapping="Wrap"/>
                         </Panel>
                     </Border>
 
-                    <!-- Asset info grid -->
-                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" Margin="0,0,0,4">
-                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="key" Text="Filename"   Margin="0,0,12,4"/>
-                        <TextBlock Grid.Row="0" Grid.Column="1" Classes="val" x:Name="InfoFilename"/>
+                    <!-- Divider -->
+                    <Border Grid.Column="1" Background="#1A1A28" Margin="8,0"/>
 
-                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="key" Text="Type"       Margin="0,0,12,4"/>
-                        <TextBlock Grid.Row="1" Grid.Column="1" Classes="val" x:Name="InfoType"/>
+                    <!-- Detail panel -->
+                    <Panel Grid.Column="2">
+                        <Grid x:Name="DetailPanel" IsVisible="False"
+                              RowDefinitions="*,Auto,Auto,Auto">
 
-                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="key" Text="Size"       Margin="0,0,12,4"/>
-                        <TextBlock Grid.Row="2" Grid.Column="1" Classes="val" x:Name="InfoSize"/>
+                            <!-- Preview — fills all remaining height -->
+                            <Border Grid.Row="0"
+                                    Background="#0A0A12"
+                                    BorderBrush="#1E1E2C"
+                                    BorderThickness="1"
+                                    CornerRadius="6"
+                                    ClipToBounds="True">
+                                <Panel>
+                                    <Image x:Name="PreviewImage"
+                                           Stretch="Uniform"
+                                           IsVisible="False"/>
+                                    <TextBlock x:Name="PreviewPlaceholder"
+                                               FontSize="11" Foreground="#333348"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"/>
+                                </Panel>
+                            </Border>
 
-                        <TextBlock Grid.Row="3" Grid.Column="0" Classes="key" Text="Status"     Margin="0,0,12,4"/>
-                        <TextBlock Grid.Row="3" Grid.Column="1" Classes="val" x:Name="InfoStatus"/>
+                            <!-- Compact asset info -->
+                            <Grid Grid.Row="1"
+                                  ColumnDefinitions="Auto,*"
+                                  RowDefinitions="Auto,Auto,Auto,Auto,Auto"
+                                  Margin="0,8,0,4">
+                                <TextBlock Grid.Row="0" Grid.Column="0" Classes="key" Text="Filename" Margin="0,0,12,3"/>
+                                <TextBlock Grid.Row="0" Grid.Column="1" Classes="val" x:Name="InfoFilename"/>
+                                <TextBlock Grid.Row="1" Grid.Column="0" Classes="key" Text="Type"     Margin="0,0,12,3"/>
+                                <TextBlock Grid.Row="1" Grid.Column="1" Classes="val" x:Name="InfoType"/>
+                                <TextBlock Grid.Row="2" Grid.Column="0" Classes="key" Text="Size"     Margin="0,0,12,3"/>
+                                <TextBlock Grid.Row="2" Grid.Column="1" Classes="val" x:Name="InfoSize"/>
+                                <TextBlock Grid.Row="3" Grid.Column="0" Classes="key" Text="Status"   Margin="0,0,12,3"/>
+                                <TextBlock Grid.Row="3" Grid.Column="1" Classes="val" x:Name="InfoStatus"/>
+                                <TextBlock Grid.Row="4" Grid.Column="0" x:Name="InfoSha256Key"
+                                           Classes="key" Text="SHA-256" Margin="0,0,12,0"/>
+                                <TextBlock Grid.Row="4" Grid.Column="1" Classes="val" x:Name="InfoSha256"
+                                           FontSize="9" FontFamily="Consolas,monospace"/>
+                            </Grid>
 
-                        <TextBlock Grid.Row="4" Grid.Column="0" Classes="key" Text="SHA-256"    Margin="0,0,12,0"/>
-                        <TextBlock Grid.Row="4" Grid.Column="1" Classes="val" x:Name="InfoSha256"
-                                   FontSize="9" FontFamily="Consolas,monospace"/>
+                            <!-- Credits -->
+                            <StackPanel Grid.Row="2" Spacing="3" Margin="0,0,0,8">
+                                <TextBlock Text="Credits" FontSize="10" Foreground="#555577"/>
+                                <TextBox x:Name="CreditsField"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         MinHeight="44" MaxHeight="70"
+                                         FontSize="11"
+                                         Background="#0A0A12"
+                                         BorderBrush="#1E1E2C"
+                                         Foreground="#CCCCDD"
+                                         Watermark="Optional attribution for this asset."/>
+                            </StackPanel>
+
+                            <!-- Single action row -->
+                            <WrapPanel Grid.Row="3" Orientation="Horizontal">
+                                <Button x:Name="SetPreferredBtn" Classes="secondary"
+                                        Content="Set Preferred" Padding="8,5"
+                                        Margin="0,0,6,6"
+                                        IsEnabled="False" Click="OnSetPreferred"/>
+                                <Button x:Name="ExcludeBtn" Classes="secondary"
+                                        Content="Exclude" Padding="8,5"
+                                        Margin="0,0,6,6"
+                                        IsEnabled="False" Click="OnExclude"/>
+                                <Button x:Name="RestoreBtn" Classes="secondary"
+                                        Content="Restore" Padding="8,5"
+                                        Margin="0,0,6,6"
+                                        IsEnabled="False" Click="OnRestore"/>
+                                <Button x:Name="OpenFileBtn" Classes="secondary"
+                                        Content="Open File" Padding="8,5"
+                                        Margin="0,0,6,6"
+                                        IsEnabled="False" Click="OnOpenFile"/>
+                                <Button x:Name="OpenFolderBtn" Classes="secondary"
+                                        Content="Open Folder" Padding="8,5"
+                                        Margin="0,0,6,6"
+                                        IsEnabled="False" Click="OnOpenFolder"/>
+                                <Button x:Name="DeleteFileBtn" Classes="danger"
+                                        Content="Delete File" Padding="8,5"
+                                        Margin="0,0,6,6"
+                                        IsEnabled="False" Click="OnDeleteFile"/>
+                                <Button x:Name="SaveCreditsBtn" Classes="secondary"
+                                        Content="Save Credits" Padding="8,5"
+                                        Margin="0,0,0,6"
+                                        Click="OnSaveCredits"/>
+                            </WrapPanel>
+
+                        </Grid>
+
+                        <!-- Empty-state placeholder -->
+                        <TextBlock x:Name="DetailEmpty"
+                                   Text="Select an asset to view details."
+                                   FontSize="11" Foreground="#333348"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Top"
+                                   Margin="0,40,0,0"/>
+                    </Panel>
+
+                </Grid>
+            </Grid>
+
+            <!-- ── RIGHT: Incoming Media ────────────────────────────────── -->
+            <Grid Grid.Column="1" RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="20,0,0,0">
+
+                <!-- Pane header -->
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,8">
+                    <TextBlock Grid.Column="0" Classes="pane-header"
+                               Text="INCOMING MEDIA" VerticalAlignment="Center"/>
+                    <Button x:Name="OpenIncomingFolderBtn" Grid.Column="1"
+                            Classes="secondary" Content="Open Folder"
+                            Margin="0,0,6,0" Click="OnOpenIncomingFolder"/>
+                    <Button x:Name="BrowseFolderBtn" Grid.Column="2"
+                            Classes="secondary" Content="Browse…"
+                            Click="OnBrowseFolder"/>
+                </Grid>
+
+                <!-- Current folder path -->
+                <TextBlock Grid.Row="1"
+                           x:Name="IncomingFolderLabel"
+                           FontSize="10" Foreground="#555577"
+                           TextTrimming="CharacterEllipsis"
+                           Margin="0,0,0,8"/>
+
+                <!-- Incoming file list -->
+                <Border Grid.Row="2"
+                        Background="#0A0A12" BorderBrush="#1E1E2C"
+                        BorderThickness="1" CornerRadius="6">
+                    <Panel>
+                        <ListBox x:Name="IncomingList"
+                                 Background="Transparent"
+                                 Padding="0"
+                                 SelectionChanged="OnIncomingSelectionChanged">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:CompileBindings="False">
+                                    <Grid ColumnDefinitions="Auto,*,Auto">
+                                        <Border Grid.Column="0"
+                                                Background="#1A1A30"
+                                                CornerRadius="3" Padding="5,2"
+                                                Margin="0,0,8,0"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Extension}"
+                                                       FontSize="9" FontWeight="SemiBold"
+                                                       Foreground="#7070A8"
+                                                       LetterSpacing="0.5"/>
+                                        </Border>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding FileName}"
+                                                   FontSize="11" Foreground="#CCCCDD"
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding SizeDisplay}"
+                                                   FontSize="10" Foreground="#444455"
+                                                   VerticalAlignment="Center"
+                                                   Margin="8,0,0,0"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock x:Name="IncomingEmptyMsg"
+                                   IsVisible="False"
+                                   Text="No files found in this folder."
+                                   FontSize="11" Foreground="#444455"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Margin="16" TextWrapping="Wrap"/>
+                    </Panel>
+                </Border>
+
+                <!-- Incoming preview -->
+                <Border Grid.Row="3"
+                        Height="140"
+                        Background="#0A0A12" BorderBrush="#1E1E2C"
+                        BorderThickness="1" CornerRadius="6"
+                        Margin="0,8,0,0" ClipToBounds="True">
+                    <Panel>
+                        <Image x:Name="IncomingPreview"
+                               Stretch="Uniform"
+                               IsVisible="False"/>
+                        <TextBlock x:Name="IncomingPreviewPlaceholder"
+                                   Text="Select a file to preview."
+                                   FontSize="11" Foreground="#333348"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </Panel>
+                </Border>
+
+                <!-- Import controls -->
+                <Border Grid.Row="4"
+                        Background="#0D0D18" BorderBrush="#1E1E2C"
+                        BorderThickness="1" CornerRadius="6"
+                        Margin="0,8,0,12" Padding="12,8">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                        <TextBlock Grid.Column="0"
+                                   Text="Import as:"
+                                   FontSize="11" Foreground="#888899"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,8,0"/>
+                        <ComboBox x:Name="ImportTypePicker"
+                                  Grid.Column="1"
+                                  FontSize="12"/>
+                        <CheckBox x:Name="DeleteSourceCheck"
+                                  Grid.Column="2"
+                                  Content="Delete source after import"
+                                  FontSize="11" Foreground="#888899"
+                                  Margin="12,0"/>
+                        <Button x:Name="ImportBtn"
+                                Grid.Column="3"
+                                Classes="action"
+                                Content="Import →"
+                                IsEnabled="False"
+                                Click="OnImport"/>
                     </Grid>
+                </Border>
 
-                    <!-- Credits editor -->
-                    <StackPanel Spacing="4">
-                        <TextBlock Text="Credits"
-                                   FontSize="10" Foreground="#555577"/>
-                        <TextBox x:Name="CreditsField"
-                                 AcceptsReturn="True"
-                                 TextWrapping="Wrap"
-                                 MinHeight="56" MaxHeight="100"
-                                 FontSize="11"
-                                 Background="#0A0A12"
-                                 BorderBrush="#1E1E2C"
-                                 Foreground="#CCCCDD"
-                                 Watermark="Optional curated attribution or thanks for this asset."/>
-                        <Button x:Name="SaveCreditsBtn"
-                                Classes="secondary"
-                                Content="Save Credits"
-                                HorizontalAlignment="Left"
-                                Click="OnSaveCredits"/>
-                    </StackPanel>
-
-                    <!-- Asset actions -->
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <Button x:Name="SetPreferredBtn" Classes="secondary" Content="Set Preferred"
-                                IsEnabled="False" Click="OnSetPreferred"/>
-                        <Button x:Name="ExcludeBtn"      Classes="secondary" Content="Exclude"
-                                IsEnabled="False" Click="OnExclude"/>
-                        <Button x:Name="RestoreBtn"      Classes="secondary" Content="Restore"
-                                IsEnabled="False" Click="OnRestore"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="6">
-                        <Button x:Name="OpenFileBtn"   Classes="secondary" Content="Open File"
-                                IsEnabled="False" Click="OnOpenFile"/>
-                        <Button x:Name="OpenFolderBtn" Classes="secondary" Content="Open Folder"
-                                IsEnabled="False" Click="OnOpenFolder"/>
-                        <Button x:Name="DeleteFileBtn" Classes="danger"    Content="Delete File"
-                                IsEnabled="False" Click="OnDeleteFile"/>
-                    </StackPanel>
-
-                </StackPanel>
-              </ScrollViewer>
-
-              <!-- Empty-state placeholder when no asset is selected -->
-              <TextBlock x:Name="DetailEmpty"
-                         Text="Select an asset to view details."
-                         FontSize="11" Foreground="#333348"
-                         HorizontalAlignment="Center"
-                         VerticalAlignment="Top"
-                         Margin="0,40,0,0"/>
-            </Panel>
+            </Grid>
 
         </Grid>
 
-        <!-- ── Add Media inline panel ───────────────────────────────────── -->
-        <Border x:Name="AddMediaPanel"
-                Grid.Row="2"
-                IsVisible="False"
-                Margin="20,10,20,0"
-                Background="#0A0A12" BorderBrush="#2A2A3C"
-                BorderThickness="1" CornerRadius="6"
-                Padding="14,10">
-            <StackPanel Spacing="8">
-                <TextBlock Text="Add Media File" FontSize="11" FontWeight="SemiBold" Foreground="#CCCCDD"/>
-                <TextBlock x:Name="AddMediaSourceLabel"
-                           FontSize="11" Foreground="#888899"
-                           TextTrimming="CharacterEllipsis"/>
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Media type:" FontSize="11" Foreground="#888899"
-                               VerticalAlignment="Center"/>
-                    <ComboBox x:Name="AddMediaTypePicker"
-                              FontSize="12" MinWidth="160"/>
-                    <Button x:Name="AddMediaConfirmBtn"
-                            Classes="action" Content="Add"
-                            Click="OnAddMediaConfirm"/>
-                    <Button Classes="secondary" Content="Cancel"
-                            Click="OnAddMediaCancel"/>
-                </StackPanel>
-            </StackPanel>
-        </Border>
-
         <!-- ── Bottom bar ────────────────────────────────────────────────── -->
-        <Border Grid.Row="3" Padding="20,10,20,14"
+        <Border Grid.Row="2" Padding="20,10,20,14"
                 BorderBrush="#181826" BorderThickness="0,1,0,0"
                 Margin="0,10,0,0">
             <Grid ColumnDefinitions="*,Auto">
@@ -263,17 +413,9 @@
                            VerticalAlignment="Center"
                            Margin="0,0,12,0"
                            TextWrapping="Wrap"/>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                    <Button Classes="action"
-                            Content="Add Media…"
-                            Click="OnAddMedia"/>
-                    <Button Classes="secondary"
-                            Content="Refresh"
-                            Click="OnRefresh"/>
-                    <Button Classes="secondary"
-                            Content="Close"
-                            Click="OnClose"/>
-                </StackPanel>
+                <Button Grid.Column="1" Classes="secondary"
+                        Content="Close"
+                        Click="OnClose"/>
             </Grid>
         </Border>
 

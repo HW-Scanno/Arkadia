@@ -611,3 +611,6 @@ D:\Projects\Arkadia\Arkadia.Tests\bin\Release\net8.0\libraries\lib-vlc\win-x64\p
 D:\Projects\Arkadia\Arkadia.Tests\bin\Release\net8.0\libraries\lib-vlc\win-x64\plugins\visualization\libvisual_plugin.dll
 D:\Projects\Arkadia\Arkadia.Tests\bin\Release\net8.0\LibVLCSharp.dll
 D:\Projects\Arkadia\Arkadia.Tests\bin\Release\net8.0\LibVLCSharp.Avalonia.dll
+D:\Projects\Arkadia\Arkadia.Tests\bin\Release\net8.0\Avalonia.Controls.ColorPicker.dll
+D:\Projects\Arkadia\Arkadia.Tests\bin\Release\net8.0\Avalonia.Diagnostics.dll
+D:\Projects\Arkadia\Arkadia.Tests\bin\Release\net8.0\Avalonia.Themes.Simple.dll
