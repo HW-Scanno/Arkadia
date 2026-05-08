@@ -3239,9 +3239,6 @@
                                     FontSize="12"
                                     Padding="10,5"
                                     Click="OnCatalogBulkScrape"/>
-                            <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}" Margin="4,0"/>
-                            <Button x:Name="CatalogDetailBtn" Content="≡ List" Classes="view-toggle active" Click="OnCatalogDetailMode"/>
-                            <Button x:Name="CatalogGridBtn"   Content="⊞ Grid" Classes="view-toggle"       Click="OnCatalogGridMode"/>
                         </StackPanel>
 
                         <TextBox x:Name="CatalogSearch"
@@ -3251,7 +3248,7 @@
                     </DockPanel>
                 </Border>
 
-                <!-- Body: list/grid (~30%) | jumplist (32px) | hero (~70%) -->
+                <!-- Body: list (~30%) | jumplist (32px) | hero (~70%) -->
                 <Grid Grid.Row="1" ColumnDefinitions="300,1,32,1,*">
 
                     <!-- Left: navigation list (reduced visual weight) -->
@@ -3284,13 +3281,6 @@
                             </ListBox.ItemTemplate>
                         </ListBox>
 
-                        <ScrollViewer x:Name="CatalogGridScroll"
-                                      IsVisible="False"
-                                      HorizontalScrollBarVisibility="Disabled"
-                                      VerticalScrollBarVisibility="Auto">
-                            <WrapPanel x:Name="CatalogGridPanel"
-                                       Margin="10" Orientation="Horizontal"/>
-                        </ScrollViewer>
                     </Panel>
 
                     <!-- Divider -->
@@ -3443,138 +3433,64 @@
                                     <StackPanel x:Name="CatalogHeroLangFlagsPanel"
                                                 Orientation="Horizontal"
                                                 Margin="0,0,0,6"/>
-                                    <!-- ─── Badges ─── -->
-                                    <StackPanel HorizontalAlignment="Center" Spacing="14" Margin="0,0,0,20">
-                                        <!-- Row 1: Status · System · Year · Region -->
-                                        <WrapPanel HorizontalAlignment="Center" Orientation="Horizontal">
-                                            <Border x:Name="CatalogBadgeStatusBorder"
-                                                    CornerRadius="10" Padding="22,12" Margin="0,0,14,0"
-                                                    Background="#1E1E30" BorderBrush="#2A2A44" BorderThickness="1">
-                                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                                    <Image x:Name="CatalogBadgeStatusIcon" Width="22" Height="22" IsVisible="False" VerticalAlignment="Center"/>
-                                                    <TextBlock x:Name="CatalogBadgeStatus" FontSize="17" Foreground="#888899" VerticalAlignment="Center"/>
-                                                </StackPanel>
-                                            </Border>
-                                            <Border x:Name="CatalogBadgeSystemBorder"
-                                                    CornerRadius="10" Padding="22,12" Margin="0,0,14,0"
-                                                    Background="#1E1E30" BorderBrush="#2A2A44" BorderThickness="1">
-                                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                                    <Image x:Name="CatalogBadgeSystemIcon" Width="22" Height="22" IsVisible="False" VerticalAlignment="Center"/>
-                                                    <TextBlock x:Name="CatalogBadgeSystem" FontSize="17" Foreground="#888899" VerticalAlignment="Center"/>
-                                                </StackPanel>
-                                            </Border>
-                                            <Border x:Name="CatalogBadgeYearBorder"
-                                                    CornerRadius="10" Padding="22,12" Margin="0,0,14,0"
-                                                    Background="#1E1E30" BorderBrush="#2A2A44" BorderThickness="1">
-                                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                                    <Image x:Name="CatalogBadgeYearIcon" Width="22" Height="22" IsVisible="False" VerticalAlignment="Center"/>
-                                                    <TextBlock x:Name="CatalogBadgeYear" FontSize="17" Foreground="#888899" VerticalAlignment="Center"/>
-                                                </StackPanel>
-                                            </Border>
-                                            <Border x:Name="CatalogBadgeRegionBorder"
-                                                    CornerRadius="10" Padding="22,12" Margin="0,0,0,0"
-                                                    Background="#1E1E30" BorderBrush="#2A2A44" BorderThickness="1">
-                                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                                    <Image x:Name="CatalogBadgeRegionIcon" Width="22" Height="22" IsVisible="False" VerticalAlignment="Center"/>
-                                                    <TextBlock x:Name="CatalogBadgeRegion" FontSize="17" Foreground="#888899" VerticalAlignment="Center"/>
-                                                </StackPanel>
-                                            </Border>
-                                        </WrapPanel>
-                                        <!-- Row 2: Genre · Players · Type · Size -->
-                                        <WrapPanel HorizontalAlignment="Center" Orientation="Horizontal">
-                                            <Border x:Name="CatalogBadgeGenreBorder"
-                                                    CornerRadius="10" Padding="22,12" Margin="0,0,14,0"
-                                                    Background="#161622" BorderBrush="#222238" BorderThickness="1">
-                                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                                    <Image x:Name="CatalogBadgeGenreIcon" Width="22" Height="22" IsVisible="False" VerticalAlignment="Center"/>
-                                                    <TextBlock x:Name="CatalogBadgeGenre" FontSize="17" Foreground="#666677" VerticalAlignment="Center"/>
-                                                </StackPanel>
-                                            </Border>
-                                            <Border x:Name="CatalogBadgePlayersBorder"
-                                                    CornerRadius="10" Padding="22,12" Margin="0,0,14,0"
-                                                    Background="#161622" BorderBrush="#222238" BorderThickness="1">
-                                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                                    <Image x:Name="CatalogBadgePlayersIcon" Width="22" Height="22" IsVisible="False" VerticalAlignment="Center"/>
-                                                    <TextBlock x:Name="CatalogBadgePlayers" FontSize="17" Foreground="#666677" VerticalAlignment="Center"/>
-                                                </StackPanel>
-                                            </Border>
-                                            <Border x:Name="CatalogBadgeTypeBorder"
-                                                    CornerRadius="10" Padding="22,12" Margin="0,0,14,0"
-                                                    Background="#161622" BorderBrush="#222238" BorderThickness="1">
-                                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                                    <Image x:Name="CatalogBadgeTypeIcon" Width="22" Height="22" IsVisible="False" VerticalAlignment="Center"/>
-                                                    <TextBlock x:Name="CatalogBadgeType" FontSize="17" Foreground="#666677" VerticalAlignment="Center"/>
-                                                </StackPanel>
-                                            </Border>
-                                            <Border x:Name="CatalogBadgeSizeBorder"
-                                                    CornerRadius="10" Padding="22,12" Margin="0,0,0,0"
-                                                    Background="#161622" BorderBrush="#222238" BorderThickness="1">
-                                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                                    <Image x:Name="CatalogBadgeSizeIcon" Width="22" Height="22" IsVisible="False" VerticalAlignment="Center"/>
-                                                    <TextBlock x:Name="CatalogBadgeSize" FontSize="17" Foreground="#666677" VerticalAlignment="Center"/>
-                                                </StackPanel>
-                                            </Border>
-                                        </WrapPanel>
-                                    </StackPanel>
-
-                                    <!-- ─── Secondary metadata badges ─── -->
-                                    <WrapPanel x:Name="CatalogSecondaryBadgesPanel"
+                                    <!-- ─── Metadata details grid ─── -->
+                                    <WrapPanel x:Name="CatalogMetadataGrid"
                                                HorizontalAlignment="Center"
                                                Orientation="Horizontal"
-                                               Margin="0,0,0,16"
+                                               MaxWidth="500"
+                                               Margin="0,4,0,20"
                                                IsVisible="False">
-                                        <Border x:Name="CatalogBadge2GenreBorder" IsVisible="False"
-                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
-                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
-                                            <TextBlock x:Name="CatalogBadge2Genre"
-                                                       FontSize="12" Foreground="#7070A8"/>
-                                        </Border>
-                                        <Border x:Name="CatalogBadge2PlayersBorder" IsVisible="False"
-                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
-                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
-                                            <TextBlock x:Name="CatalogBadge2Players"
-                                                       FontSize="12" Foreground="#7070A8"/>
-                                        </Border>
-                                        <Border x:Name="CatalogBadge2DeveloperBorder" IsVisible="False"
-                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
-                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
-                                            <TextBlock x:Name="CatalogBadge2Developer"
-                                                       FontSize="12" Foreground="#7070A8"/>
-                                        </Border>
-                                        <Border x:Name="CatalogBadge2PublisherBorder" IsVisible="False"
-                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
-                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
-                                            <TextBlock x:Name="CatalogBadge2Publisher"
-                                                       FontSize="12" Foreground="#7070A8"/>
-                                        </Border>
-                                        <Border x:Name="CatalogBadge2LangBorder" IsVisible="False"
-                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
-                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
-                                            <TextBlock x:Name="CatalogBadge2Lang"
-                                                       FontSize="12" Foreground="#7070A8"/>
-                                        </Border>
-                                        <Border x:Name="CatalogBadge2RatingBorder" IsVisible="False"
-                                                CornerRadius="8" Padding="12,5" Margin="0,0,8,8"
-                                                Background="#141420" BorderBrush="#22223A" BorderThickness="1">
-                                            <TextBlock x:Name="CatalogBadge2Rating"
-                                                       FontSize="12" Foreground="#7070A8"/>
-                                        </Border>
+                                        <StackPanel x:Name="MetaCell_Status" Width="244" Margin="0,0,0,14" Spacing="4" IsVisible="False">
+                                            <TextBlock Text="STATUS" FontSize="9" FontWeight="SemiBold" LetterSpacing="1.2" Foreground="#505070"/>
+                                            <TextBlock x:Name="MetaVal_Status" FontSize="13" Foreground="#C0C0DC" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MetaCell_System" Width="244" Margin="0,0,0,14" Spacing="4" IsVisible="False">
+                                            <TextBlock Text="SYSTEM" FontSize="9" FontWeight="SemiBold" LetterSpacing="1.2" Foreground="#505070"/>
+                                            <TextBlock x:Name="MetaVal_System" FontSize="13" Foreground="#C0C0DC" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MetaCell_Year" Width="244" Margin="0,0,0,14" Spacing="4" IsVisible="False">
+                                            <TextBlock Text="YEAR" FontSize="9" FontWeight="SemiBold" LetterSpacing="1.2" Foreground="#505070"/>
+                                            <TextBlock x:Name="MetaVal_Year" FontSize="13" Foreground="#C0C0DC"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MetaCell_Region" Width="244" Margin="0,0,0,14" Spacing="4" IsVisible="False">
+                                            <TextBlock Text="REGION" FontSize="9" FontWeight="SemiBold" LetterSpacing="1.2" Foreground="#505070"/>
+                                            <TextBlock x:Name="MetaVal_Region" FontSize="13" Foreground="#C0C0DC"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MetaCell_Genre" Width="244" Margin="0,0,0,14" Spacing="4" IsVisible="False">
+                                            <TextBlock Text="GENRE" FontSize="9" FontWeight="SemiBold" LetterSpacing="1.2" Foreground="#505070"/>
+                                            <TextBlock x:Name="MetaVal_Genre" FontSize="13" Foreground="#C0C0DC" TextWrapping="Wrap"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MetaCell_Developer" Width="244" Margin="0,0,0,14" Spacing="4" IsVisible="False">
+                                            <TextBlock Text="DEVELOPER" FontSize="9" FontWeight="SemiBold" LetterSpacing="1.2" Foreground="#505070"/>
+                                            <TextBlock x:Name="MetaVal_Developer" FontSize="13" Foreground="#C0C0DC" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MetaCell_Publisher" Width="244" Margin="0,0,0,14" Spacing="4" IsVisible="False">
+                                            <TextBlock Text="PUBLISHER" FontSize="9" FontWeight="SemiBold" LetterSpacing="1.2" Foreground="#505070"/>
+                                            <TextBlock x:Name="MetaVal_Publisher" FontSize="13" Foreground="#C0C0DC" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MetaCell_Language" Width="244" Margin="0,0,0,14" Spacing="4" IsVisible="False">
+                                            <TextBlock Text="LANGUAGE" FontSize="9" FontWeight="SemiBold" LetterSpacing="1.2" Foreground="#505070"/>
+                                            <TextBlock x:Name="MetaVal_Language" FontSize="13" Foreground="#C0C0DC" TextTrimming="CharacterEllipsis"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MetaCell_Rating" Width="244" Margin="0,0,0,14" Spacing="4" IsVisible="False">
+                                            <TextBlock Text="RATING" FontSize="9" FontWeight="SemiBold" LetterSpacing="1.2" Foreground="#505070"/>
+                                            <TextBlock x:Name="MetaVal_Rating" FontSize="13" Foreground="#C0C0DC"/>
+                                        </StackPanel>
+                                        <StackPanel x:Name="MetaCell_Players" Width="244" Margin="0,0,0,14" Spacing="4" IsVisible="False">
+                                            <TextBlock Text="PLAYERS" FontSize="9" FontWeight="SemiBold" LetterSpacing="1.2" Foreground="#505070"/>
+                                            <TextBlock x:Name="MetaVal_Players" FontSize="13" Foreground="#C0C0DC"/>
+                                        </StackPanel>
                                     </WrapPanel>
 
                                     <!-- Actions -->
                                     <StackPanel HorizontalAlignment="Center" Spacing="6" Margin="0,0,0,20">
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <!-- Row 1: release actions -->
+                                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
                                             <Button Content="Open in Library"
                                                     Background="#7B68EE" Foreground="#FFFFFF"
                                                     BorderThickness="0"
                                                     CornerRadius="4" Padding="14,7" FontSize="12"
                                                     Click="OnCatalogOpenInLibrary"/>
-                                            <Button x:Name="CatalogScrapeBtn"
-                                                    Content="Scrape"
-                                                    Background="#1E2A1E" Foreground="#4CAF50"
-                                                    BorderBrush="#2A3D2A" BorderThickness="1"
-                                                    CornerRadius="4" Padding="14,7" FontSize="12"
-                                                    Click="OnCatalogScrape"/>
                                             <Button Content="Edit Metadata"
                                                     Background="#1A1A2E" Foreground="#9FA4FF"
                                                     BorderBrush="#2A2A50" BorderThickness="1"
@@ -3587,6 +3503,15 @@
                                                     CornerRadius="4" Padding="14,7" FontSize="12"
                                                     IsEnabled="False"
                                                     Click="OnCatalogEditExtraNotes"/>
+                                        </StackPanel>
+                                        <!-- Row 2: metadata acquisition/merge -->
+                                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                                            <Button x:Name="CatalogScrapeBtn"
+                                                    Content="Scrape"
+                                                    Background="#1E2A1E" Foreground="#4CAF50"
+                                                    BorderBrush="#2A3D2A" BorderThickness="1"
+                                                    CornerRadius="4" Padding="14,7" FontSize="12"
+                                                    Click="OnCatalogScrape"/>
                                             <Button Content="Merge Metadata"
                                                     Background="#141E14" Foreground="#6FCF97"
                                                     BorderBrush="#233223" BorderThickness="1"

@@ -128,9 +128,9 @@ public partial class CatalogManageMediaDialog : Window
         var entry = CurrentEntry;
         if (entry is null) return;
 
+        PreviewImage.Source = null;          // detach before disposing
         _previewBitmap?.Dispose();
-        _previewBitmap      = null;
-        PreviewImage.Source = null;
+        _previewBitmap = null;
 
         var assets = _service.LoadAssets(
             entry.DbPath, entry.ReleaseId, entry.Name,
@@ -211,24 +211,28 @@ public partial class CatalogManageMediaDialog : Window
 
         CreditsField.Text = a.Credits ?? "";
 
+        PreviewImage.Source          = null;   // detach from renderer before disposing
         _previewBitmap?.Dispose();
-        _previewBitmap = null;
-        PreviewImage.IsVisible        = false;
-        PreviewPlaceholder.IsVisible  = true;
+        _previewBitmap               = null;
+        PreviewImage.IsVisible       = false;
+        PreviewPlaceholder.IsVisible = true;
 
         if (a.Exists)
         {
             var ext = Path.GetExtension(a.FilePath).ToLowerInvariant();
             if (MediaStore.ImageExtensions.Contains(ext))
             {
-                try
+                _previewBitmap = CatalogPreviewHelpers.TryLoadBitmap(a.FilePath);
+                if (_previewBitmap is not null)
                 {
-                    _previewBitmap               = new Bitmap(a.FilePath);
                     PreviewImage.Source          = _previewBitmap;
                     PreviewImage.IsVisible       = true;
                     PreviewPlaceholder.IsVisible = false;
                 }
-                catch { PreviewPlaceholder.Text = "Preview unavailable"; }
+                else
+                {
+                    PreviewPlaceholder.Text = "Preview unavailable";
+                }
             }
             else if (ext is ".mp4" or ".avi" or ".mkv" or ".mov" or ".webm")
                 PreviewPlaceholder.Text = "▶  Video file";
@@ -247,7 +251,7 @@ public partial class CatalogManageMediaDialog : Window
         RestoreBtn.IsEnabled      = a.IsExcluded;
         OpenFileBtn.IsEnabled     = a.Exists;
         OpenFolderBtn.IsEnabled   = a.Exists;
-        DeleteFileBtn.IsEnabled   = a.Exists;
+        DeleteFileBtn.IsEnabled   = true;      // enabled for Missing too — removes curation row
         SaveCreditsBtn.IsEnabled  = true;
     }
 
@@ -255,9 +259,9 @@ public partial class CatalogManageMediaDialog : Window
     {
         DetailPanel.IsVisible = false;
         DetailEmpty.IsVisible = true;
+        PreviewImage.Source   = null;   // detach before disposing
         _previewBitmap?.Dispose();
-        _previewBitmap      = null;
-        PreviewImage.Source = null;
+        _previewBitmap        = null;
     }
 
     // ── Left pane: curation actions ───────────────────────────────────────────
@@ -339,14 +343,27 @@ public partial class CatalogManageMediaDialog : Window
         var a    = _selected.Asset;
         var name = Path.GetFileName(a.FilePath);
 
-        var body = a.IsExcluded
-            ? $"This asset is currently excluded.\n\n" +
-              $"Deleting \"{name}\" will remove both the file and its exclusion record, " +
-              $"so it may be reintroduced by a future scrape or import.\n\n" +
-              $"If you want to keep the exclusion, close this dialog and do not delete."
-            : $"Delete \"{name}\" from disk and remove its media record from Arkadia?\n\n" +
-              $"This will not create an exclusion, so the asset may be reintroduced by a future " +
-              $"scrape or import. Use Exclude instead to permanently reject an asset.";
+        var body = (a.Exists, a.IsExcluded) switch
+        {
+            (true, false) =>
+                $"Delete \"{name}\" from disk and remove its media record from Arkadia?\n\n" +
+                $"This will not create an exclusion, so the asset may be reintroduced by a future " +
+                $"scrape or import. Use Exclude instead to permanently reject an asset.",
+
+            (true, true) =>
+                $"This asset is currently excluded.\n\n" +
+                $"Deleting \"{name}\" will remove both the file and its exclusion record, " +
+                $"so it may be reintroduced by a future scrape or import.\n\n" +
+                $"If you want to keep the exclusion, close this dialog and do not delete.",
+
+            (false, false) =>
+                $"\"{name}\" is already missing from disk.\n\n" +
+                $"Remove this missing media record from Arkadia? No file will be deleted.",
+
+            (false, true) =>
+                $"\"{name}\" is missing from disk and currently excluded.\n\n" +
+                $"Remove the media record and exclusion from Arkadia? No file will be deleted.",
+        };
 
         var confirmed = await new ConfirmDialog("Delete Media File", body)
             .ShowDialog<bool>(this);
@@ -411,8 +428,9 @@ public partial class CatalogManageMediaDialog : Window
 
     private void UpdateIncomingPreview()
     {
+        IncomingPreview.Source               = null;   // detach before disposing
         _incomingPreviewBitmap?.Dispose();
-        _incomingPreviewBitmap = null;
+        _incomingPreviewBitmap               = null;
         IncomingPreview.IsVisible            = false;
         IncomingPreviewPlaceholder.IsVisible = true;
 
@@ -423,17 +441,16 @@ public partial class CatalogManageMediaDialog : Window
         }
 
         var f = _incomingSelected;
-        if (f.IsImage && File.Exists(f.FilePath))
+        if (f.IsImage)
         {
-            try
+            _incomingPreviewBitmap = CatalogPreviewHelpers.TryLoadBitmap(f.FilePath);
+            if (_incomingPreviewBitmap is not null)
             {
-                _incomingPreviewBitmap               = new Bitmap(f.FilePath);
                 IncomingPreview.Source               = _incomingPreviewBitmap;
                 IncomingPreview.IsVisible            = true;
                 IncomingPreviewPlaceholder.IsVisible = false;
                 return;
             }
-            catch { }
         }
 
         var ext = Path.GetExtension(f.FilePath).ToLowerInvariant();
@@ -447,13 +464,12 @@ public partial class CatalogManageMediaDialog : Window
 
     private void ShowIncomingPreviewEmpty()
     {
+        IncomingPreview.Source               = null;   // detach before disposing
         _incomingPreviewBitmap?.Dispose();
         _incomingPreviewBitmap               = null;
         IncomingPreview.IsVisible            = false;
         IncomingPreviewPlaceholder.IsVisible = true;
         IncomingPreviewPlaceholder.Text      = "Select a file to preview.";
-        if (IncomingPreview.Source is not null)
-            IncomingPreview.Source = null;
     }
 
     private async void OnBrowseFolder(object? sender, RoutedEventArgs e)

@@ -1,6 +1,6 @@
 # Arkadia Cache & Curation Pipeline — Real-World Test Plan
 
-_Last revised: 2026-05-07. Companion to [docs/CACHE_CURATION_PIPELINE.md](../CACHE_CURATION_PIPELINE.md). Run on a clean working copy or a snapshot you can roll back._
+_Last revised: 2026-05-08. Companion to [docs/CACHE_CURATION_PIPELINE.md](../CACHE_CURATION_PIPELINE.md). Run on a clean working copy or a snapshot you can roll back._
 
 This document is the official manual QA checklist for the cache and curation pipeline. Each section is a numbered series of `Step / Action / Expected / Failure notes`. Tick the **Pass / Fail** box per step. Use the Failure Log Template at the end to capture defects.
 
@@ -8,8 +8,11 @@ Confirmed conventions used throughout:
 - All folders are created under `AppContext.BaseDirectory` (the application directory).
 - Staging path: `staging-cache/screenscraper/<package>/`.
 - Output ZIP path: `scrape-cache/screenscraper/<package>.zip`.
+- `incoming-media/` is the default source folder for manual media intake; Arkadia never auto-deletes files from it.
 - Extra Notes placeholder when empty: `No extra notes.`
 - No Exclude Reason dialog exists; exclusions are stored without a reason.
+- **Exclude** stores SHA-256 and prevents reintroduction. **Delete File** removes the file/row without creating an exclusion; a future scrape or import may reintroduce the asset.
+- **Delete File on a Missing asset** removes only the curation row; no filesystem action.
 - Offline Single Scrape and Bulk Scraping make **no** online ScreenScraper calls.
 - Monitor for ScreenScraper hosts (`screenscraper.fr`, `neoclone.screenscraper.fr`) during offline tests; any traffic to these hosts during §10–§11 is a failure.
 - `physical-media` is an incoming alias; canonical media type is `physical`.
@@ -24,7 +27,8 @@ Confirmed conventions used throughout:
 | # | Action | Expected | Failure notes | Pass/Fail |
 |---|---|---|---|---|
 | 1.1 | Pick or build a clean working copy of Arkadia on the target machine. | App launches without prior catalog state, or with a snapshot you can restore. | Note OS version, .NET runtime, and Arkadia build hash. | ☐ |
-| 1.2 | Confirm `AppContext.BaseDirectory` contents include `incoming-csv/`, `scrape-cache/`, `scrape-cache/screenscraper/`, `staging-cache/`. | All four folders exist after first launch. | If any are missing, capture which and check launch logs. | ☐ |
+| 1.2 | Confirm `AppContext.BaseDirectory` contents include `incoming-csv/`, `incoming-media/`, `scrape-cache/`, `scrape-cache/screenscraper/`, `staging-cache/`. | All five folders exist after first launch. | If any are missing, capture which and check launch logs. | ☐ |
+| 1.2a | Place at least 2–3 test image files (e.g. PNG/JPG) into `incoming-media/` for use in §12 import tests. | Files are present and accessible. | — | ☐ |
 | 1.3 | Confirm `staging-cache/screenscraper/` is **not** required to exist before a build. | Folder is absent until the first build runs. | If it pre-exists from a leftover snapshot, delete before continuing. | ☐ |
 | 1.4 | Have valid ScreenScraper credentials ready (`devid`, `devpassword`, `ssid`, `sspassword`, `softname`). | Credentials work against the live API. | If credentials fail, abort and fix before continuing. | ☐ |
 | 1.5 | Pick a small target DAT line (recommended: Atomiswave or similar, ~20–60 entries). | DAT line is imported and visible in Catalog. | If too large, swap for a smaller line — long fetches make iteration painful. | ☐ |
@@ -175,26 +179,34 @@ Confirmed conventions used throughout:
 
 ---
 
-## 12. Manage Media
+## 12. Manage Media — Media Intake Workbench
 
 | # | Action | Expected | Failure notes | Pass/Fail |
 |---|---|---|---|---|
-| 12.1 | Open Manage Media for a release with several assets. | List, detail panel, preview, badges all render. | — | ☐ |
+| 12.1 | Open Manage Media for a release with several assets. | Dual-pane workbench opens. Left pane shows asset list grouped by media type; right pane shows the `incoming-media/` browser. Header shows **Previous / N of M / Next** navigation. | — | ☐ |
 | 12.2 | Status badges use `Preferred` (green), `Excluded` (red), `Missing` (orange) where applicable. | Colors match. | — | ☐ |
-| 12.3 | Confirm Manage Media does **not** display any provider/source provenance field. | No "from ScreenScraper / cache / manual" text. | If present, this contradicts the spec. | ☐ |
-| 12.4 | Select a non-preferred, existing, non-excluded asset. Click **Set Preferred**. | Asset becomes Preferred for its media type; previous Preferred for that type is cleared. | — | ☐ |
-| 12.5 | Click **Exclude** on an asset. | Badge becomes `Excluded`; **Restore** enabled, **Set Preferred** disabled. **No Exclude Reason dialog appears.** | If a reason dialog opens, behavior diverges from spec. | ☐ |
-| 12.6 | Click **Restore** on an excluded asset. | Asset returns to default status. | — | ☐ |
-| 12.7 | Edit the Credits field and click **Save Credits**. Reload dialog. | Credits persist. | — | ☐ |
-| 12.8 | Select an existing asset. Click **Open File**. | OS opens the file. | — | ☐ |
-| 12.9 | Click **Open Folder**. | OS reveals the file in its folder. | — | ☐ |
-| 12.10 | Click **Delete File** on an existing asset. Confirm. | File removed from disk; curation row remains as Excluded. Re-running bulk does **not** reintroduce the asset. | — | ☐ |
-| 12.11 | Click **Add Media**. File picker opens with filters: Image, Video, Document, All Files. | Picker opens with correct filters. | — | ☐ |
-| 12.12 | Select a file. Add Media panel appears with media-type combobox sourced from `ReleaseMediaCurationService.MediaTypeOrder`. | Combobox populated with canonical types. | Confirm `physical` is present and `physical-media` is **not** offered. | ☐ |
-| 12.13 | Pick a media type, confirm. | File copied into `data/media/<hardwareFamilyId>/<datLineId>/<media-type>/`. Asset appears in the list. | — | ☐ |
-| 12.14 | Pre-exclude all assets of a given media type, then Add Media for that type. | New file is **not** auto-set as Preferred. User must explicitly Restore or Set Preferred. | — | ☐ |
-| 12.15 | Browse the entire UI. Confirm `physical-media` never appears as a label, badge, type, or filter. | Canonical type is `physical` everywhere. | — | ☐ |
-| 12.16 | Inspect catalog DB rows for `release_media_curation` and `media_assets`. | No rows contain `physical-media`; only `physical`. | — | ☐ |
+| 12.3 | Confirm Manage Media does **not** display any provider/source provenance field. | No "from ScreenScraper / cache / manual" text anywhere in the dialog. | If present, this contradicts the spec. | ☐ |
+| 12.4 | Click **Previous** and **Next** to navigate releases without closing the dialog. | Media list, detail panel, and preview update to the new release. Navigation buttons disable at the first/last release. | — | ☐ |
+| 12.5 | Select a non-preferred, existing, non-excluded asset. Click **Set Preferred**. | Asset becomes Preferred for its media type; previous Preferred for that type is cleared. | — | ☐ |
+| 12.6 | Click **Exclude** on an existing asset. | Badge becomes `Excluded`; **Restore** enabled, **Set Preferred** disabled. **No Exclude Reason dialog appears.** Inspect DB: `is_excluded = 1` and `file_sha256` is populated. | If a reason dialog opens, or SHA-256 is null, behavior diverges from spec. | ☐ |
+| 12.7 | Manually delete the excluded file from disk externally. Reload dialog. | Asset still appears as **Missing / Excluded**. The exclusion row survives file removal. | If the row disappears, exclusion persistence is broken. | ☐ |
+| 12.8 | Click **Restore** on an excluded asset. | Asset returns to default status; `is_excluded = 0`. | — | ☐ |
+| 12.9 | Edit the Credits field and click **Save Credits**. Reload dialog. | Credits persist. | — | ☐ |
+| 12.10 | Select an existing asset. Click **Open File**. | OS opens the file. | — | ☐ |
+| 12.11 | Click **Open Folder** on an existing asset. | OS reveals the file in its folder. | — | ☐ |
+| 12.12 | **Delete File on an existing active asset**. Confirm. | File removed from disk. Curation row removed from DB. Asset disappears from the list. **No exclusion row is created.** | If asset remains listed, or `is_excluded` appears in DB, this is a regression. | ☐ |
+| 12.13 | Run Bulk Scraping on the same release after the delete in 12.12 (with "Respect excluded media" on). | Deleted asset may be reintroduced from cache — this is correct behavior, since no exclusion was stored. | Confirm no ghost exclusion prevents it. | ☐ |
+| 12.14 | **Delete File on a Missing asset** (file already absent from disk). Confirm. | Curation row removed from DB. Asset disappears from list. No filesystem action taken. No exclusion row created. | — | ☐ |
+| 12.15 | **Exclude** an asset, then delete the file externally. Verify the Missing/Excluded row exists. Then click **Delete File**. Confirm. | Curation row (including the exclusion) removed. Asset disappears. Future scrapes/imports may now reintroduce it. | — | ☐ |
+| 12.16 | Open the Incoming Media right pane. Confirm `incoming-media/` contents are listed. | Files placed in 1.2a are visible. | — | ☐ |
+| 12.17 | Select an image file in the right pane. | Preview renders. Import button becomes enabled. | — | ☐ |
+| 12.18 | Click **Import** with **Delete after import** unchecked. | File copied into `data/media/<hwFamilyId>/<datLineId>/<media-type>/`. Curation row created. Source file **remains** in `incoming-media/`. Asset appears in the left pane. | — | ☐ |
+| 12.19 | Click **Import** on a second file with **Delete after import** checked. | Same as above, but source file is deleted from `incoming-media/` **after** successful copy and SHA-256 verification. | If source is deleted before verification, or survives after, the workflow is broken. | ☐ |
+| 12.20 | Use **Browse…** to point the right pane at a different folder. | Pane refreshes to show that folder's contents. | — | ☐ |
+| 12.21 | Set the **target media type** to a specific type before import. | Imported asset appears under that media type in the left pane. | — | ☐ |
+| 12.22 | Place a zero-byte or corrupt file in `incoming-media/`. Attempt to import it. | Import reports failure gracefully. No curation row created. No partial file in the media tree. | — | ☐ |
+| 12.23 | Browse the entire UI. Confirm `physical-media` never appears as a label, badge, type, or filter. | Canonical type is `physical` everywhere. | — | ☐ |
+| 12.24 | Inspect `release_media_curation` DB rows after all §12 steps. | No `physical-media` type values. No provider/source provenance fields. | — | ☐ |
 
 ---
 
@@ -248,6 +260,11 @@ The pipeline is accepted as production-ready for this release when **all** of th
 - [ ] Verify Package on at least one freshly-built and one corruption-injected ZIP behaves per the documented severity scheme.
 - [ ] Manage Staging surfaces only the four labels: **Complete**, **Resumable**, **Unknown**, **Empty**.
 - [ ] Dashboard SCRAPE STAGING Top 5 is sorted by disk size descending and exposes no destructive actions.
+- [ ] `incoming-media/` exists at startup; files placed there appear in the Manage Media Incoming Media pane.
+- [ ] Import (Copy to Arkadia) creates a curation row only after SHA-256 verification. Source file is not deleted unless Delete after import is checked.
+- [ ] Delete File on an existing asset removes the file from disk and the curation row from DB. **No exclusion row is created.**
+- [ ] Delete File on a Missing asset removes only the curation row; no filesystem action.
+- [ ] Exclude persists as a Missing/Excluded row after the file is deleted from disk.
 - [ ] Manage Media never displays `physical-media` and never displays provider/source provenance.
 - [ ] Extra Notes placeholder is exactly `No extra notes.` and survives single + bulk scraping.
 - [ ] No Exclude Reason dialog is present.

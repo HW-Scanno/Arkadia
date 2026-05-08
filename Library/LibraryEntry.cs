@@ -11,7 +11,7 @@ public sealed class LibraryEntry
     public required string Name        { get; init; }
     public string          DisplayName { get; init; } = "";
     /// <summary>
-    /// Mutable display title used by the Catalog list and grid.
+    /// Mutable display title used by the Catalog list.
     /// Set by the Catalog view before rendering based on the current title mode (DAT or META).
     /// Defaults to Name on construction.
     /// </summary>

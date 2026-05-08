@@ -35,6 +35,36 @@ public class CatalogHeroHelpersTests
         Assert.Equal("", result);
     }
 
+    // ── FormatGenreValue ─────────────────────────────────────────────────────
+
+    [Fact]
+    public void FormatGenreValue_BothPresent_CombinesWithSlashNoPrefix()
+    {
+        var result = CatalogHeroHelpers.FormatGenreValue("Action", "Shooter");
+        Assert.Equal("Action / Shooter", result);
+    }
+
+    [Fact]
+    public void FormatGenreValue_GenreOnly_ReturnsGenreNoPrefix()
+    {
+        var result = CatalogHeroHelpers.FormatGenreValue("RPG", "");
+        Assert.Equal("RPG", result);
+    }
+
+    [Fact]
+    public void FormatGenreValue_SubgenreOnly_ReturnsSubgenreNoPrefix()
+    {
+        var result = CatalogHeroHelpers.FormatGenreValue("", "Beat em up");
+        Assert.Equal("Beat em up", result);
+    }
+
+    [Fact]
+    public void FormatGenreValue_BothEmpty_ReturnsEmpty()
+    {
+        var result = CatalogHeroHelpers.FormatGenreValue("", "");
+        Assert.Equal("", result);
+    }
+
     // ── ShouldShowOriginalTitle ───────────────────────────────────────────────
 
     [Fact]

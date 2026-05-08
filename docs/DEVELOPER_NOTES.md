@@ -286,7 +286,7 @@ DAT-derived facts must:
 ### MainWindow Still Owns
 
 - Dialog orchestration (ScraperProviderDialog, ScrapeReviewDialog, MergeMetadataDialog, EditMetadataDialog)
-- Catalog list and grid rendering (RebuildCatalogList, RebuildCatalogGrid)
+- Catalog list rendering (RebuildCatalogList)
 - Hero panel updates (UpdateCatalogHero, BuildGallery, BuildCoverGallery, BuildExtras, BuildManuals)
 - Badge display (SetBadge, TryLoadBadgeIcon, NormalizeBadgeKey)
 - Settings persistence (LoadAllSettings, OnSaveSettings, LoadMappingsSettings)
@@ -321,9 +321,13 @@ That document covers, with code-backed accuracy:
 - `ScreenScraperCachePackageVerifier` behavior (presence-only manifest check, severity scheme, tolerated extras)
 - Provider IDs (`screenscraper` source, `screenscraper-cache` cache provider, UI label "ScreenScraper Cache")
 - Media type normalization (`MediaStore.NormalizeMediaType`; `physical-media` → `physical`)
-- `release_media_curation` (preferred / excluded / sha256 / credits / notes; auto-preferred rules)
+- Official folders: `incoming-media/` created at startup; default source root for the Media Intake Workbench; never auto-deleted
+- `release_media_curation` (preferred / excluded / sha256 / credits / notes; auto-preferred rules; Delete vs Exclude semantics)
+  - **Exclude**: sets `is_excluded = 1`, stores SHA-256, row persists after file removal, prevents reintroduction
+  - **Delete File**: removes file from disk and curation row from DB; does not create exclusion; does not prevent reintroduction; safe on Missing assets (row-only cleanup)
+- Manage Media dual-pane workbench (release navigation; grouped asset list; Incoming Media browser; import: copy → SHA-256 verify → curation row → optional source delete)
 - `release_extra_notes` (per-release notes; placeholder `No extra notes.`)
 - Bulk Scraping behavior (cache-only/offline; `Missing Only` criteria; preservation of curation; cooperative cancellation)
-- AMP future direction (planned, not implemented; provider-agnostic, no provenance, credits allowed, exclusions included; `.ark` extension and chunking only planned)
+- AMP future direction (planned, not implemented; `.amp` extension; provider-agnostic, no provenance, credits allowed, exclusions included; `.ark` is reserved for Arkadia Backup / Archive, not AMP; chunking post-v1; see docs/SPECS/ARKADIA_MEDIA_PACK_V1_SPEC.md)
 
 Update that document, not this one, when the cache/curation pipeline changes.

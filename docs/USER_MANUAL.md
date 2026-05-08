@@ -143,7 +143,7 @@ The **Catalog** view is the primary browsing interface for your collection.
 
 At the top of the Catalog panel, use the **System** and **DAT Line** dropdowns to select which collection to browse. Use the **search box** to filter by title, and the **status filter** to show only Present / Missing / Pending / Lost releases.
 
-Click any release in the list or grid to select it. The right panel shows:
+Click any release in the list to select it. The right panel shows:
 
 - Release name and alternate titles
 - Cover art gallery
@@ -425,4 +425,4 @@ For building ScreenScraper cache packages, registering and verifying them, offli
 
 → [docs/CACHE_CURATION_PIPELINE.md](CACHE_CURATION_PIPELINE.md)
 
-That document is the authoritative reference for the cache and curation flows. It covers folder layout, the ScreenScraper Cache Builder UI (Force / UpdatePayloads / KeepStaging / IndexAfterBuild), Manage Staging status labels, the Registered Cache Manager, the Verify Package severity scheme, Bulk Scraping scopes and options, Manage Media (including Add Media and Exclude behavior), Extra Notes, security and sanitization, troubleshooting, and a manual test plan.
+That document is the authoritative reference for the cache and curation flows. It covers folder layout (including `incoming-media/`), the ScreenScraper Cache Builder UI (Force / UpdatePayloads / KeepStaging / IndexAfterBuild), Manage Staging status labels, the Registered Cache Manager, the Verify Package severity scheme, Bulk Scraping scopes and options, the Manage Media dual-pane workbench (Incoming Media browser, safe import workflow, Delete vs Exclude semantics), Extra Notes, security and sanitization, troubleshooting, and a manual test plan.

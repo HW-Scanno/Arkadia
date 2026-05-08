@@ -7489,7 +7489,6 @@ public partial class MainWindow : Window
     private List<LibraryEntry> _filteredCatalogEntries = [];
     private LibraryEntry?      _catalogSelected;
 
-    private bool               _catalogGridMode;
     private Bitmap?            _catalogCoverBitmap;
     private Bitmap?            _catalogPhysicalBitmap;
     private readonly List<CoverItem> _coverItems = [];
@@ -7498,7 +7497,6 @@ public partial class MainWindow : Window
     private int                _extrasIndex;
     private Bitmap?            _extrasBitmap;
     private readonly List<string> _manualPaths = [];
-    private readonly Dictionary<string, Bitmap?> _badgeIconCache = new();
     private Bitmap?            _galleryBitmap;
     private readonly List<GalleryItem> _galleryItems = [];
     private int                _galleryIndex;
@@ -7579,26 +7577,6 @@ public partial class MainWindow : Window
     private void OnCatalogSelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
         => UpdateCatalogHero(CatalogList.SelectedItem as LibraryEntry);
 
-    private void OnCatalogDetailMode(object? sender, RoutedEventArgs e)
-    {
-        _catalogGridMode = false;
-        CatalogList.IsVisible       = true;
-        CatalogGridScroll.IsVisible = false;
-        CatalogDetailBtn.Classes.Add("active");
-        CatalogGridBtn.Classes.Remove("active");
-        RebuildCatalogList(preserveSelection: true);
-    }
-
-    private void OnCatalogGridMode(object? sender, RoutedEventArgs e)
-    {
-        _catalogGridMode = true;
-        CatalogList.IsVisible       = false;
-        CatalogGridScroll.IsVisible = true;
-        CatalogDetailBtn.Classes.Remove("active");
-        CatalogGridBtn.Classes.Add("active");
-        RebuildCatalogList(preserveSelection: false);
-    }
-
     private void ApplyCatalogFilter()
     {
         var search = CatalogSearch.Text?.Trim() ?? string.Empty;
@@ -7625,21 +7603,13 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Stamps CatalogTitle on every filtered entry and re-renders the list or grid.
+    /// Stamps CatalogTitle on every filtered entry and re-renders the list.
     /// When preserveSelection is true, the previously selected entry is re-selected after re-render.
     /// </summary>
     private void RebuildCatalogList(bool preserveSelection)
     {
-        // CatalogTitle is the single source of truth for what the catalog displays in both list and grid.
-        // It is always set here — never derived inline in individual renderers.
         foreach (var e in _filteredCatalogEntries)
             e.CatalogTitle = LibraryTitleResolver.Resolve(e.Name, "catalog", e.Metadata?.Title);
-
-        if (_catalogGridMode)
-        {
-            RebuildCatalogGrid();
-            return;
-        }
 
         var prev = preserveSelection ? CatalogList.SelectedItem as LibraryEntry : null;
         // Force Avalonia to re-render rows by clearing then re-assigning ItemsSource
@@ -7694,68 +7664,8 @@ public partial class MainWindow : Window
 
         if (target is null) return;
 
-        if (_catalogGridMode)
-        {
-            // In grid mode, just select and update hero
-            _catalogSelected = target;
-            UpdateCatalogHero(target);
-        }
-        else
-        {
-            CatalogList.SelectedItem = target;
-            CatalogList.ScrollIntoView(target);
-        }
-    }
-
-    private void RebuildCatalogGrid()
-    {
-        CatalogGridPanel.Children.Clear();
-        foreach (var entry in _filteredCatalogEntries)
-        {
-            var e = entry;
-            var placeholder = new Border
-            {
-                Width           = 120,
-                Height          = 100,
-                Background      = new SolidColorBrush(Color.Parse("#1A1A2A")),
-                CornerRadius    = new Avalonia.CornerRadius(4, 4, 0, 0),
-                Child           = new TextBlock
-                {
-                    Text                = "◻",
-                    FontSize            = 20,
-                    Foreground          = new SolidColorBrush(Color.Parse("#333344")),
-                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-                    VerticalAlignment   = Avalonia.Layout.VerticalAlignment.Center,
-                },
-            };
-            var nameLabel = new TextBlock
-            {
-                Text            = e.CatalogTitle,  // set by RebuildCatalogList before this is called
-                FontSize        = 11,
-                Foreground      = new SolidColorBrush(Color.Parse("#CCCCDD")),
-                TextTrimming    = Avalonia.Media.TextTrimming.CharacterEllipsis,
-                MaxLines        = 2,
-                TextWrapping    = Avalonia.Media.TextWrapping.Wrap,
-                Margin          = new Avalonia.Thickness(6, 4, 6, 6),
-            };
-            var card = new Border
-            {
-                Width           = 120,
-                Margin          = new Avalonia.Thickness(6),
-                Background      = new SolidColorBrush(Color.Parse("#141420")),
-                CornerRadius    = new Avalonia.CornerRadius(6),
-                BorderBrush     = new SolidColorBrush(Color.Parse("#2A2A3C")),
-                BorderThickness = new Avalonia.Thickness(1),
-                Cursor          = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
-                Child           = new StackPanel { Children = { placeholder, nameLabel } },
-            };
-            card.PointerPressed += (_, _) =>
-            {
-                _catalogSelected = e;
-                UpdateCatalogHero(e);
-            };
-            CatalogGridPanel.Children.Add(card);
-        }
+        CatalogList.SelectedItem = target;
+        CatalogList.ScrollIntoView(target);
     }
 
     private void OnCatalogManageMedia(object? sender, RoutedEventArgs e)
@@ -7893,38 +7803,27 @@ public partial class MainWindow : Window
         BuildManuals(entry);
         RefreshManualButtons();
 
-        // Badges — hide rows whose value is unavailable
+        // Metadata details grid
         var badgeRegion = Arkadia.Data.MetadataValueNormalizer.Normalize(
             "region", entry.Region, _metadataMappings);
-        var badgeType   = Arkadia.Data.MetadataValueNormalizer.Normalize(
-            "release_type", entry.Metadata?.ReleaseType ?? "", _metadataMappings);
-        SetBadge(CatalogBadgeStatusBorder,  CatalogBadgeStatusIcon,  CatalogBadgeStatus,  entry.Status,                                                                 "status", entry.Status);
-        SetBadge(CatalogBadgeRegionBorder,  CatalogBadgeRegionIcon,  CatalogBadgeRegion,  badgeRegion.Length > 0 ? badgeRegion : "—",                                   "region", badgeRegion);
-        SetBadge(CatalogBadgeSystemBorder,  CatalogBadgeSystemIcon,  CatalogBadgeSystem,  entry.Platform.Length > 0 ? entry.Platform : entry.HardwareFamilyId,           "system", entry.Platform.Length > 0 ? entry.Platform : entry.HardwareFamilyId);
-        SetBadge(CatalogBadgeYearBorder,    CatalogBadgeYearIcon,    CatalogBadgeYear,    entry.Metadata?.Year is { Length: > 0 } y ? y : "—",                          null,     null);
-        CatalogBadgeGenreBorder.IsVisible   = false;
-        CatalogBadgePlayersBorder.IsVisible = false;
-        SetBadge(CatalogBadgeTypeBorder,    CatalogBadgeTypeIcon,    CatalogBadgeType,    badgeType.Length > 0 ? badgeType : "—",                                        "type",   badgeType);
-        SetBadge(CatalogBadgeSizeBorder,    CatalogBadgeSizeIcon,    CatalogBadgeSize,    entry.Size.Length    > 0 ? entry.Size    : "—",                                    null,     null);
-
-        // Secondary metadata badges
         var sm = entry.Metadata;
-        SetSecondaryBadge(CatalogBadge2GenreBorder,     CatalogBadge2Genre,
-            CatalogHeroHelpers.FormatGenreLabel(sm?.Genre ?? "", sm?.Subgenre ?? ""));
-        SetSecondaryBadge(CatalogBadge2PlayersBorder,   CatalogBadge2Players,
-            sm?.Players   is { Length: > 0 } p  ? $"Players: {p}"  : "");
-        SetSecondaryBadge(CatalogBadge2DeveloperBorder, CatalogBadge2Developer,
-            sm?.Developer is { Length: > 0 } d  ? $"Dev: {d}"      : "");
-        SetSecondaryBadge(CatalogBadge2PublisherBorder, CatalogBadge2Publisher,
-            sm?.Publisher is { Length: > 0 } pb ? $"Pub: {pb}"     : "");
-        SetSecondaryBadge(CatalogBadge2LangBorder,      CatalogBadge2Lang,
-            sm?.Languages is { Length: > 0 } l  ? $"Lang: {l}"     : "");
-        SetSecondaryBadge(CatalogBadge2RatingBorder,    CatalogBadge2Rating,
-            sm?.Rating    is { Length: > 0 } r  ? $"Rating: {r}"   : "");
-        CatalogSecondaryBadgesPanel.IsVisible =
-            CatalogBadge2GenreBorder.IsVisible     || CatalogBadge2PlayersBorder.IsVisible  ||
-            CatalogBadge2DeveloperBorder.IsVisible || CatalogBadge2PublisherBorder.IsVisible ||
-            CatalogBadge2LangBorder.IsVisible      || CatalogBadge2RatingBorder.IsVisible;
+
+        SetMetaField(MetaCell_Status,    MetaVal_Status,    entry.Status);
+        SetMetaField(MetaCell_System,    MetaVal_System,    entry.Platform.Length > 0 ? entry.Platform : entry.HardwareFamilyId);
+        SetMetaField(MetaCell_Year,      MetaVal_Year,      sm?.Year       is { Length: > 0 } y  ? y  : "");
+        SetMetaField(MetaCell_Region,    MetaVal_Region,    badgeRegion);
+        SetMetaField(MetaCell_Genre,     MetaVal_Genre,     CatalogHeroHelpers.FormatGenreValue(sm?.Genre ?? "", sm?.Subgenre ?? ""));
+        SetMetaField(MetaCell_Developer, MetaVal_Developer, sm?.Developer  is { Length: > 0 } d  ? d  : "");
+        SetMetaField(MetaCell_Publisher, MetaVal_Publisher, sm?.Publisher  is { Length: > 0 } pb ? pb : "");
+        SetMetaField(MetaCell_Language,  MetaVal_Language,  sm?.Languages  is { Length: > 0 } l  ? l  : "");
+        SetMetaField(MetaCell_Rating,    MetaVal_Rating,    sm?.Rating     is { Length: > 0 } r  ? r  : "");
+        SetMetaField(MetaCell_Players,   MetaVal_Players,   sm?.Players    is { Length: > 0 } p  ? p  : "");
+
+        CatalogMetadataGrid.IsVisible =
+            MetaCell_Status.IsVisible    || MetaCell_System.IsVisible    || MetaCell_Year.IsVisible  ||
+            MetaCell_Region.IsVisible    || MetaCell_Genre.IsVisible     || MetaCell_Developer.IsVisible ||
+            MetaCell_Publisher.IsVisible || MetaCell_Language.IsVisible  ||
+            MetaCell_Rating.IsVisible    || MetaCell_Players.IsVisible;
 
         // Checklist
         static void SetChk(TextBlock icon, bool present)
@@ -8048,19 +7947,6 @@ public partial class MainWindow : Window
         CatalogPhysicalMediaViewport.Width  = Math.Round(480 * scale);
         CatalogPhysicalMediaViewport.Height = Math.Round(260 * scale);
 
-        double padH = Math.Clamp(Math.Round(22 * scale), 12, 32);
-        double padV = Math.Clamp(Math.Round(12 * scale), 6,  18);
-        var badgePad = new Avalonia.Thickness(padH, padV);
-
-        Border[] badgeBorders =
-        [
-            CatalogBadgeStatusBorder,  CatalogBadgeSystemBorder,
-            CatalogBadgeYearBorder,    CatalogBadgeRegionBorder,
-            CatalogBadgeGenreBorder,   CatalogBadgePlayersBorder,
-            CatalogBadgeTypeBorder,    CatalogBadgeSizeBorder,
-        ];
-        foreach (var b in badgeBorders)
-            b.Padding = badgePad;
     }
 
     private void BuildGallery(LibraryEntry entry)
@@ -8376,47 +8262,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private static string NormalizeBadgeKey(string key)
+    private static void SetMetaField(StackPanel cell, TextBlock valueText, string value)
     {
-        var k = key.ToLowerInvariant().Replace(' ', '-');
-        if (k == "fan-translation") k = "fantranslation";
-        return k;
-    }
-
-    private Bitmap? TryLoadBadgeIcon(string category, string key)
-    {
-        var cacheKey = $"{category}/{key}";
-        if (_badgeIconCache.TryGetValue(cacheKey, out var cached)) return cached;
-        var path = Path.Combine(AppContext.BaseDirectory, "themes", "visual", "default", "badges", category, $"{NormalizeBadgeKey(key)}.png");
-        var bmp = File.Exists(path) ? CoverLoader.TryLoad(path) : null;
-        _badgeIconCache[cacheKey] = bmp;
-        return bmp;
-    }
-
-    private void SetBadge(Avalonia.Controls.Border border, Avalonia.Controls.Image icon,
-                          Avalonia.Controls.TextBlock text, string value,
-                          string? iconCategory = null, string? iconKey = null)
-    {
-        text.Text        = value;
-        border.IsVisible = value != "—";
-        if (border.IsVisible && iconCategory is not null && iconKey is not null)
-        {
-            var bmp = TryLoadBadgeIcon(iconCategory, iconKey);
-            icon.Source    = bmp;
-            icon.IsVisible = bmp is not null;
-        }
-        else
-        {
-            icon.Source    = null;
-            icon.IsVisible = false;
-        }
-    }
-
-    private static void SetSecondaryBadge(
-        Avalonia.Controls.Border border, Avalonia.Controls.TextBlock text, string value)
-    {
-        border.IsVisible = value.Length > 0;
-        text.Text        = value;
+        cell.IsVisible = value.Length > 0;
+        valueText.Text = value;
     }
 
     private void OnCatalogOpenInLibrary(object? sender, RoutedEventArgs e)

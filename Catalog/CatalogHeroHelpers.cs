@@ -17,6 +17,19 @@ internal static class CatalogHeroHelpers
         };
 
     /// <summary>
+    /// Combines genre and subgenre into a plain value string (no label prefix), or returns empty string when both are absent.
+    /// Used for the metadata details grid where the "GENRE" label is rendered separately.
+    /// </summary>
+    internal static string FormatGenreValue(string genre, string subgenre)
+        => (genre, subgenre) switch
+        {
+            ({ Length: > 0 }, { Length: > 0 }) => $"{genre} / {subgenre}",
+            ({ Length: > 0 }, _)               => genre,
+            (_, { Length: > 0 })               => subgenre,
+            _                                  => "",
+        };
+
+    /// <summary>
     /// Returns true when originalTitle is non-empty and meaningfully different from both the
     /// resolved display title and the raw DAT entry name.
     /// </summary>
