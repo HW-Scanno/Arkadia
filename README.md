@@ -265,6 +265,64 @@ The `publish/` directory contains the self-contained executable. Copy `libraries
 
 ---
 
+## Screenshots
+
+### Curated Catalog
+
+![Curated release view with canonical metadata, covers, video, logos, manuals, physical media, and quality checks](docs/assets/catalog-curated-release.png)
+
+*Curated release view with canonical metadata, covers, video, logos, manuals, physical media, and quality checks.*
+
+### Preservation Library
+
+![DAT-backed release inventory with regions, languages, source files, hashes, and preservation status](docs/assets/library-release-inventory.png)
+
+*DAT-backed release inventory with regions, languages, source files, hashes, and preservation status.*
+
+### Provider Workflows
+
+<table>
+<tr>
+<td width="50%">
+
+![MAME DAT generator with driver exploration, family rules, filters, and DAT generation](docs/assets/providers-dat-mame.png)
+
+**MAME DAT Generator** — Prepare versioned MAME data with driver exploration, family rules, filters, and DAT generation.
+
+</td>
+<td width="50%">
+
+![Redump DAT downloader with system DAT acquisition and logs](docs/assets/providers-dat-redump.png)
+
+**Redump DAT Downloader** — Download system DATs from supported preservation sources and track acquisition logs.
+
+</td>
+</tr>
+</table>
+
+### Systems and Storage
+
+<table>
+<tr>
+<td width="50%">
+
+![Systems and DAT import with platform management, hardware details, and progress tracking](docs/assets/systems-dat-import.png)
+
+**Systems and DAT Import** — Manage platforms, inspect hardware details, and import DAT lines with progress tracking.
+
+</td>
+<td width="50%">
+
+![Disk storage management with capacity, filesystem, usage, and volume assignment details](docs/assets/disks-storage-management.png)
+
+**Disks** — Register and monitor archive disks with capacity, filesystem, usage, and volume assignment details.
+
+</td>
+</tr>
+</table>
+
+---
+
 ## Documentation
 
 - [User Manual](docs/USER_MANUAL.md)
