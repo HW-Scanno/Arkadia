@@ -87,10 +87,6 @@
               "target": "Package",
               "version": "[11.3.7.3, )"
             },
-            "SharpCompress": {
-              "target": "Package",
-              "version": "[0.38.0, )"
-            },
             "SkiaSharp": {
               "target": "Package",
               "version": "[2.88.9, )"

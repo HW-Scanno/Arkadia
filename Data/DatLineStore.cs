@@ -341,6 +341,50 @@ public sealed class DatLineStore
         return list;
     }
 
+    public List<ReleaseRecord> LoadReleasesByDatLine(string datLineId)
+    {
+        var list = new List<ReleaseRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT r.id, r.dat_line_id, r.name, r.status,
+                   COALESCE(
+                       NULLIF(r.tier, ''),
+                       (SELECT da.archive_tier
+                        FROM release_content_links rcl
+                        JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                        WHERE rcl.release_id = r.id
+                        LIMIT 1),
+                       ''
+                   ) AS effective_tier,
+                   r.region, r.languages, r.format, r.size, r.release_content_key, r.introduced_at_utc,
+                   r.content_category_id
+            FROM releases r
+            WHERE r.dat_line_id = $datLineId
+            ORDER BY r.name
+            """;
+        cmd.Parameters.AddWithValue("$datLineId", datLineId);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            list.Add(new ReleaseRecord
+            {
+                Id                = reader.GetString(0),
+                DatLineId         = reader.GetString(1),
+                Name              = reader.GetString(2),
+                Status            = reader.GetString(3),
+                Tier              = reader.IsDBNull(4)  ? "" : reader.GetString(4),
+                Region            = reader.IsDBNull(5)  ? "" : reader.GetString(5),
+                Languages         = reader.IsDBNull(6)  ? "" : reader.GetString(6),
+                Format            = reader.IsDBNull(7)  ? "" : reader.GetString(7),
+                Size              = reader.IsDBNull(8)  ? "" : reader.GetString(8),
+                ReleaseContentKey = reader.IsDBNull(9)  ? "" : reader.GetString(9),
+                IntroducedAtUtc   = reader.IsDBNull(10) ? null
+                    : DateTime.Parse(reader.GetString(10)),
+                ContentCategoryId = reader.IsDBNull(11) ? "games" : reader.GetString(11),
+            });
+        return list;
+    }
+
     // ── Release Content Links ─────────────────────────────────────────────────
 
     /// <summary>

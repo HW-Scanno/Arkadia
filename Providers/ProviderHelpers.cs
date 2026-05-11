@@ -1,5 +1,7 @@
 using System;
+using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Net.Http;
 using System.Text;
 using System.Threading.Tasks;
@@ -116,19 +118,15 @@ internal static class ProviderHelpers
 
     internal static string ExtractDatFromZip(string zipPath, string outputDir)
     {
-        using var archive = SharpCompress.Archives.ArchiveFactory.Open(zipPath);
+        using var archive = ZipFile.OpenRead(zipPath);
 
         foreach (var entry in archive.Entries)
         {
-            if (entry.IsDirectory) continue;
+            if (!entry.Name.EndsWith(".dat", StringComparison.OrdinalIgnoreCase)) continue;
 
-            var fileName = Path.GetFileName(entry.Key ?? "");
-            if (!fileName.EndsWith(".dat", StringComparison.OrdinalIgnoreCase))
-                continue;
+            var destPath = UniqueFilePath(outputDir, entry.Name);
 
-            var destPath = UniqueFilePath(outputDir, fileName);
-
-            using var src  = entry.OpenEntryStream();
+            using var src  = entry.Open();
             using var dest = File.Create(destPath);
             src.CopyTo(dest);
 
@@ -142,34 +140,68 @@ internal static class ProviderHelpers
         string archivePath, string outputDir)
     {
         int extracted = 0, skipped = 0;
+        var fullDestRoot = Path.GetFullPath(outputDir)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
 
-        using var archive = SharpCompress.Archives.ArchiveFactory.Open(archivePath);
+        using var archive = ZipFile.OpenRead(archivePath);
 
         foreach (var entry in archive.Entries)
         {
-            if (entry.IsDirectory) continue;
+            if (string.IsNullOrEmpty(entry.Name)) continue;  // directory entry
 
-            var key      = entry.Key ?? "";
-            var fileName = Path.GetFileName(key);
-            if (string.IsNullOrEmpty(fileName)) continue;
+            var relNorm  = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+            var destPath = Path.GetFullPath(Path.Combine(outputDir, relNorm));
+            if (!destPath.StartsWith(fullDestRoot, StringComparison.OrdinalIgnoreCase)) continue;
 
-            var subDir  = Path.GetDirectoryName(key) ?? "";
-            var destDir = string.IsNullOrEmpty(subDir)
-                ? outputDir
-                : Path.Combine(outputDir, subDir);
+            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
 
-            Directory.CreateDirectory(destDir);
-
-            var destPath = Path.Combine(destDir, fileName);
             if (File.Exists(destPath)) { skipped++; continue; }
 
-            using var src  = entry.OpenEntryStream();
+            using var src  = entry.Open();
             using var dest = File.Create(destPath);
             src.CopyTo(dest);
             extracted++;
         }
 
         return (extracted, skipped);
+    }
+
+    internal static string? Find7zip()
+    {
+        var bundled = Path.Combine(AppContext.BaseDirectory, "tools", "7zip", "7zip.exe");
+        return File.Exists(bundled) ? bundled : null;
+    }
+
+    internal static void ExtractWith7zip(string sevenZipPath, string archivePath, string outputDir)
+    {
+        var psi = new ProcessStartInfo(sevenZipPath)
+        {
+            UseShellExecute        = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError  = true,
+            CreateNoWindow         = true,
+        };
+        psi.ArgumentList.Add("x");
+        psi.ArgumentList.Add(archivePath);
+        psi.ArgumentList.Add($"-o{outputDir}");
+        psi.ArgumentList.Add("-y");
+        psi.ArgumentList.Add("-bso0");
+        psi.ArgumentList.Add("-bsp0");
+
+        using var proc = Process.Start(psi)
+            ?? throw new InvalidOperationException("Failed to start 7zip process.");
+
+        var stderr = proc.StandardError.ReadToEnd();
+        proc.WaitForExit();
+
+        if (proc.ExitCode != 0)
+        {
+            var detail = stderr.Trim() is { Length: > 0 } s
+                ? s[..Math.Min(300, s.Length)]
+                : $"exit code {proc.ExitCode}";
+            throw new InvalidOperationException($"7zip extraction failed: {detail}");
+        }
     }
 
     internal static void AppendLog(

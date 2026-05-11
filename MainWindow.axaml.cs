@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Threading.Tasks;
 using System.Linq;
 using System.Security.Cryptography;
@@ -43,7 +44,9 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<MappingRowVm> _mappingRows = [];
     private readonly Arkadia.Providers.ScreenScraperImportService _scrapeImport = new(_dataDir);
     private Arkadia.Providers.ScreenScraperCacheImportService? _cacheImport;
+    private Arkadia.Providers.AmpLocalPackageImportService?   _ampImport;
     private bool _showDebugArtifactInfo;
+    private bool _arkBusy;
 
     public MainWindow()
     {
@@ -58,7 +61,7 @@ public partial class MainWindow : Window
             NavProviders, NavSystems, NavOperations,
             NavLibrary, NavCatalog, NavStaging, NavPending,
             NavVolumes, NavDisks,
-            NavLogs, NavSettings,
+            NavLogs, NavBackups, NavSettings,
         ]);
 
         _views = new()
@@ -75,6 +78,7 @@ public partial class MainWindow : Window
             [NavAnalytics]  = ViewAnalytics,
             [NavProviders]  = ViewProviders,
             [NavLogs]       = ViewLogs,
+            [NavBackups]    = ViewBackups,
             [NavSettings]   = ViewSettings,
         };
 
@@ -1066,17 +1070,31 @@ public partial class MainWindow : Window
     {
         ProvidersTabRomDats.Classes.Set("active", true);
         ProvidersTabRomScrapers.Classes.Set("active", false);
-        ProvidersRomDatsPanel.IsVisible    = true;
+        ProvidersTabMediaPacks.Classes.Set("active", false);
+        ProvidersRomDatsPanel.IsVisible     = true;
         ProvidersRomScrapersPanel.IsVisible = false;
+        ProvidersAmpPanel.IsVisible         = false;
     }
 
     private void OnProviderCategoryRomScrapers(object? sender, RoutedEventArgs e)
     {
         ProvidersTabRomDats.Classes.Set("active", false);
         ProvidersTabRomScrapers.Classes.Set("active", true);
+        ProvidersTabMediaPacks.Classes.Set("active", false);
         ProvidersRomDatsPanel.IsVisible     = false;
         ProvidersRomScrapersPanel.IsVisible = true;
+        ProvidersAmpPanel.IsVisible         = false;
         LoadScraperSettings();
+    }
+
+    private void OnProviderCategoryMediaPacks(object? sender, RoutedEventArgs e)
+    {
+        ProvidersTabRomDats.Classes.Set("active", false);
+        ProvidersTabRomScrapers.Classes.Set("active", false);
+        ProvidersTabMediaPacks.Classes.Set("active", true);
+        ProvidersRomDatsPanel.IsVisible     = false;
+        ProvidersRomScrapersPanel.IsVisible = false;
+        ProvidersAmpPanel.IsVisible         = true;
     }
 
     private void LoadScraperSettings()
@@ -7686,6 +7704,42 @@ public partial class MainWindow : Window
         dialog.ShowDialog(this);
     }
 
+    private async void OnCatalogExportAmp(object? sender, RoutedEventArgs e)
+    {
+        string hardwareFamilyId, datLineId;
+
+        if (_catalogDatasetEntries.Count > 0)
+        {
+            var first        = _catalogDatasetEntries[0];
+            hardwareFamilyId = first.HardwareFamilyId;
+            datLineId        = first.DatLineId;
+        }
+        else
+        {
+            var datLineName = CatalogContextDatLine.SelectedItem as string;
+            if (datLineName is null) return;
+            var dl = _catalog.LoadDatLines()
+                .Find(d => d.Name == datLineName);
+            if (dl is null) return;
+            hardwareFamilyId = dl.HardwareFamilyId;
+            datLineId        = dl.Id;
+        }
+
+        CatalogExportAmpBtn.IsEnabled = false;
+        try
+        {
+            var svc  = new AmpExportPlanService(_dataDir, _catalog);
+            var plan = await System.Threading.Tasks.Task.Run(() =>
+                svc.PlanExport(hardwareFamilyId, datLineId));
+            var dialog = new AmpExportReportDialog(plan);
+            await dialog.ShowDialog(this);
+        }
+        finally
+        {
+            CatalogExportAmpBtn.IsEnabled = true;
+        }
+    }
+
     private async void OnCatalogEditExtraNotes(object? sender, RoutedEventArgs e)
     {
         if (_catalogSelected is null) return;
@@ -8360,6 +8414,10 @@ public partial class MainWindow : Window
 
         // ── Provider selection ───────────────────────────────────────────────
         var hasCachePackages = _catalog.HasUsableCachePackages();
+        var registry    = new AmpLocalRegistryService(_dataDir);
+        var ampPackages = registry.ListPackagesForScope(
+            entry.HardwareFamilyId,
+            entry.DatLineId);
         var providerDialog = new ScraperProviderDialog(
         [
             new ScraperProviderInfo(
@@ -8369,6 +8427,10 @@ public partial class MainWindow : Window
                 ArkadiaProviders.ScreenScraperCache, ArkadiaProviders.ScreenScraperCacheDisplayName,
                 hasCachePackages,
                 UnavailableText: hasCachePackages ? "Available" : "Needs build"),
+            new ScraperProviderInfo(
+                ArkadiaProviders.ArkadiaMediaPack, ArkadiaProviders.ArkadiaMediaPackDisplayName,
+                ampPackages.Count > 0,
+                UnavailableText: "No local packages for this system"),
         ]);
         var selectedProvider = await providerDialog.ShowDialog<string?>(this);
         if (selectedProvider is null) return;
@@ -8425,6 +8487,95 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 SetScrapeStatus($"Cache import failed: {ex.Message}", "#EF5350");
+            }
+            finally
+            {
+                CatalogScrapeBtn.IsEnabled = true;
+            }
+            return;
+        }
+
+        // ── Arkadia Media Pack path ──────────────────────────────────────────
+        if (selectedProvider == ArkadiaProviders.ArkadiaMediaPack)
+        {
+            var picker = new AmpPickerDialog(ampPackages);
+            var picked = await picker.ShowDialog<AmpLocalPackageInfo?>(this);
+            if (picked is null) return;
+
+            SetScrapeStatus("Verifying AMP package…", "#888899");
+            var verified = await Task.Run(() => registry.VerifyPackage(picked.FilePath));
+            if (verified.HasErrors)
+            {
+                await new InfoDialog(
+                    "Cannot Import",
+                    $"Package failed verification: {verified.Status}")
+                    .ShowDialog(this);
+                return;
+            }
+
+            if (verified.HasWarnings)
+                SetScrapeStatus("Package has warnings. Proceeding…", "#E0A040");
+
+            var ampReader = new AmpPackageReaderService();
+            if (!ampReader.TryReadReleases(verified.FilePath, out var releases))
+            {
+                SetScrapeStatus("Failed to read AMP package releases.", "#EF5350");
+                return;
+            }
+
+            var matchResult = AmpReleaseMatcher.FindRelease(
+                releases, entry.ReleaseId, entry.Name);
+
+            if (matchResult.Kind == AmpReleaseMatchKind.None || matchResult.Release is null)
+            {
+                SetScrapeStatus(
+                    $"No matching release found in package for '{entry.Name}'.",
+                    "#FFD54F");
+                return;
+            }
+
+            CatalogScrapeBtn.IsEnabled = false;
+            try
+            {
+                _ampImport ??= new AmpLocalPackageImportService(_dataDir);
+                var importProgress = new Progress<string>(msg => SetScrapeStatus(msg, "#888899"));
+                var ampSummary = await _ampImport.ImportAsync(
+                    entry,
+                    verified.FilePath,
+                    matchResult.Release,
+                    _metadataMappings,
+                    matchKind: matchResult.Kind,
+                    progress: importProgress);
+
+                SetScrapeStatus("Review metadata…", "#888899");
+                var mergeDialog = new MergeMetadataDialog(
+                    entry, ArkadiaProviders.ArkadiaMediaPack);
+                var mergeResult = await mergeDialog.ShowDialog<MergeMetadataResult?>(this);
+                if (mergeResult is not null)
+                    entry.Metadata = mergeResult.Metadata;
+
+                RebuildCatalogList(preserveSelection: true);
+                UpdateCatalogHero(entry);
+
+                var metaMsg = mergeResult is not null
+                    ? "metadata applied"
+                    : !ampSummary.ProposalsSaved
+                        ? "metadata skipped: no fields extracted"
+                        : "metadata skipped";
+                var mediaMsg = ampSummary.MediaFilesExtracted > 0
+                    ? $" + {ampSummary.MediaFilesExtracted} media file{(ampSummary.MediaFilesExtracted == 1 ? "" : "s")}"
+                    : "";
+                SetScrapeStatus(
+                    $"AMP import — {metaMsg}{mediaMsg}.",
+                    mergeResult is not null ? "#4CAF50" : "#888899");
+            }
+            catch (OperationCanceledException)
+            {
+                SetScrapeStatus("AMP import cancelled.", "#888899");
+            }
+            catch (Exception ex)
+            {
+                SetScrapeStatus($"AMP import failed: {ex.Message}", "#EF5350");
             }
             finally
             {
@@ -9713,7 +9864,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Pre-ingest: extract .zip and .7z archives found recursively under <paramref name="incomingDir"/>.
+    /// Pre-ingest: extract .zip, .7z, and .rar archives found recursively under <paramref name="incomingDir"/>.
+    /// ZIP archives are handled natively. .7z and .rar require tools\7zip\7zip.exe.
     /// Extraction target is a sibling folder named after the archive without its final extension.
     /// Deletes the archive only on full extraction success.
     /// Skips archives where free space is insufficient.
@@ -9756,22 +9908,41 @@ public partial class MainWindow : Window
 
             var folderName = Path.GetFileName(destFolder);
 
-            // Check decompressed size and free space
-            long decompressedSize = 0;
-            try
+            var archiveExt = Path.GetExtension(archivePath).ToLowerInvariant();
+            var isZip      = archiveExt == ".zip";
+
+            // For non-ZIP archives, resolve the bundled 7zip before doing anything else
+            string? sevenZipPath = null;
+            if (!isZip)
             {
-                using var af = SharpCompress.Archives.ArchiveFactory.Open(archivePath);
-                decompressedSize = af.Entries
-                    .Where(e => !e.IsDirectory)
-                    .Sum(e => e.Size);
+                sevenZipPath = ProviderHelpers.Find7zip();
+                if (sevenZipPath is null)
+                {
+                    var skipOp = new IngestionOperation(archiveName, "extract-skipped",
+                        "7zip not found — place tools\\7zip\\7zip.exe to enable .7z and .rar extraction.");
+                    result.Operations.Add(skipOp);
+                    progress.Report(new IngestionProgress { NewOperation = skipOp });
+                    continue;
+                }
             }
-            catch (Exception ex)
+
+            // Check decompressed size and free space (ZIP only; 7z/rar skip this check)
+            long decompressedSize = 0;
+            if (isZip)
             {
-                var failOp = new IngestionOperation(archiveName, "extract-failed",
-                    $"could not read archive: {ex.Message}");
-                result.Operations.Add(failOp);
-                progress.Report(new IngestionProgress { NewOperation = failOp });
-                continue;
+                try
+                {
+                    using var za = ZipFile.OpenRead(archivePath);
+                    decompressedSize = za.Entries.Sum(e => e.Length);
+                }
+                catch (Exception ex)
+                {
+                    var failOp = new IngestionOperation(archiveName, "extract-failed",
+                        $"could not read archive: {ex.Message}");
+                    result.Operations.Add(failOp);
+                    progress.Report(new IngestionProgress { NewOperation = failOp });
+                    continue;
+                }
             }
 
             try
@@ -9795,29 +9966,33 @@ public partial class MainWindow : Window
                 Directory.CreateDirectory(destFolder);
                 var fullDestRoot = Path.GetFullPath(destFolder) + Path.DirectorySeparatorChar;
 
-                // Explicit using-block so fileStream and reader are fully disposed
-                // before File.Delete runs. 'using var' would defer disposal to end
-                // of the try-block, keeping the handle open during the delete call.
-                using (var fileStream = File.OpenRead(archivePath))
-                using (var reader = SharpCompress.Readers.ReaderFactory.Open(fileStream))
+                if (isZip)
                 {
-                    while (reader.MoveToNextEntry())
+                    // Explicit using-block so za is fully disposed before File.Delete runs.
+                    // 'using var' would defer disposal to end of the try-block, keeping
+                    // the handle open during the delete call.
+                    using (var za = ZipFile.OpenRead(archivePath))
                     {
-                        if (reader.Entry.IsDirectory) continue;
-                        var key      = reader.Entry.Key ?? "";
-                        var relPath  = key.Replace('\\', Path.DirectorySeparatorChar)
-                                          .Replace('/',  Path.DirectorySeparatorChar)
-                                          .TrimStart(Path.DirectorySeparatorChar);
-                        var fullPath = Path.GetFullPath(Path.Combine(destFolder, relPath));
-                        // path traversal guard
-                        if (!fullPath.StartsWith(fullDestRoot, StringComparison.OrdinalIgnoreCase))
-                            continue;
-                        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                        using var outStream   = new FileStream(fullPath, FileMode.Create, FileAccess.Write);
-                        using var entryStream = reader.OpenEntryStream();
-                        entryStream.CopyTo(outStream);
-                    }
-                } // fileStream and reader disposed here — archive handle fully closed
+                        foreach (var entry in za.Entries)
+                        {
+                            if (string.IsNullOrEmpty(entry.Name)) continue;  // directory entry
+                            var relPath  = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+                            var fullPath = Path.GetFullPath(Path.Combine(destFolder, relPath));
+                            // path traversal guard
+                            if (!fullPath.StartsWith(fullDestRoot, StringComparison.OrdinalIgnoreCase))
+                                continue;
+                            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+                            using var outStream   = new FileStream(fullPath, FileMode.Create, FileAccess.Write);
+                            using var entryStream = entry.Open();
+                            entryStream.CopyTo(outStream);
+                        }
+                    } // za disposed here — archive handle fully closed
+                }
+                else
+                {
+                    // 7zip handles path safety internally; sevenZipPath is non-null (checked above)
+                    ProviderHelpers.ExtractWith7zip(sevenZipPath!, archivePath, destFolder);
+                }
 
                 var okOp = new IngestionOperation(archiveName, "extract-ok", folderName);
                 result.Operations.Add(okOp);
@@ -10487,6 +10662,27 @@ public partial class MainWindow : Window
     {
         var dialog = new ScreenScraperStagingManagerDialog(AppContext.BaseDirectory);
         await dialog.ShowDialog(this);
+    }
+
+    private async void OnManageAmpLocalPacks(object? sender, RoutedEventArgs e)
+    {
+        var dialog = new AmpLocalPackagesDialog(_dataDir);
+        await dialog.ShowDialog(this);
+    }
+
+    private void OnProvidersAmpOpenFolder(object? sender, RoutedEventArgs e)
+    {
+        var registry = new AmpLocalRegistryService(_dataDir);
+        registry.EnsureFolder();
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName        = registry.RegistryFolder,
+                UseShellExecute = true,
+            });
+        }
+        catch { }
     }
 
     private void OnSaveSettings(object? sender, RoutedEventArgs e)
@@ -11579,6 +11775,9 @@ public partial class MainWindow : Window
 
         if (btn == NavLogs)
             BuildLogsTree();
+
+        if (btn == NavBackups)
+            InitBackups();
     }
 
     // ── Analytics ─────────────────────────────────────────────────────────────
@@ -12845,6 +13044,141 @@ public partial class MainWindow : Window
         sb.Append(AnalyticsHtmlFooter());
         return sb.ToString();
     }
+
+    // ── ARK Backups ────────────────────────────────────────────────────────────
+
+    private void SetArkBusy(bool busy)
+    {
+        _arkBusy = busy;
+        ArkCreateBackupBtn.IsEnabled    = !busy;
+        ArkRefreshBackupsBtn.IsEnabled  = !busy;
+        ArkBackupsList.IsEnabled        = !busy;
+        ArkRestoreSelectedBtn.IsEnabled = !busy && ArkBackupsList.SelectedItem is not null;
+    }
+
+    private void AppendBackupLog(string line)
+    {
+        BackupLogText.Text = string.IsNullOrEmpty(BackupLogText.Text)
+            ? line
+            : BackupLogText.Text + "\n" + line;
+    }
+
+    private void RefreshArkBackupsList()
+    {
+        var folder = ArkUiHelpers.BackupsFolder(AppContext.BaseDirectory);
+        var items = new List<ArkBackupItem>();
+        if (Directory.Exists(folder))
+        {
+            foreach (var f in Directory.GetFiles(folder, "*.ark")
+                                       .OrderByDescending(x => File.GetLastWriteTime(x)))
+            {
+                var info   = new FileInfo(f);
+                var detail = $"{info.LastWriteTime:yyyy-MM-dd HH:mm}  ·  {AmpReportHelpers.FormatBytes(info.Length)}";
+                items.Add(new ArkBackupItem(info.Name, detail, f));
+            }
+        }
+        ArkBackupsList.ItemsSource        = items;
+        ArkBackupsEmptyText.IsVisible     = items.Count == 0;
+        ArkRestoreSelectedBtn.IsEnabled   = false;
+    }
+
+    private void InitBackups()
+    {
+        RefreshArkBackupsList();
+    }
+
+    private async void OnArkCreateBackup(object? sender, RoutedEventArgs e)
+    {
+        if (_arkBusy) return;
+
+        var backupsFolder = ArkUiHelpers.BackupsFolder(AppContext.BaseDirectory);
+        var outputPath    = Path.Combine(backupsFolder, ArkUiHelpers.SuggestedArkFileName());
+
+        SetArkBusy(true);
+        BackupLogText.Text = string.Empty;
+        AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Planning backup…");
+
+        try
+        {
+            var options = new ArkExportOptions(
+                IncludeMedia:       false,
+                IncludeSettings:    true,
+                IncludeAmpRegistry: true);
+
+            var planService = new ArkExportPlanService(_dataDir, _catalog);
+            var plan        = planService.PlanExport(options);
+
+            if (plan.Issues.Count > 0)
+                foreach (var issue in plan.Issues)
+                    AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Issue: {issue}");
+
+            AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Writing {plan.DatLineCount} DAT line(s)…");
+
+            var writer = new ArkWriterService(_dataDir, _catalog);
+            var result = await Task.Run(() => writer.Write(options, outputPath));
+
+            if (result.Success)
+            {
+                AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Size: {AmpReportHelpers.FormatBytes(result.PackageBytes)}");
+                foreach (var issue in result.Issues)
+                    AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Note: {issue}");
+
+                AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Verifying package…");
+                var verifier        = new ArkPackageVerifierService();
+                var verifyResult    = await Task.Run(() => verifier.Verify(result.OutputPath));
+                var hasErrors       = verifyResult.Issues.Any(i => i.Severity == ArkPackageVerificationSeverity.Error);
+                if (hasErrors)
+                {
+                    foreach (var vi in verifyResult.Issues)
+                        AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Verify {vi.Severity}: {vi.Message}");
+                    AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] WARNING: package verification reported errors.");
+                }
+                else
+                {
+                    AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Package verified OK.");
+                    AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] BACKUP COMPLETE — {Path.GetFileName(result.OutputPath)}");
+                }
+                RefreshArkBackupsList();
+            }
+            else
+            {
+                AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Backup failed.");
+                foreach (var issue in result.Issues)
+                    AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Error: {issue}");
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            AppendBackupLog($"[{DateTime.Now:HH:mm:ss}] Exception: {ex.Message}");
+        }
+        finally
+        {
+            SetArkBusy(false);
+        }
+    }
+
+    private async void OnArkRestoreSelected(object? sender, RoutedEventArgs e)
+    {
+        if (_arkBusy) return;
+        if (ArkBackupsList.SelectedItem is not ArkBackupItem item) return;
+
+        await new InfoDialog(
+            "Restore Not Available",
+            "Restore to the live data directory is not supported while Arkadia is running.\n\n" +
+            "To restore, close Arkadia and use the restore tool, or extract the .ark package manually.\n\n" +
+            "The selected backup is located at:\n" + item.FullPath)
+            .ShowDialog(this);
+    }
+
+    private void OnArkBackupsSelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
+    {
+        ArkRestoreSelectedBtn.IsEnabled = !_arkBusy && ArkBackupsList.SelectedItem is not null;
+    }
+
+    private void OnArkRefreshBackups(object? sender, RoutedEventArgs e)
+    {
+        RefreshArkBackupsList();
+    }
 }
 
 /// <summary>View-model row for the metadata value mappings settings table.</summary>
@@ -12876,3 +13210,6 @@ public sealed class MappingRowVm : INotifyPropertyChanged
         _enabled    = r.Enabled;
     }
 }
+
+// ── ARK Backup item view model ────────────────────────────────────────────────
+file sealed record ArkBackupItem(string FileName, string Detail, string FullPath);

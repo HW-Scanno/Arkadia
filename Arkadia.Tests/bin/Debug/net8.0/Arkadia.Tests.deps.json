@@ -680,17 +680,6 @@
           }
         }
       },
-      "SharpCompress/0.38.0": {
-        "dependencies": {
-          "ZstdSharp.Port": "0.8.1"
-        },
-        "runtime": {
-          "lib/net8.0/SharpCompress.dll": {
-            "assemblyVersion": "0.38.0.0",
-            "fileVersion": "0.38.0.0"
-          }
-        }
-      },
       "SkiaSharp/2.88.9": {
         "dependencies": {
           "SkiaSharp.NativeAssets.Win32": "2.88.9",
@@ -1102,14 +1091,6 @@
         }
       },
       "xunit.runner.visualstudio/2.8.2": {},
-      "ZstdSharp.Port/0.8.1": {
-        "runtime": {
-          "lib/net8.0/ZstdSharp.dll": {
-            "assemblyVersion": "0.8.1.0",
-            "fileVersion": "0.8.1.0"
-          }
-        }
-      },
       "Arkadia/1.0.0": {
         "dependencies": {
           "Avalonia": "11.3.12",
@@ -1121,7 +1102,6 @@
           "LibVLCSharp.Avalonia": "3.9.0",
           "Microsoft.Data.Sqlite": "8.0.14",
           "Semi.Avalonia": "11.3.7.3",
-          "SharpCompress": "0.38.0",
           "SkiaSharp": "2.88.9",
           "SkiaSharp.NativeAssets.Win32": "2.88.9",
           "System.Management": "8.0.0",
@@ -1379,13 +1359,6 @@
       "sha512": "sha512-mbxPDsXYI9GRoBdQBRbzdgntSNzcAZV5ybXS4wyUFbM9bokpSHuicg6USKLTVUgK6ItziGl12PmiLT0XTeFuNQ==",
       "path": "semi.avalonia/11.3.7.3",
       "hashPath": "semi.avalonia.11.3.7.3.nupkg.sha512"
-    },
-    "SharpCompress/0.38.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-8i6KqjAFI3mvya8W8rnQrf5h4vz6ilw4zqk2AzInVqqqZ25TD6fmVeYBnlisjTWwP26eltZc0buSmJ8a3YIGxg==",
-      "path": "sharpcompress/0.38.0",
-      "hashPath": "sharpcompress.0.38.0.nupkg.sha512"
     },
     "SkiaSharp/2.88.9": {
       "type": "package",
@@ -1645,13 +1618,6 @@
       "sha512": "sha512-vm1tbfXhFmjFMUmS4M0J0ASXz3/U5XvXBa6DOQUL3fEz4Vt6YPhv+ESCarx6M6D+9kJkJYZKCNvJMas1+nVfmQ==",
       "path": "xunit.runner.visualstudio/2.8.2",
       "hashPath": "xunit.runner.visualstudio.2.8.2.nupkg.sha512"
-    },
-    "ZstdSharp.Port/0.8.1": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-19tNz33kn2EkyViFXuxfVn338UJaRmkwBphVqP2dVJIYQUQgFrgG5h061mxkRRg1Ax6r+6WOj1FxaFZ5qaWqqg==",
-      "path": "zstdsharp.port/0.8.1",
-      "hashPath": "zstdsharp.port.0.8.1.nupkg.sha512"
     },
     "Arkadia/1.0.0": {
       "type": "project",

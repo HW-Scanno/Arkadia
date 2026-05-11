@@ -1,0 +1,225 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.AmpLocalPackagesDialog"
+        Title="Arkadia Media Packs"
+        Width="820"
+        Height="660"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"      Value="#1A1A2C"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="Button.secondary:disabled">
+            <Setter Property="Opacity" Value="0.5"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding"         Value="16,10"/>
+            <Setter Property="BorderBrush"     Value="#1A1A28"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="Background"      Value="Transparent"/>
+        </Style>
+        <Style Selector="TextBlock.key">
+            <Setter Property="FontSize"   Value="11"/>
+            <Setter Property="Foreground" Value="#666680"/>
+        </Style>
+        <Style Selector="TextBlock.val">
+            <Setter Property="FontSize"   Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#CCCCDD"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto,Auto">
+
+        <!-- ── Header ───────────────────────────────────────────────────────── -->
+        <StackPanel Grid.Row="0" Margin="20,18,20,14" Spacing="4">
+            <TextBlock Text="Arkadia Media Packs"
+                       FontSize="15" FontWeight="SemiBold" Foreground="#EEEEFF"/>
+            <TextBlock Text="Local .amp packages from scrape-cache/arkadia-media-packs/."
+                       FontSize="11" Foreground="#555577"/>
+        </StackPanel>
+
+        <!-- ── Body: list + detail ──────────────────────────────────────────── -->
+        <Grid Grid.Row="1" RowDefinitions="*,Auto" Margin="20,0,20,0">
+
+            <!-- Package list -->
+            <Border Grid.Row="0"
+                    Background="#0A0A12" BorderBrush="#1E1E2C"
+                    BorderThickness="1" CornerRadius="6">
+                <StackPanel>
+                    <ListBox x:Name="PackageList"
+                             SelectionMode="Single"
+                             SelectionChanged="OnPackageSelectionChanged"
+                             Background="Transparent"
+                             Padding="0">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate x:CompileBindings="False">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <StackPanel Grid.Column="0" Spacing="4">
+                                        <TextBlock Text="{Binding FileName}"
+                                                   FontSize="12" FontWeight="SemiBold"
+                                                   Foreground="#EEEEFF"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock FontSize="11" Foreground="#666680">
+                                            <Run Text="{Binding SystemName}"/>
+                                            <Run Text=" · "/>
+                                            <Run Text="{Binding DatLineId}"/>
+                                            <Run Text=" · "/>
+                                            <Run Text="{Binding ReleaseCountText}"/>
+                                            <Run Text=" releases · "/>
+                                            <Run Text="{Binding MediaFileCountText}"/>
+                                            <Run Text=" media · "/>
+                                            <Run Text="{Binding SizeFormatted}"/>
+                                            <Run Text=" · "/>
+                                            <Run Text="{Binding ModifiedShort}"/>
+                                        </TextBlock>
+                                    </StackPanel>
+                                    <Border Grid.Column="1"
+                                            VerticalAlignment="Center"
+                                            Margin="12,0,0,0"
+                                            CornerRadius="4" Padding="7,3"
+                                            Background="{Binding StatusBackground}">
+                                        <TextBlock Text="{Binding StatusLabel}"
+                                                   FontSize="10" FontWeight="SemiBold"
+                                                   LetterSpacing="0.5"
+                                                   Foreground="{Binding StatusForeground}"/>
+                                    </Border>
+                                </Grid>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                    <TextBlock x:Name="EmptyPackagesMsg"
+                               IsVisible="False"
+                               Text="No local Arkadia Media Packs found."
+                               FontSize="11" Foreground="#444455"
+                               HorizontalAlignment="Center"
+                               Margin="20,18,20,18"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Detail panel -->
+            <Border Grid.Row="1" Margin="0,8,0,0"
+                    Background="#0A0A12" BorderBrush="#1E1E2C"
+                    BorderThickness="1" CornerRadius="6" Padding="16,12">
+                <Grid>
+
+                    <!-- Placeholder shown when no package is selected -->
+                    <TextBlock x:Name="DetailPlaceholder"
+                               Text="Select a package to see details."
+                               FontSize="11" Foreground="#444455"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Margin="0,8,0,8"/>
+
+                    <!-- Detail fields shown when a package is selected -->
+                    <Grid x:Name="DetailPanel"
+                          IsVisible="False"
+                          ColumnDefinitions="140,*,140,*"
+                          RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="key" Text="File path"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3"
+                                   x:Name="DetailFilePath" Classes="val"
+                                   TextTrimming="CharacterEllipsis"/>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="key" Margin="0,5,0,0" Text="SHA-256"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"
+                                   x:Name="DetailSha256" Classes="val" Margin="0,5,0,0"
+                                   FontFamily="Consolas,Courier New,monospace" FontSize="10"
+                                   TextTrimming="CharacterEllipsis"/>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="key" Margin="0,5,0,0" Text="Format"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="DetailFormat" Classes="val" Margin="0,5,0,0"/>
+                        <TextBlock Grid.Row="2" Grid.Column="2" Classes="key" Margin="0,5,0,0" Text="System"/>
+                        <TextBlock Grid.Row="2" Grid.Column="3" x:Name="DetailSystem" Classes="val" Margin="0,5,0,0"
+                                   TextTrimming="CharacterEllipsis"/>
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" Classes="key" Margin="0,5,0,0" Text="DAT line"/>
+                        <TextBlock Grid.Row="3" Grid.Column="1" x:Name="DetailDatLine" Classes="val" Margin="0,5,0,0"/>
+                        <TextBlock Grid.Row="3" Grid.Column="2" Classes="key" Margin="0,5,0,0" Text="Releases"/>
+                        <TextBlock Grid.Row="3" Grid.Column="3" x:Name="DetailReleases" Classes="val" Margin="0,5,0,0"/>
+
+                        <TextBlock Grid.Row="4" Grid.Column="0" Classes="key" Margin="0,5,0,0" Text="Media files"/>
+                        <TextBlock Grid.Row="4" Grid.Column="1" x:Name="DetailMediaFiles" Classes="val" Margin="0,5,0,0"/>
+                        <TextBlock Grid.Row="4" Grid.Column="2" Classes="key" Margin="0,5,0,0" Text="Package size"/>
+                        <TextBlock Grid.Row="4" Grid.Column="3" x:Name="DetailPackageSize" Classes="val" Margin="0,5,0,0"/>
+
+                        <TextBlock Grid.Row="5" Grid.Column="0" Classes="key" Margin="0,5,0,0" Text="Total media"/>
+                        <TextBlock Grid.Row="5" Grid.Column="1" x:Name="DetailTotalMediaBytes" Classes="val" Margin="0,5,0,0"/>
+                        <TextBlock Grid.Row="5" Grid.Column="2" Classes="key" Margin="0,5,0,0" Text="Last modified"/>
+                        <TextBlock Grid.Row="5" Grid.Column="3" x:Name="DetailModified" Classes="val" Margin="0,5,0,0"/>
+
+                        <TextBlock Grid.Row="6" Grid.Column="0" Classes="key" Margin="0,5,0,0" Text="Exclusions"/>
+                        <TextBlock Grid.Row="6" Grid.Column="1" x:Name="DetailExclusions" Classes="val" Margin="0,5,0,0"/>
+                        <TextBlock Grid.Row="6" Grid.Column="2" Classes="key" Margin="0,5,0,0" Text="Extra notes"/>
+                        <TextBlock Grid.Row="6" Grid.Column="3" x:Name="DetailExtraNotes" Classes="val" Margin="0,5,0,0"/>
+
+                        <TextBlock Grid.Row="7" Grid.Column="0" Classes="key" Margin="0,5,0,0" Text="Verifier"/>
+                        <TextBlock Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="3"
+                                   x:Name="DetailVerifierStatus" Classes="val" Margin="0,5,0,0"
+                                   TextWrapping="Wrap"/>
+
+                    </Grid>
+                </Grid>
+            </Border>
+
+        </Grid>
+
+        <!-- ── Status message ────────────────────────────────────────────────── -->
+        <TextBlock x:Name="StatusMsg"
+                   Grid.Row="2"
+                   IsVisible="False"
+                   FontSize="11"
+                   Margin="20,8,20,0"
+                   TextWrapping="Wrap"/>
+
+        <!-- ── Footer ───────────────────────────────────────────────────────── -->
+        <Border Grid.Row="3" Padding="20,12,20,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0"
+                Margin="0,8,0,0">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="AddLocalAmpBtn"
+                            Classes="secondary"
+                            Content="Add Local AMP…"
+                            Click="OnAddLocalAmp"/>
+                    <Button x:Name="RefreshBtn"
+                            Classes="secondary"
+                            Content="Refresh"
+                            Click="OnRefresh"/>
+                    <Button x:Name="VerifySelectedBtn"
+                            Classes="secondary"
+                            Content="Verify Selected"
+                            IsEnabled="False"
+                            Click="OnVerifySelected"/>
+                    <Button x:Name="OpenFolderBtn"
+                            Classes="secondary"
+                            Content="Open Folder"
+                            Click="OnOpenFolder"/>
+                    <Button x:Name="CopyReportBtn"
+                            Classes="secondary"
+                            Content="Copy Report"
+                            IsVisible="False"
+                            Click="OnCopyReport"/>
+                </StackPanel>
+                <Button Classes="secondary"
+                        Content="Close"
+                        DockPanel.Dock="Right"
+                        HorizontalAlignment="Right"
+                        Click="OnClose"/>
+            </DockPanel>
+        </Border>
+
+    </Grid>
+</Window>

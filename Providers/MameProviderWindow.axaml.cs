@@ -377,15 +377,15 @@ public partial class MameProviderWindow : Window
             }
         }
 
-        // 2. Bundled 7z.exe alongside the Arkadia executable
-        var bundled = Path.Combine(AppContext.BaseDirectory, "7z.exe");
-        if (File.Exists(bundled))
+        // 2. Bundled tools\7zip\7zip.exe (direct path, no DB needed)
+        var bundled = ProviderHelpers.Find7zip();
+        if (bundled is not null)
         {
-            AppendLog($"7z resolved from app root: {bundled}");
+            AppendLog($"7z resolved from bundled tools: {bundled}");
             return bundled;
         }
 
-        // 3. 7z.exe anywhere on PATH
+        // 3. 7z.exe anywhere on PATH (system install)
         var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
@@ -397,7 +397,7 @@ public partial class MameProviderWindow : Window
             }
         }
 
-        // 4. Default 7-Zip installation paths on Windows
+        // 4. Default 7-Zip installation paths on Windows (system install)
         foreach (var root in new[]
         {
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
@@ -642,18 +642,23 @@ public partial class MameProviderWindow : Window
 
     private static void ExtractMameArchive(string archivePath, string targetDir)
     {
-        using var archive = SharpCompress.Archives.ArchiveFactory.Open(archivePath);
+        var fullDestRoot = Path.GetFullPath(targetDir)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+
+        using var archive = System.IO.Compression.ZipFile.OpenRead(archivePath);
 
         foreach (var entry in archive.Entries)
         {
-            if (entry.IsDirectory) continue;
+            if (string.IsNullOrEmpty(entry.Name)) continue;  // directory entry
 
-            var key      = entry.Key ?? "";
-            var destPath = Path.Combine(targetDir, key.Replace('/', Path.DirectorySeparatorChar));
-            var dir      = Path.GetDirectoryName(destPath)!;
-            Directory.CreateDirectory(dir);
+            var relNorm  = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+            var destPath = Path.GetFullPath(Path.Combine(targetDir, relNorm));
+            if (!destPath.StartsWith(fullDestRoot, StringComparison.OrdinalIgnoreCase)) continue;
 
-            using var src  = entry.OpenEntryStream();
+            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+
+            using var src  = entry.Open();
             using var dest = File.Create(destPath);
             src.CopyTo(dest);
         }

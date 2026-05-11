@@ -89,7 +89,16 @@ logs/
 themes/
   visual/default/                    — theme and badge icon assets (committed)
 
-tools/                               — external tools (7zip, chdman — not committed)
+tools/
+  7zip/
+    7zip.exe                         — 7-Zip console binary (renamed from 7z.exe or 7zz.exe)
+    7z.dll                           — 7-Zip library (required when using 7z.exe variant; omit for 7zz standalone)
+  chdman/
+    chdman.exe                       — MAME chdman tool for CHD compression
+  dolphintool/
+    DolphinTool.exe                  — Dolphin RVZ compression tool
+  wudcompress/
+    WudCompress.exe                  — WUD/WUX compression tool
 ```
 
 ---
@@ -202,11 +211,37 @@ Media files use indexed stems: `<releaseStem>_<index>.<ext>` (screenshots, fanar
 
 **AMP** (`.amp`) is the planned Arkadia-native curated package format: provider-agnostic, suitable for offline reuse and distribution where legally permissible. AMP packages carry accepted media, canonical metadata, credits, Extra Notes, preferred state, and exclusion hashes — but no raw provider payloads and no visible provider provenance.
 
-**ARK** (`.ark`) is the separate planned format for Arkadia database and application state backup/restore. It is not a media pack.
+**ARK** (`.ark`) is the Arkadia Backup / Archive format (v0.5 implemented) for database and application state backup/restore. It is not a media pack.
+
+ARK backups are created via the **Backups** sidebar section. Packages are written to `backups\` in the application folder alongside a `.ark.sha256` integrity sidecar. The log shows creation progress and automatic verification. Live restore while the application is running is intentionally blocked — a restart-safe restore workflow is planned.
 
 > **AMP is not a backup. ARK is not a media pack.**
 
 AMP v1 specification: [docs/SPECS/ARKADIA_MEDIA_PACK_V1_SPEC.md](docs/SPECS/ARKADIA_MEDIA_PACK_V1_SPEC.md)
+
+### External Tools
+
+Arkadia uses bundled external tools for compression and archive extraction. Tools are **not committed** to the repository. Place them next to the executable before using the features that require them.
+
+**Naming convention:** `tools\<toolname>\<toolname>.exe`
+
+| Tool ID | Path | Source | Used for |
+|---|---|---|---|
+| `7zip` | `tools\7zip\7zip.exe` | 7-Zip ([7-zip.org](https://7-zip.org)) | MAME SFX extraction; .7z and .rar ingest |
+| `chdman` | `tools\chdman\chdman.exe` | MAME Tools | CHD compression (CD, DVD, GD, PSP, Dreamcast) |
+| `dolphintool` | `tools\dolphintool\DolphinTool.exe` | Dolphin Emulator | RVZ compression |
+| `wudcompress` | `tools\wudcompress\WudCompress.exe` | WudCompress | WUX compression |
+
+**7-Zip setup:** 7-Zip is distributed as either a split package (`7z.exe` + `7z.dll`) or a standalone binary (`7zz.exe`). Both can be placed in `tools\7zip\` after renaming the primary executable to `7zip.exe`. Renaming is safe — `7z.dll` is loaded by its own hardcoded name and does not depend on the executable filename.
+
+- Split package: place `7zip.exe` (renamed from `7z.exe`) and `7z.dll` in `tools\7zip\`
+- Standalone: place `7zip.exe` (renamed from `7zz.exe`) in `tools\7zip\` — no DLL needed
+
+If 7zip is not present, MAME provider extraction is blocked and .7z/.rar ingest archives are skipped with a log message. ZIP archives work without 7zip.
+
+**chdman** follows the `tools\<toolname>\<toolname>.exe` convention exactly.
+
+**dolphintool and wudcompress** use upstream executable names (`DolphinTool.exe`, `WudCompress.exe`) that differ from the folder name casing. These will be normalized in a future migration.
 
 ### LibVLC
 
@@ -260,7 +295,8 @@ The `publish/` directory contains the self-contained executable. Copy `libraries
 | Extra Notes per release | Stable |
 | Theme engine with palette support | Stable |
 | LibVLC video preview | Stable |
-| Arkadia Media Pack (.amp) export/import | Planned |
+| Arkadia Media Pack (.amp) export | Stable |
+| Arkadia Backup / Archive (.ark) — backup creation UI | Stable (v0.5); live restore blocked pending restart-safe flow |
 | Additional online providers | Planned |
 
 ---
@@ -329,6 +365,7 @@ The `publish/` directory contains the self-contained executable. Copy `libraries
 - [Developer Notes](docs/DEVELOPER_NOTES.md)
 - [Cache & Curation Pipeline](docs/CACHE_CURATION_PIPELINE.md) — provider cache builder, staging, registered cache manager, verify package, offline / bulk scraping, Manage Media workbench, Extra Notes, AMP direction
 - [AMP v1 Specification](docs/SPECS/ARKADIA_MEDIA_PACK_V1_SPEC.md) — Arkadia Media Pack format specification
+- [ARK v0.5 Specification](docs/SPECS/ARKADIA_BACKUP_ARCHIVE_V0_5_SPEC.md) — Arkadia Backup / Archive format specification
 - [Roadmap](docs/ROADMAP.md)
 
 ---

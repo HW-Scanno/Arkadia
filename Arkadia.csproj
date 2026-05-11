@@ -40,7 +40,6 @@
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.14" />
 <PackageReference Include="System.Management" Version="8.0.0" />
     <PackageReference Include="Semi.Avalonia" Version="11.3.7.3" />
-    <PackageReference Include="SharpCompress" Version="0.38.0" />
     <PackageReference Include="SkiaSharp" Version="2.88.9" />
     <PackageReference Include="SkiaSharp.NativeAssets.Win32" Version="2.88.9" />
     <PackageReference Include="LibVLCSharp" Version="3.9.0" />

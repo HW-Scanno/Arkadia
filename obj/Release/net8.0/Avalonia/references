@@ -32,7 +32,6 @@ C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.25\ref\net8.0\Micros
 C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.25\ref\net8.0\mscorlib.dll
 C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.25\ref\net8.0\netstandard.dll
 C:\Users\HWS\.nuget\packages\semi.avalonia\11.3.7.3\lib\net8.0\Semi.Avalonia.dll
-C:\Users\HWS\.nuget\packages\sharpcompress\0.38.0\lib\net8.0\SharpCompress.dll
 C:\Users\HWS\.nuget\packages\skiasharp\2.88.9\lib\net6.0\SkiaSharp.dll
 C:\Users\HWS\.nuget\packages\sqlitepclraw.bundle_e_sqlite3\2.1.6\lib\netstandard2.0\SQLitePCLRaw.batteries_v2.dll
 C:\Users\HWS\.nuget\packages\sqlitepclraw.core\2.1.6\lib\netstandard2.0\SQLitePCLRaw.core.dll
@@ -197,4 +196,3 @@ C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.25\ref\net8.0\System
 C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.25\ref\net8.0\System.Xml.XPath.XDocument.dll
 C:\Users\HWS\.nuget\packages\tmds.dbus.protocol\0.21.2\lib\net8.0\Tmds.DBus.Protocol.dll
 C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\8.0.25\ref\net8.0\WindowsBase.dll
-C:\Users\HWS\.nuget\packages\zstdsharp.port\0.8.1\lib\net8.0\ZstdSharp.dll

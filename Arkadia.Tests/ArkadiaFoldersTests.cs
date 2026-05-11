@@ -86,6 +86,21 @@ public sealed class ArkadiaFoldersTests : IDisposable
         => Assert.Equal(ArkadiaFolders.StagingCache, CacheBuilderHelper.DefaultStagingRoot);
 
     [Fact]
+    public void EnsureCreated_CreatesArkadiaMediaPacksFolder()
+    {
+        ArkadiaFolders.EnsureCreated(_base);
+        Assert.True(Directory.Exists(
+            Path.Combine(_base, ArkadiaFolders.ScrapeCache, ArkadiaFolders.ArkadiaMediaPacks)));
+    }
+
+    [Fact]
+    public void EnsureCreated_CreatesBackupsFolder()
+    {
+        ArkadiaFolders.EnsureCreated(_base);
+        Assert.True(Directory.Exists(Path.Combine(_base, ArkadiaFolders.Backups)));
+    }
+
+    [Fact]
     public void EnsureCreated_ExistingFilesNotDeleted()
     {
         ArkadiaFolders.EnsureCreated(_base);

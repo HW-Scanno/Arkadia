@@ -3,7 +3,7 @@
         x:Class="Arkadia.ScraperProviderDialog"
         Title="Choose Scraper Provider"
         Width="440"
-        Height="220"
+        Height="280"
         CanResize="False"
         WindowStartupLocation="CenterOwner"
         Background="#0D0D12"

@@ -185,8 +185,6 @@ D:\Projects\Arkadia\Arkadia.Tests\bin\Debug\net8.0\runtimes\win-x86\native\e_sql
 D:\Projects\Arkadia\Arkadia.Tests\bin\Debug\net8.0\System.CodeDom.dll
 D:\Projects\Arkadia\Arkadia.Tests\bin\Debug\net8.0\System.Management.dll
 D:\Projects\Arkadia\Arkadia.Tests\bin\Debug\net8.0\runtimes\win\lib\net8.0\System.Management.dll
-D:\Projects\Arkadia\Arkadia.Tests\bin\Debug\net8.0\SharpCompress.dll
-D:\Projects\Arkadia\Arkadia.Tests\bin\Debug\net8.0\ZstdSharp.dll
 d:\Projects\Arkadia\Arkadia.Tests\bin\Debug\net8.0\libraries\lib-vlc\win-x64\libvlc.dll
 d:\Projects\Arkadia\Arkadia.Tests\bin\Debug\net8.0\libraries\lib-vlc\win-x64\libvlc.lib
 d:\Projects\Arkadia\Arkadia.Tests\bin\Debug\net8.0\libraries\lib-vlc\win-x64\libvlccore.dll

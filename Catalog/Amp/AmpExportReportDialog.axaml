@@ -1,0 +1,290 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.AmpExportReportDialog"
+        Title="AMP Export — Dry-Run Report"
+        Width="860"
+        Height="700"
+        MinWidth="640"
+        MinHeight="480"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.primary">
+            <Setter Property="Background"      Value="#1A3A6A"/>
+            <Setter Property="Foreground"      Value="#A0C4FF"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderBrush"     Value="#2A4A8A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="Button.primary:disabled">
+            <Setter Property="Opacity" Value="0.5"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"      Value="#1A1A2C"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="Padding"         Value="14,7"/>
+            <Setter Property="FontSize"        Value="12"/>
+            <Setter Property="CornerRadius"    Value="5"/>
+            <Setter Property="BorderBrush"     Value="#2A2A3C"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+        </Style>
+        <Style Selector="TextBlock.key">
+            <Setter Property="FontSize"   Value="11"/>
+            <Setter Property="Foreground" Value="#666680"/>
+        </Style>
+        <Style Selector="TextBlock.val">
+            <Setter Property="FontSize"   Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#CCCCDD"/>
+        </Style>
+        <Style Selector="TextBlock.section">
+            <Setter Property="FontSize"      Value="9"/>
+            <Setter Property="FontWeight"    Value="SemiBold"/>
+            <Setter Property="LetterSpacing" Value="1.2"/>
+            <Setter Property="Foreground"    Value="#505070"/>
+            <Setter Property="Margin"        Value="0,8,0,0"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding"         Value="12,7"/>
+            <Setter Property="BorderBrush"     Value="#1A1A28"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="Background"      Value="Transparent"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- ── Header ───────────────────────────────────────────────────────── -->
+        <StackPanel Grid.Row="0" Margin="20,18,20,10" Spacing="4">
+            <TextBlock Text="AMP Export — Dry-Run Report"
+                       FontSize="14" FontWeight="SemiBold" Foreground="#EEEEFF"/>
+            <TextBlock x:Name="HeaderSubtitle"
+                       FontSize="11" Foreground="#555577"/>
+            <TextBlock Text="Planning report only. No .amp file has been created."
+                       FontSize="11" Foreground="#444466" Margin="0,2,0,0"/>
+        </StackPanel>
+
+        <!-- ── Body ─────────────────────────────────────────────────────────── -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="20,4,20,0" Spacing="0">
+
+                <!-- ── Coverage summary ────────────────────────────────────── -->
+                <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                        BorderThickness="1" CornerRadius="6" Padding="16,12"
+                        Margin="0,0,0,0">
+                    <Grid ColumnDefinitions="*,*"
+                          RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+
+                        <TextBlock Grid.Row="0"  Grid.Column="0" Classes="key" Text="System"/>
+                        <TextBlock Grid.Row="0"  Grid.Column="1" x:Name="SumSystem"      Classes="val"/>
+
+                        <TextBlock Grid.Row="1"  Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="DAT line"/>
+                        <TextBlock Grid.Row="1"  Grid.Column="1" x:Name="SumDatLine"     Classes="val" Margin="0,6,0,0"/>
+
+                        <TextBlock Grid.Row="2"  Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Releases"/>
+                        <TextBlock Grid.Row="2"  Grid.Column="1" x:Name="SumReleases"    Classes="val" Margin="0,6,0,0"/>
+
+                        <TextBlock Grid.Row="3"  Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Metadata coverage"/>
+                        <TextBlock Grid.Row="3"  Grid.Column="1" x:Name="SumMetadata"    Classes="val" Margin="0,6,0,0"/>
+
+                        <TextBlock Grid.Row="4"  Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Media coverage"/>
+                        <TextBlock Grid.Row="4"  Grid.Column="1" x:Name="SumMedia"       Classes="val" Margin="0,6,0,0"/>
+
+                        <TextBlock Grid.Row="5"  Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Total media files"/>
+                        <TextBlock Grid.Row="5"  Grid.Column="1" x:Name="SumFiles"       Classes="val" Margin="0,6,0,0"/>
+
+                        <TextBlock Grid.Row="6"  Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Total media size"/>
+                        <TextBlock Grid.Row="6"  Grid.Column="1" x:Name="SumSize"        Classes="val" Margin="0,6,0,0"/>
+
+                        <TextBlock Grid.Row="7"  Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Exclusions"/>
+                        <TextBlock Grid.Row="7"  Grid.Column="1" x:Name="SumExclusions"  Classes="val" Margin="0,6,0,0"/>
+
+                        <TextBlock Grid.Row="8"  Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Extra notes"/>
+                        <TextBlock Grid.Row="8"  Grid.Column="1" x:Name="SumExtraNotes"  Classes="val" Margin="0,6,0,0"/>
+
+                        <TextBlock Grid.Row="9"  Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Errors"/>
+                        <TextBlock Grid.Row="9"  Grid.Column="1" x:Name="SumErrors"      Classes="val" Margin="0,6,0,0"/>
+
+                        <TextBlock Grid.Row="10" Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Warnings"/>
+                        <TextBlock Grid.Row="10" Grid.Column="1" x:Name="SumWarnings"    Classes="val" Margin="0,6,0,0"/>
+
+                    </Grid>
+                </Border>
+
+                <!-- ── Issues ──────────────────────────────────────────────── -->
+                <TextBlock Classes="section" Text="ISSUES"/>
+                <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                        BorderThickness="1" CornerRadius="6"
+                        Margin="0,6,0,0">
+                    <StackPanel>
+                        <ListBox x:Name="IssuesList"
+                                 Background="Transparent"
+                                 MinHeight="36"
+                                 MaxHeight="280"
+                                 Padding="0">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:CompileBindings="False">
+                                    <Grid ColumnDefinitions="Auto,Auto,160,Auto,*">
+                                        <Border Grid.Column="0"
+                                                CornerRadius="3" Padding="5,2"
+                                                Margin="0,0,8,0"
+                                                VerticalAlignment="Center"
+                                                Background="{Binding SeverityBackground}">
+                                            <TextBlock Text="{Binding SeverityLabel}"
+                                                       FontSize="9" FontWeight="SemiBold"
+                                                       Foreground="{Binding SeverityForeground}"
+                                                       LetterSpacing="0.5"/>
+                                        </Border>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="{Binding Area}"
+                                                   FontSize="10" Foreground="#555577"
+                                                   VerticalAlignment="Center"
+                                                   Margin="0,0,10,0"/>
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding ReleaseName}"
+                                                   FontSize="10" Foreground="#666688"
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Margin="0,0,10,0"/>
+                                        <TextBlock Grid.Column="4"
+                                                   Text="{Binding Message}"
+                                                   FontSize="11" Foreground="#AAAACC"
+                                                   TextWrapping="Wrap"
+                                                   VerticalAlignment="Center"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock x:Name="NoIssuesMsg"
+                                   IsVisible="False"
+                                   Text="No issues found — all checks passed."
+                                   FontSize="11" Foreground="#444455"
+                                   HorizontalAlignment="Center"
+                                   Margin="20,14,20,14"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- ── Releases ────────────────────────────────────────────── -->
+                <TextBlock Classes="section" Text="RELEASES"/>
+                <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                        BorderThickness="1" CornerRadius="6"
+                        Margin="0,6,0,0">
+                    <StackPanel>
+                        <ListBox x:Name="ReleasesList"
+                                 Background="Transparent"
+                                 MinHeight="36"
+                                 MaxHeight="320"
+                                 Padding="0">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate x:CompileBindings="False">
+                                    <Grid ColumnDefinitions="*,Auto,Auto,Auto">
+                                        <TextBlock Grid.Column="0"
+                                                   Text="{Binding DisplayName}"
+                                                   FontSize="11" Foreground="#CCCCDD"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   VerticalAlignment="Center"/>
+                                        <TextBlock Grid.Column="1"
+                                                   Text="META"
+                                                   FontSize="9" FontWeight="SemiBold"
+                                                   LetterSpacing="0.5"
+                                                   Foreground="#4CAF50"
+                                                   IsVisible="{Binding HasMetadata}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="10,0,0,0"/>
+                                        <TextBlock Grid.Column="2"
+                                                   Text="{Binding MediaLabel}"
+                                                   FontSize="10" Foreground="#555577"
+                                                   VerticalAlignment="Center"
+                                                   Margin="10,0,0,0"/>
+                                        <TextBlock Grid.Column="3"
+                                                   Text="{Binding IssueLabel}"
+                                                   FontSize="10"
+                                                   Foreground="{Binding IssueColor}"
+                                                   VerticalAlignment="Center"
+                                                   Margin="10,0,0,0"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                        <TextBlock x:Name="NoReleasesMsg"
+                                   IsVisible="False"
+                                   Text="No releases in scope."
+                                   FontSize="11" Foreground="#444455"
+                                   HorizontalAlignment="Center"
+                                   Margin="20,14,20,14"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- ── Create result ──────────────────────────────────────────── -->
+                <TextBlock Classes="section" Text="CREATE"/>
+                <Border x:Name="CreateResultPanel"
+                        IsVisible="False"
+                        Background="#0A0A12" BorderBrush="#1E1E2C"
+                        BorderThickness="1" CornerRadius="6" Padding="16,12"
+                        Margin="0,6,0,0">
+                    <Grid ColumnDefinitions="*,*"
+                          RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+
+                        <TextBlock Grid.Row="0" Grid.Column="0" Classes="key" Text="Status"/>
+                        <TextBlock Grid.Row="0" Grid.Column="1" x:Name="ResultStatus" Classes="val"/>
+
+                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Path"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" x:Name="ResultPath"    Classes="val" Margin="0,6,0,0" TextWrapping="Wrap"/>
+
+                        <TextBlock Grid.Row="2" Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Size"/>
+                        <TextBlock Grid.Row="2" Grid.Column="1" x:Name="ResultSize"    Classes="val" Margin="0,6,0,0"/>
+
+                        <TextBlock Grid.Row="3" Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="SHA-256"/>
+                        <TextBlock Grid.Row="3" Grid.Column="1" x:Name="ResultSha256"  Classes="val" Margin="0,6,0,0"
+                                   FontFamily="Consolas,Courier New,monospace" FontSize="10" TextWrapping="Wrap"/>
+
+                        <TextBlock Grid.Row="4" Grid.Column="0" Classes="key" Margin="0,6,0,0" Text="Verifier"/>
+                        <TextBlock Grid.Row="4" Grid.Column="1" x:Name="ResultVerifier" Classes="val" Margin="0,6,0,0"/>
+
+                    </Grid>
+                </Border>
+
+                <TextBlock x:Name="CreateStatusMsg"
+                           IsVisible="False"
+                           FontSize="11"
+                           Margin="0,6,0,0"/>
+
+                <Border Height="16"/>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- ── Footer ───────────────────────────────────────────────────────── -->
+        <Border Grid.Row="2" Padding="20,12,20,16"
+                BorderBrush="#181826" BorderThickness="0,1,0,0"
+                Margin="0,8,0,0">
+            <DockPanel>
+                <Button x:Name="CreateAmpBtn"
+                        Classes="primary"
+                        Content="Create AMP"
+                        DockPanel.Dock="Left"
+                        Click="OnCreateAmp"/>
+                <Button x:Name="CopyReportBtn"
+                        Classes="secondary"
+                        Content="Copy Report"
+                        IsVisible="False"
+                        DockPanel.Dock="Left"
+                        Margin="10,0,0,0"
+                        Click="OnCopyReport"/>
+                <Button Classes="secondary"
+                        Content="Close"
+                        DockPanel.Dock="Right"
+                        HorizontalAlignment="Right"
+                        Click="OnClose"/>
+            </DockPanel>
+        </Border>
+
+    </Grid>
+</Window>

@@ -1,0 +1,113 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.AmpPickerDialog"
+        Title="Select AMP Package"
+        Width="440"
+        Height="320"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0D0D12"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Styles>
+        <Style Selector="Button.primary">
+            <Setter Property="Background"      Value="#7B68EE"/>
+            <Setter Property="Foreground"      Value="#FFFFFF"/>
+            <Setter Property="Padding"         Value="22,8"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="FontWeight"      Value="SemiBold"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="Button.secondary">
+            <Setter Property="Background"      Value="#1E1E2C"/>
+            <Setter Property="Foreground"      Value="#AAAACC"/>
+            <Setter Property="Padding"         Value="22,8"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="CornerRadius"    Value="4"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="ListBoxItem">
+            <Setter Property="Padding"         Value="16,10"/>
+            <Setter Property="BorderBrush"     Value="#1A1A28"/>
+            <Setter Property="BorderThickness" Value="0,0,0,1"/>
+            <Setter Property="Background"      Value="Transparent"/>
+        </Style>
+    </Window.Styles>
+
+    <Grid RowDefinitions="Auto,*,Auto">
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="24,20,24,16" Spacing="4">
+            <TextBlock Text="SELECT AMP PACKAGE"
+                       FontSize="11" FontWeight="SemiBold" LetterSpacing="1.8"
+                       Foreground="#9FA4FF"/>
+            <TextBlock Text="Select a local Arkadia Media Pack for this DAT line."
+                       FontSize="12" Foreground="#666677"/>
+        </StackPanel>
+
+        <!-- Package list -->
+        <Border Grid.Row="1"
+                Margin="24,0,24,0"
+                Background="#0A0A12" BorderBrush="#1E1E2C"
+                BorderThickness="1" CornerRadius="6">
+            <ListBox x:Name="PackageList"
+                     SelectionMode="Single"
+                     SelectionChanged="OnSelectionChanged"
+                     Background="Transparent"
+                     Padding="0">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:CompileBindings="False">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="{Binding FileName}"
+                                           FontSize="12" FontWeight="SemiBold"
+                                           Foreground="#EEEEFF"
+                                           TextTrimming="CharacterEllipsis"/>
+                                <TextBlock FontSize="11" Foreground="#666680">
+                                    <Run Text="{Binding SystemName}"/>
+                                    <Run Text=" · "/>
+                                    <Run Text="{Binding DatLineId}"/>
+                                    <Run Text=" · "/>
+                                    <Run Text="{Binding ReleaseCountText}"/>
+                                    <Run Text=" releases · "/>
+                                    <Run Text="{Binding MediaFileCountText}"/>
+                                    <Run Text=" media · "/>
+                                    <Run Text="{Binding SizeFormatted}"/>
+                                    <Run Text=" · "/>
+                                    <Run Text="{Binding ModifiedShort}"/>
+                                </TextBlock>
+                            </StackPanel>
+                            <Border Grid.Column="1"
+                                    VerticalAlignment="Center"
+                                    Margin="12,0,0,0"
+                                    CornerRadius="4" Padding="7,3"
+                                    Background="{Binding StatusBackground}">
+                                <TextBlock Text="{Binding StatusLabel}"
+                                           FontSize="10" FontWeight="SemiBold"
+                                           LetterSpacing="0.5"
+                                           Foreground="{Binding StatusForeground}"/>
+                            </Border>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <!-- Footer -->
+        <Border Grid.Row="2" Padding="24,12,24,18"
+                BorderBrush="#181826" BorderThickness="0,1,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+                <Button Classes="secondary" Content="Cancel" Click="OnCancel"/>
+                <Button x:Name="AcceptBtn"
+                        Classes="primary"
+                        Content="Accept"
+                        IsEnabled="False"
+                        Click="OnAccept"/>
+            </StackPanel>
+        </Border>
+
+    </Grid>
+</Window>

@@ -307,12 +307,20 @@ public sealed class CatalogService
             toolSeed.CommandText = """
                 INSERT INTO tools(tool_id, folder_name, executable_name, is_bundled) VALUES
                     ('chdman',      'chdman',      'chdman.exe',      1),
-                    ('7zip',        '7zip',        '7z.exe',          1),
+                    ('7zip',        '7zip',        '7zip.exe',        1),
                     ('dolphintool', 'dolphintool', 'DolphinTool.exe', 1),
                     ('wudcompress', 'wudcompress', 'WudCompress.exe', 1);
                 """;
             toolSeed.ExecuteNonQuery();
         }
+
+        // ── Migrate 7zip executable name (7z.exe → 7zip.exe) ─────────────────
+        using var toolMigrate = conn.CreateCommand();
+        toolMigrate.CommandText = """
+            UPDATE tools SET executable_name = '7zip.exe'
+            WHERE tool_id = '7zip' AND executable_name = '7z.exe'
+            """;
+        toolMigrate.ExecuteNonQuery();
 
         // ── Seed transforms if empty ──────────────────────────────────────────
         using var txCheck = conn.CreateCommand();

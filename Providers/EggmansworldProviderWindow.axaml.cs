@@ -337,7 +337,20 @@ public partial class EggmansworldProviderWindow : Window
                 var folderName = Path.GetFileNameWithoutExtension(asset.Name);
                 var targetDir  = ProviderHelpers.UniqueDirPath(outputDir, folderName);
                 Directory.CreateDirectory(targetDir);
-                ProviderHelpers.ExtractTosecArchive(tempFile, targetDir);
+
+                if (string.Equals(ext, ".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    ProviderHelpers.ExtractTosecArchive(tempFile, targetDir);
+                }
+                else
+                {
+                    var sevenZip = ProviderHelpers.Find7zip()
+                        ?? throw new InvalidOperationException(
+                            $"Extracting '{asset.Name}' requires 7zip. " +
+                            "Place tools\\7zip\\7zip.exe next to the executable.");
+                    ProviderHelpers.ExtractWith7zip(sevenZip, tempFile, targetDir);
+                }
+
                 return targetDir;
             }
             else

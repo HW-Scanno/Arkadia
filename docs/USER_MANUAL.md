@@ -21,6 +21,7 @@
 15. [Recommended Workflows](#15-recommended-workflows)
 16. [Troubleshooting](#16-troubleshooting)
 17. [Cache & Curation Pipeline](#17-cache--curation-pipeline)
+18. [Backup and Restore (ARK)](#18-backup-and-restore-ark)
 
 ---
 
@@ -426,3 +427,81 @@ For building ScreenScraper cache packages, registering and verifying them, offli
 → [docs/CACHE_CURATION_PIPELINE.md](CACHE_CURATION_PIPELINE.md)
 
 That document is the authoritative reference for the cache and curation flows. It covers folder layout (including `incoming-media/`), the ScreenScraper Cache Builder UI (Force / UpdatePayloads / KeepStaging / IndexAfterBuild), Manage Staging status labels, the Registered Cache Manager, the Verify Package severity scheme, Bulk Scraping scopes and options, the Manage Media dual-pane workbench (Incoming Media browser, safe import workflow, Delete vs Exclude semantics), Extra Notes, security and sanitization, troubleshooting, and a manual test plan.
+
+---
+
+## 18. Backup and Restore (ARK)
+
+### What ARK is
+
+**ARK** (`.ark`) is the Arkadia-native backup format. An ARK package is a ZIP archive containing a point-in-time snapshot of Arkadia's database state: the global catalog, all per-DAT-line release databases, and optionally the AMP registry.
+
+ARK is for disaster recovery and machine migration. It is not a media pack and does not distribute media or metadata to other users.
+
+> **AMP is not a backup. ARK is not a media pack.**
+
+### What ARK backs up
+
+| Included | Not included |
+|---|---|
+| Global catalog database (`catalog.db`) | Media files (cover art, screenshots, video) |
+| All per-DAT release databases | Provider credentials |
+| AMP registry (optional) | Provider cache packages |
+| | Log files, tool binaries, temp files |
+
+### What ARK does not back up
+
+Media files are not included in ARK v0.5. After restoring an ARK, your catalog will show the correct expected state — releases, metadata, curation decisions — but media files must be reacquired separately (from an AMP package, a provider cache, or by re-scraping).
+
+### Backup location
+
+ARK backups are stored in the `backups\` folder in the Arkadia application directory. Arkadia creates this folder automatically on startup.
+
+### Creating a backup
+
+1. Open **Backups** from the sidebar.
+2. In the **BACKUP** pane, click **Create Backup**.
+3. The log window shows progress: planning, writing, and verification.
+4. Arkadia creates:
+   - `arkadia-backup-<timestamp>.ark` — the backup package
+   - `arkadia-backup-<timestamp>.ark.sha256` — SHA-256 sidecar for integrity verification
+5. Arkadia automatically verifies the generated package after writing.
+6. When complete, the log shows **BACKUP COMPLETE**.
+7. The backup list in the **RESTORE** pane refreshes automatically.
+
+Keep both files together when storing or moving the backup.
+
+### Restore pane
+
+The **RESTORE** pane in the Backups view lists all `.ark` files in the `backups\` folder. Click **Refresh** to reload the list. Select a backup to enable the **Restore Selected** button.
+
+**Live restore is intentionally blocked while Arkadia is running.** Arkadia maintains active SQLite services against the `data\` folder; replacing those files while the application is open is unsafe. Clicking **Restore Selected** opens an informational dialog explaining this and showing the selected package path for reference.
+
+**To use a backup:**
+
+- **Manual offline restore:** Close Arkadia, extract the `.ark` ZIP to your `data\` folder, then restart. Run Verify ALL or Verify Volume after restarting.
+- **Restart-safe restore:** Planned for a future release.
+
+ARK restore is always a **full replacement** — there is no merge restore. If the target directory is not empty, the existing data will be moved aside to `{target}.pre-ark-restore-{timestamp}` before the restore is committed.
+
+**After restore:**
+
+- Run **Verify ALL** or **Verify Volume** from the Operations view before relying on the restored archive state.
+- Re-enter provider credentials (Settings → ScreenScraper).
+- Re-register provider cache packages if needed.
+- Review volume paths — absolute filesystem paths embedded in the databases may not be valid on the restore machine. Use the volume management tools to update them.
+
+### Post-restore warnings
+
+Every ARK restore always emits two mandatory warnings:
+
+1. **Verify ALL / Verify Volume required** — restored state is expected state, not yet trusted state.
+2. **Absolute paths may need review** — volume locations and media paths in the database may reference the source machine's filesystem.
+
+### Core semantic rule
+
+> **Restored state is expected state. Verified state is trusted state.**
+
+ARK restore re-establishes what the catalog expects to exist. It does not verify that physical files are present on disk at their recorded locations. Only running Verify ALL or Verify Volume establishes trusted state.
+
+For the full ARK format specification, see [docs/SPECS/ARKADIA_BACKUP_ARCHIVE_V0_5_SPEC.md](SPECS/ARKADIA_BACKUP_ARCHIVE_V0_5_SPEC.md).

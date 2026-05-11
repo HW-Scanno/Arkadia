@@ -18,10 +18,13 @@ Arkadia.sln
 │   ├── Pending/                    — pending artifact management
 │   ├── Staging/                    — staging area operations
 │   ├── Dashboard/                  — dashboard view components
-│   └── Controls/                   — shared UI controls
-└── Arkadia.Tests.csproj            — xUnit tests (~590 tests, no UI dependency)
+│   ├── Controls/                   — shared UI controls
+│   └── Catalog/                    — catalog-level services
+│       └── Ark/                    — ARK backup/restore pipeline (writer, verifier, plan, restore)
+└── Arkadia.Tests.csproj            — xUnit tests (1163 tests, no UI dependency)
     ├── Data/                       — store, proposal, mapping, metadata tests
     ├── Providers/                  — scraper parser, import service, candidate tests
+    ├── Ark/                        — ARK verifier, plan service, restore service tests
     └── MergeProposalVmTests.cs     — view-model tests for merge dialog
 ```
 
@@ -307,6 +310,64 @@ MainWindow.axaml.cs is ~12,800 lines and is the primary cleanup target.
 | ViewModel layer | MVVM for catalog list and hero | Large refactor; low priority vs. features |
 
 The safest next extraction after `ScreenScraperImportService` is `MetadataMergeService` — it is pure data logic with no UI dependencies and is currently duplicated between the merge dialog and any future bulk-apply path.
+
+---
+
+## ARK Service Stack
+
+All ARK services live in `Catalog/Ark/` and use `namespace Arkadia`.
+
+| Service | Constructor | Responsibility |
+|---|---|---|
+| `ArkWriterService` | `(string baseDir, CatalogService catalog)` | Write `.ark` ZIP from the current data directory |
+| `ArkPackageVerifierService` | `()` | Verify integrity and policy compliance of an `.ark` package |
+| `ArkRestorePlanService` | `()` | Dry-run: plan restore without writing anything |
+| `ArkRestoreService` | `()` | Execute restore via atomic staging workflow |
+
+**Key invariants:**
+
+| Invariant | Enforced by |
+|---|---|
+| `CredentialsExcluded=true` in manifest | Verifier (Error) + RestorePlan (blocks) |
+| `CachePackagesExcluded=true` in manifest | Verifier (Error) + RestorePlan (blocks) |
+| `FormatVersion="0.5"` | RestorePlan (blocks on mismatch) |
+| No backslash / absolute / `..` / empty path segments | Verifier + RestorePlan + RestoreService |
+| `catalog.db` present in staging before commit | RestoreService (throws on absence) |
+| Staging deleted on failure before commit | RestoreService `catch` block (`stagingCommitted` flag) |
+| Post-restore "Verify ALL" warning always emitted | RestorePlan.Warnings + RestoreResult.Warnings |
+
+**Database copy:** `ArkWriterService` uses `BackupDatabase()` (SQLite Online Backup API) rather than raw file copy. This is required because Arkadia opens all databases in WAL mode; a raw file copy would produce an inconsistent snapshot.
+
+**Staging directory:** Created as `{parent-of-target}/.ark-restore-{yyyyMMddHHmmss}-{guid8}` so it is on the same filesystem as the target, making `Directory.Move` an atomic rename. The `.ark-restore-` prefix allows test cleanup via `Directory.GetDirectories(parent, ".ark-restore-*")`.
+
+**`stagingCommitted` flag pattern:** Set to `true` only after `Directory.Move(stagingDir, fullTargetPath)` succeeds. The `catch` block deletes staging only when this flag is `false`, preventing accidental deletion of committed data if an exception fires after commit.
+
+**AMP registry restore path:** `registry/amp-packages.json` in the archive maps to `{target}/ark-restore/amp-packages.json`, not the operational registry location. This avoids restoring registry entries that reference paths invalid on the restore machine.
+
+### ARK Backups UI
+
+The Backups sidebar section is the UI entry point for ARK export.
+
+**Folder:** `backups\` — created by `ArkadiaFolders.EnsureCreated` at application startup via `ArkadiaFolders.Backups` constant.
+
+**Layout:** `ViewBackups` is a two-pane grid:
+- **BACKUP pane** — Create Backup button + scrollable log window showing timestamped progress lines.
+- **RESTORE pane** — `ArkBackupsList` listing `.ark` files from `backups\`, Restore Selected button, Refresh button.
+
+**Backup creation flow:**
+1. `ArkExportPlanService.PlanExport()` produces the plan and surfaces any Issues to the log.
+2. `ArkWriterService.Write()` runs off the UI thread via `Task.Run`.
+3. `ArkPackageVerifierService` is called after writing to verify the package; results are shown in the log.
+4. On success the log shows **BACKUP COMPLETE** and `RefreshArkBackupsList()` reloads the RESTORE pane.
+
+**`_arkBusy` flag:** Set `true` for the duration of a backup or restore operation. Disables both Create Backup and Restore Selected while an operation is in progress.
+
+**Live restore — intentionally blocked:** Restore Selected shows an `InfoDialog` explaining the restriction and the selected file path. It does not invoke any restore service. Reason: `CatalogService` and `DatLineStore` use the default SQLite connection pool; replacing `data\` files while connections are alive is unsafe. A restart-safe restore flow is deferred to a future phase.
+
+**Tests:**
+- `ArkadiaFoldersTests.EnsureCreated_CreatesBackupsFolder` — verifies `backups\` is created.
+- `ArkUiHelpersTests` — covers `SuggestedArkFileName` pattern and `BackupsFolder` helper.
+- Current total: **1163 tests**.
 
 ---
 

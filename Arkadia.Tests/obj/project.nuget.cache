@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "toN7x4Pnr70=",
+  "dgSpecHash": "vGm4ZJdI6kE=",
   "success": true,
-  "projectFilePath": "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
+  "projectFilePath": "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\HWS\\.nuget\\packages\\avalonia\\11.3.12\\avalonia.11.3.12.nupkg.sha512",
     "C:\\Users\\HWS\\.nuget\\packages\\avalonia.angle.windows.natives\\2.1.25547.20250602\\avalonia.angle.windows.natives.2.1.25547.20250602.nupkg.sha512",
@@ -38,7 +38,6 @@
     "C:\\Users\\HWS\\.nuget\\packages\\newtonsoft.json\\13.0.1\\newtonsoft.json.13.0.1.nupkg.sha512",
     "C:\\Users\\HWS\\.nuget\\packages\\runtime.native.system\\4.3.0\\runtime.native.system.4.3.0.nupkg.sha512",
     "C:\\Users\\HWS\\.nuget\\packages\\semi.avalonia\\11.3.7.3\\semi.avalonia.11.3.7.3.nupkg.sha512",
-    "C:\\Users\\HWS\\.nuget\\packages\\sharpcompress\\0.38.0\\sharpcompress.0.38.0.nupkg.sha512",
     "C:\\Users\\HWS\\.nuget\\packages\\skiasharp\\2.88.9\\skiasharp.2.88.9.nupkg.sha512",
     "C:\\Users\\HWS\\.nuget\\packages\\skiasharp.nativeassets.linux\\2.88.9\\skiasharp.nativeassets.linux.2.88.9.nupkg.sha512",
     "C:\\Users\\HWS\\.nuget\\packages\\skiasharp.nativeassets.macos\\2.88.9\\skiasharp.nativeassets.macos.2.88.9.nupkg.sha512",
@@ -75,8 +74,7 @@
     "C:\\Users\\HWS\\.nuget\\packages\\xunit.core\\2.9.0\\xunit.core.2.9.0.nupkg.sha512",
     "C:\\Users\\HWS\\.nuget\\packages\\xunit.extensibility.core\\2.9.0\\xunit.extensibility.core.2.9.0.nupkg.sha512",
     "C:\\Users\\HWS\\.nuget\\packages\\xunit.extensibility.execution\\2.9.0\\xunit.extensibility.execution.2.9.0.nupkg.sha512",
-    "C:\\Users\\HWS\\.nuget\\packages\\xunit.runner.visualstudio\\2.8.2\\xunit.runner.visualstudio.2.8.2.nupkg.sha512",
-    "C:\\Users\\HWS\\.nuget\\packages\\zstdsharp.port\\0.8.1\\zstdsharp.port.0.8.1.nupkg.sha512"
+    "C:\\Users\\HWS\\.nuget\\packages\\xunit.runner.visualstudio\\2.8.2\\xunit.runner.visualstudio.2.8.2.nupkg.sha512"
   ],
   "logs": []
 }

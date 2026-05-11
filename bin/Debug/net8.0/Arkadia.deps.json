@@ -17,7 +17,6 @@
           "LibVLCSharp.Avalonia": "3.9.0",
           "Microsoft.Data.Sqlite": "8.0.14",
           "Semi.Avalonia": "11.3.7.3",
-          "SharpCompress": "0.38.0",
           "SkiaSharp": "2.88.9",
           "SkiaSharp.NativeAssets.Win32": "2.88.9",
           "System.Management": "8.0.0",
@@ -422,17 +421,6 @@
           }
         }
       },
-      "SharpCompress/0.38.0": {
-        "dependencies": {
-          "ZstdSharp.Port": "0.8.1"
-        },
-        "runtime": {
-          "lib/net8.0/SharpCompress.dll": {
-            "assemblyVersion": "0.38.0.0",
-            "fileVersion": "0.38.0.0"
-          }
-        }
-      },
       "SkiaSharp/2.88.9": {
         "dependencies": {
           "SkiaSharp.NativeAssets.Win32": "2.88.9",
@@ -789,15 +777,7 @@
           }
         }
       },
-      "VideoLAN.LibVLC.Windows/3.0.21": {},
-      "ZstdSharp.Port/0.8.1": {
-        "runtime": {
-          "lib/net8.0/ZstdSharp.dll": {
-            "assemblyVersion": "0.8.1.0",
-            "fileVersion": "0.8.1.0"
-          }
-        }
-      }
+      "VideoLAN.LibVLC.Windows/3.0.21": {}
     }
   },
   "libraries": {
@@ -1009,13 +989,6 @@
       "path": "semi.avalonia/11.3.7.3",
       "hashPath": "semi.avalonia.11.3.7.3.nupkg.sha512"
     },
-    "SharpCompress/0.38.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-8i6KqjAFI3mvya8W8rnQrf5h4vz6ilw4zqk2AzInVqqqZ25TD6fmVeYBnlisjTWwP26eltZc0buSmJ8a3YIGxg==",
-      "path": "sharpcompress/0.38.0",
-      "hashPath": "sharpcompress.0.38.0.nupkg.sha512"
-    },
     "SkiaSharp/2.88.9": {
       "type": "package",
       "serviceable": true,
@@ -1211,13 +1184,6 @@
       "sha512": "sha512-1b1yjZPIzS2+s6YZv9Z5Co/q2srIvo03ZToPvZblWreeyeFGkLDwX7WZat8AxCB9uMQV6VUnms67SgQqko7Z0w==",
       "path": "videolan.libvlc.windows/3.0.21",
       "hashPath": "videolan.libvlc.windows.3.0.21.nupkg.sha512"
-    },
-    "ZstdSharp.Port/0.8.1": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-19tNz33kn2EkyViFXuxfVn338UJaRmkwBphVqP2dVJIYQUQgFrgG5h061mxkRRg1Ax6r+6WOj1FxaFZ5qaWqqg==",
-      "path": "zstdsharp.port/0.8.1",
-      "hashPath": "zstdsharp.port.0.8.1.nupkg.sha512"
     }
   }
 }
