@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Arkadia.Tests")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+824c99a167f65d2ea1c9e7c49ff8ef36e4e11e82")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+bd947ff7e6de12a75f799cbe3cff70380c3c7a3d")]
 [assembly: System.Reflection.AssemblyProductAttribute("Arkadia.Tests")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Arkadia.Tests")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

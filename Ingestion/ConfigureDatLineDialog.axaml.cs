@@ -24,7 +24,7 @@ public partial class ConfigureDatLineDialog : Window
     private List<TransformRecord>            _fileXforms    = [];
     private List<TransformRecord>            _folderXforms  = [];
     private readonly string[]                _fileHandlingValues = ["archives_pre_extraction", "all_files"];
-    private readonly string[]                _stratValues   = ["none", "file_extension", "release_folder"];
+    private readonly string[]                _stratValues   = ["none", "file_extension", "release_folder", "release_shape"];
 
     // Live-feedback panels (built in PopulateContent, updated by RefreshLivePanels)
     private StackPanel _modelInfoPanel  = null!;
@@ -33,7 +33,8 @@ public partial class ConfigureDatLineDialog : Window
     private bool       _isConfigInvalid = false;
 
     // "single" | "multi" | "mixed" | "unknown"
-    private string _releaseShape = "unknown";
+    private string                      _releaseShape   = "unknown";
+    private ReleaseShapeAnalysisResult? _shapeAnalysis;
 
     public ConfigureDatLineDialog() : this(
         new DatLineInfo("", 0, ""), new CatalogService(""), "") { }
@@ -97,6 +98,7 @@ public partial class ConfigureDatLineDialog : Window
                         ( > 0, > 0) => "mixed",
                         _           => "unknown",
                     };
+                    _shapeAnalysis = ReleaseShapeTransformPlanner.AnalyzeDat(allFiles);
                 }
             }
         }
@@ -165,7 +167,7 @@ public partial class ConfigureDatLineDialog : Window
             Margin     = new Avalonia.Thickness(0, 0, 0, 6),
         });
 
-        var stratLabels = new[] { "None", "Per file extension", "Per release folder" };
+        var stratLabels = new[] { "None", "Per file extension", "Per release folder", "Per release shape" };
         _stratBox = new ComboBox
         {
             ItemsSource     = stratLabels,
@@ -391,6 +393,7 @@ public partial class ConfigureDatLineDialog : Window
             RefreshLivePanels();
         };
 
+
         _folderBox.SelectionChanged += (_, _) => RefreshLivePanels();
 
         // ── Section 4: Release Shape (static) ────────────────────────────────
@@ -425,8 +428,14 @@ public partial class ConfigureDatLineDialog : Window
         });
         string? recText = _releaseShape switch
         {
+            "single" when _shapeAnalysis is { IsValid: true }
+                     => "This DAT contains only single-file releases. A file-oriented model or Per release shape is recommended.",
             "single" => "This DAT contains only single-file releases. A file-oriented model is recommended.",
+            "multi"  when _shapeAnalysis is { IsValid: true }
+                     => "This DAT contains multi-file releases compatible with Per release shape dispatch.",
             "multi"  => "This DAT contains multi-file releases. A folder-oriented model is required.",
+            "mixed"  when _shapeAnalysis is { IsValid: true }
+                     => "This DAT contains mixed ISO / CUE+BIN releases. Use Per release shape for CHD conversion.",
             "mixed"  => "This DAT contains both single-file and multi-file releases. A folder-oriented model is required.",
             _        => null,
         };
@@ -494,11 +503,16 @@ public partial class ConfigureDatLineDialog : Window
         _validationPanel = new StackPanel { Spacing = 4 };
         ContentPanel.Children.Add(_validationPanel);
 
-        // Auto-suggest: preselect release_folder when DAT is unconfigured and shape demands it.
+        // Auto-suggest: preselect best strategy when DAT is unconfigured.
         // Must run AFTER all live panels are built so RefreshLivePanels() (triggered by
         // SelectionChanged) finds non-null panel references.
-        if (_d.TransformStrategyType == "none" && _releaseShape is "multi" or "mixed")
-            _stratBox.SelectedIndex = 2;
+        if (_d.TransformStrategyType == "none")
+        {
+            if (_shapeAnalysis is { IsValid: true })
+                _stratBox.SelectedIndex = 3; // Per release shape
+            else if (_releaseShape is "multi" or "mixed")
+                _stratBox.SelectedIndex = 2; // Per release folder
+        }
 
         // Initial render of live panels
         RefreshLivePanels();
@@ -526,7 +540,13 @@ public partial class ConfigureDatLineDialog : Window
         // ── Selected Model ────────────────────────────────────────────────────
         _modelInfoPanel.Children.Clear();
 
-        var stratDisplay = stratIdx switch { 1 => "Per file extension", 2 => "Per release folder", _ => "None" };
+        var stratDisplay = stratIdx switch
+        {
+            1 => "Per file extension",
+            2 => "Per release folder",
+            3 => "Per release shape",
+            _ => "None"
+        };
         AddModelRow(_modelInfoPanel, "Strategy", stratDisplay, textBrush, dimBrush);
 
         if (stratVal == "release_folder")
@@ -543,6 +563,18 @@ public partial class ConfigureDatLineDialog : Window
                 {
                     Text = "No folder-oriented transforms are defined.", FontSize = 11, Foreground = errorBrush,
                 });
+            }
+        }
+        else if (stratVal == "release_shape")
+        {
+            AddModelRow(_modelInfoPanel, "Processor", "Release-shape dispatch", textBrush, dimBrush);
+            AddModelRow(_modelInfoPanel, "Output",    "File",                   textBrush, dimBrush);
+            if (_shapeAnalysis is not null)
+            {
+                if (_shapeAnalysis.SingleIsoCount > 0)
+                    AddModelRow(_modelInfoPanel, ".iso releases",     $"{_shapeAnalysis.SingleIsoCount:N0} → CHD DVD Compression", textBrush, dimBrush);
+                if (_shapeAnalysis.CueBinCount > 0)
+                    AddModelRow(_modelInfoPanel, ".cue+.bin releases", $"{_shapeAnalysis.CueBinCount:N0} → CHD CD Compression",   textBrush, dimBrush);
             }
         }
 
@@ -569,6 +601,27 @@ public partial class ConfigureDatLineDialog : Window
                 happenText = "Each file will be matched to a transform by its extension. Files mapped to 'Discard' will be skipped.";
             }
         }
+        else if (stratVal == "release_shape")
+        {
+            if (_shapeAnalysis is { IsValid: true })
+            {
+                happenText =
+                    "Each release will be inspected as a unit.\n" +
+                    "Single .iso releases will use CHD DVD Compression.\n" +
+                    ".cue + .bin releases will use CHD CD Compression.\n" +
+                    ".bin files are required dependencies, not discarded.";
+            }
+            else if (_shapeAnalysis is { UnsupportedCount: > 0 })
+            {
+                happenText  = $"{_shapeAnalysis.UnsupportedCount} release(s) have unsupported file combinations for this strategy. This configuration is invalid.";
+                happenBrush = errorBrush;
+            }
+            else
+            {
+                happenText  = "No releases with supported shapes found. Ensure the DAT has .iso or .cue+.bin releases.";
+                happenBrush = errorBrush;
+            }
+        }
         else // release_folder
         {
             if (folderXform == null)
@@ -584,6 +637,8 @@ public partial class ConfigureDatLineDialog : Window
             else
             {
                 happenText = $"Each release folder will be processed as a unit using \"{folderXform.Name}\". The entire folder will be passed to the transform command.";
+                if (_shapeAnalysis is { IsValid: true })
+                    happenBrush = warnBrush;
             }
         }
 
@@ -621,6 +676,18 @@ public partial class ConfigureDatLineDialog : Window
                 : "This DAT contains mixed releases. A file-oriented model cannot handle all releases correctly. Switch to a folder-oriented model.";
             validColor = errorBrush;
         }
+        else if (stratVal == "release_shape" && (_shapeAnalysis is null || !_shapeAnalysis.IsValid))
+        {
+            _isConfigInvalid = true;
+            validStatus = "INVALID";
+            var unsupportedCount = _shapeAnalysis?.UnsupportedCount ?? 0;
+            var examples = _shapeAnalysis?.UnsupportedExamples ?? Array.Empty<string>();
+            validDetail = unsupportedCount > 0
+                ? $"{unsupportedCount} release(s) have unsupported file combinations (not single .iso or .cue+.bin). " +
+                  (examples.Count > 0 ? $"Examples: {string.Join(", ", examples.Take(3))}" : "")
+                : "No releases with supported shapes (.iso or .cue+.bin) found.";
+            validColor = errorBrush;
+        }
         else if (stratVal == "none")
         {
             validStatus = "WARNING";
@@ -631,6 +698,12 @@ public partial class ConfigureDatLineDialog : Window
         {
             validStatus = "WARNING";
             validDetail = "This DAT contains only single-file releases. A folder-oriented model is heavier than necessary but is safe to use.";
+            validColor  = warnBrush;
+        }
+        else if (stratVal == "release_folder" && folderXform != null && _shapeAnalysis is { IsValid: true })
+        {
+            validStatus = "WARNING";
+            validDetail = "Folder compression is valid, but it will not create CHD artifacts. Use Per release shape for ISO/CUE-BIN to CHD conversion.";
             validColor  = warnBrush;
         }
         else

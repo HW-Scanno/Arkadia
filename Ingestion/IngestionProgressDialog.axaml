@@ -176,7 +176,8 @@
         <StackPanel Grid.Row="5" Spacing="0">
 
             <StackPanel x:Name="SummaryPanel" IsVisible="False" Spacing="0">
-                <TextBlock Text="INGESTION COMPLETED"
+                <TextBlock x:Name="SumStatusTitle"
+                           Text="INGESTION COMPLETED"
                            FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
                            Foreground="#888899" Margin="0,0,0,10"/>
 
@@ -207,7 +208,8 @@
             </StackPanel>
 
             <StackPanel x:Name="FailedPanel" IsVisible="False" Spacing="0">
-                <TextBlock Text="OPERATION FAILED"
+                <TextBlock x:Name="FailedTitle"
+                           Text="OPERATION FAILED"
                            FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
                            Foreground="#EF5350" Margin="0,0,0,10"/>
 

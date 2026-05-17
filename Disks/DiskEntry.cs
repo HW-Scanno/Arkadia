@@ -17,9 +17,7 @@ public sealed class DiskEntry
     public required string Serial                { get; init; }
 
     public long   FreeBytes   => DeclaredCapacityBytes - UsedBytes;
-    public double UsageRatio  => DeclaredCapacityBytes > 0
-        ? System.Math.Clamp((double)UsedBytes / DeclaredCapacityBytes, 0, 1)
-        : 0;
+    public double UsageRatio  => DiskUsageMath.CalculateUsageRatio(UsedBytes, DeclaredCapacityBytes);
 
     public string CapacityLabel => FormatBytes(DeclaredCapacityBytes);
     public string UsedLabel     => FormatBytes(UsedBytes);

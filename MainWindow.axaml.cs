@@ -459,6 +459,7 @@ public partial class MainWindow : Window
         {
             "file_extension" => "Per file extension",
             "release_folder" => "Per release folder",
+            "release_shape"  => "Per release shape",
             _                => null,
         };
         int mappingCount = 0;
@@ -983,6 +984,23 @@ public partial class MainWindow : Window
                     Text = "No folder transform assigned", FontSize = 11, Foreground = dim,
                 });
             }
+        }
+        else if (d.TransformStrategyType == "release_shape")
+        {
+            panel.Children.Add(new TextBlock
+            {
+                Text       = "Per release shape",
+                FontSize   = 12,
+                FontWeight = FontWeight.Medium,
+                Foreground = text,
+                Margin     = new Avalonia.Thickness(0, 0, 0, 4),
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text       = ".iso → CHD DVD Compression   ·   .cue+.bin → CHD CD Compression",
+                FontSize   = 11,
+                Foreground = dim,
+            });
         }
         else
         {
@@ -1762,7 +1780,7 @@ public partial class MainWindow : Window
         bool isSelected    = _selectedDiskEntry?.Id == entry.Id;
         var  textPrimary   = new SolidColorBrush(isSelected ? Color.Parse("#E8E8FF") : Color.Parse("#CCCCDD"));
         var  textSecondary = new SolidColorBrush(Color.Parse("#888899"));
-        var  barWidth      = Math.Clamp(entry.UsageRatio, 0.0, 1.0) * 66.0;
+        var  fillRatio     = entry.UsageRatio;  // already clamped 0..1 in DiskEntry
 
         var grid = new Grid { Margin = new Avalonia.Thickness(20, 0) };
         grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(52)));
@@ -1842,6 +1860,20 @@ public partial class MainWindow : Window
             TextTrimming     = Avalonia.Media.TextTrimming.CharacterEllipsis,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         });
+        // Proportional bar: fill column = fillRatio*, empty column = (1-fillRatio)*.
+        // Adapts to the Star column's actual pixel width — no magic constant needed.
+        var barInner = new Grid();
+        barInner.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(fillRatio, GridUnitType.Star)));
+        barInner.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(1.0 - fillRatio, GridUnitType.Star)));
+        var barFill = new Border
+        {
+            Height       = 8,
+            CornerRadius = new Avalonia.CornerRadius(1),
+            Background   = new SolidColorBrush(Color.Parse("#4CAF50")),
+        };
+        Grid.SetColumn(barFill, 0);
+        barInner.Children.Add(barFill);
+
         Add(8, new Border
         {
             Height            = 8,
@@ -1849,14 +1881,7 @@ public partial class MainWindow : Window
             Background        = new SolidColorBrush(Color.Parse("#2A2A3E")),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Margin            = new Avalonia.Thickness(8, 0),
-            Child = new Border
-            {
-                Width               = barWidth,
-                Height              = 8,
-                CornerRadius        = new Avalonia.CornerRadius(1),
-                Background          = new SolidColorBrush(Color.Parse("#4CAF50")),
-                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
-            },
+            Child             = barInner,
         });
 
         var row = new Border
@@ -4688,30 +4713,15 @@ public partial class MainWindow : Window
                         progDialog.UpdateStats(copiedBytes, verifiedBytes, filesProcessed, elapsed);
                     });
 
-                    // ── Verify ─────────────────────────────────────────────
-                    var dstInfo = new FileInfo(dst);
-                    string? failReason = null;
+                    // ── Verify destination against DB expected hash ────────
+                    log?.AppendLine($"COPY-OK  {info.FileName}");
 
-                    if (!dstInfo.Exists)
-                        failReason = $"file missing after copy: {info.FileName}";
-                    else if (dstInfo.Length != info.SizeBytes)
-                        failReason = $"size mismatch: {info.FileName}";
-                    else
-                    {
-                        var srcSha1 = ComputeFileSha1(src);
-                        var dstSha1 = ComputeFileSha1(dst);
-                        if (!string.Equals(srcSha1, dstSha1, StringComparison.OrdinalIgnoreCase))
-                        {
-                            log?.AppendLine($"VERIFY-FAILED  {info.FileName}  src={srcSha1}  dst={dstSha1}");
-                            failReason = $"SHA1 mismatch: {info.FileName}";
-                        }
-                        else
-                        {
-                            log?.AppendLine($"VERIFY-OK  {info.FileName}  sha1={dstSha1}");
-                        }
-                    }
+                    var verifyOk = AppendVerifier.VerifyDestination(
+                        dst, info.SizeBytes, info.ExpectedSha1,
+                        out var failReason, out var verifyLog);
+                    log?.Append(verifyLog);
 
-                    if (failReason is not null)
+                    if (!verifyOk)
                     {
                         // Remove bad destination so retry finds a clean state
                         try { File.Delete(dst); }
@@ -5612,6 +5622,29 @@ public partial class MainWindow : Window
                 bool derivedOk      = thisSrcOk && hasDerivedHash;
                 var  xformName      = transformNames.TryGetValue(dst.StorageStrategyId, out var xn) ? xn : dst.StorageStrategyId;
                 DetailDerivedFiles.Children.Add(MakeDerivedFileRow(dst, xformName, srcVerified, srcTotal, derivedOk, CopyAndToast));
+            }
+
+            // For release-level strategies (release_shape, release_folder) the derived
+            // artifact is keyed by "release:{id}", not per-file hashes — the per-file
+            // loop above yields no rows.  Fall back to a release-level query.
+            if (DetailDerivedFiles.Children.Count == 0
+                && (entry.TransformStrategyType == "release_shape"
+                    || entry.TransformStrategyType == "release_folder")
+                && entry.ReleaseId.Length > 0
+                && fileStore is not null)
+            {
+                var relDerived = fileStore.GetDerivedArtifactsByReleaseId(entry.ReleaseId);
+                var relSrcKey  = $"release:{entry.ReleaseId}";
+                var relSrc     = fileStore.GetSourceByContentKey(relSrcKey);
+                bool relSrcOk  = relSrc is not null;
+                int  relSrcVerified = relSrcOk ? 1 : 0;
+                foreach (var dst in relDerived)
+                {
+                    bool hasDerivedHash = dst.HashedDerivedSha1.Length > 0;
+                    bool derivedOk      = relSrcOk && hasDerivedHash;
+                    var  xformName      = transformNames.TryGetValue(dst.StorageStrategyId, out var xn) ? xn : dst.StorageStrategyId;
+                    DetailDerivedFiles.Children.Add(MakeDerivedFileRow(dst, xformName, relSrcVerified, 1, derivedOk, CopyAndToast));
+                }
             }
 
             if (DetailDerivedFiles.Children.Count == 0)
@@ -8783,7 +8816,7 @@ public partial class MainWindow : Window
             WriteIngestionLog(logsDir, datLineId, ingestResult);
         }
 
-        if (ingestResult.Success && ingestResult.ReleasesPresent > 0)
+        if (ingestResult.Error is null && ingestResult.ReleasesPresent > 0)
         {
             RebuildLibraryDatasets();
             ResolveFlagImages();
@@ -8791,7 +8824,7 @@ public partial class MainWindow : Window
             RefreshPending();
         }
 
-        if (ingestResult.Success && (ingestResult.FilesCopied > 0 || ingestResult.FilesSkipped > 0 || ingestResult.ReleasesPresent > 0))
+        if (ingestResult.Error is null && (ingestResult.FilesCopied > 0 || ingestResult.FilesSkipped > 0 || ingestResult.ReleasesPresent > 0))
         {
             RefreshStaging();
         }
@@ -8827,10 +8860,25 @@ public partial class MainWindow : Window
             RunPreIngest(incomingDir, result, progress);
         }
 
+        // Build a set of archive container paths that were successfully extracted.
+        // These must not enter the scan / hash / match / skip pipeline — their
+        // lifecycle is owned exclusively by Phase 9 archive cleanup.
+        var extractedArchiveSet = IngestArchiveContainerFilter.BuildExtractedSet(result.ExtractedArchiveInfos);
+
+        // Reverse map: every extracted file path → the archive info it came from.
+        // Used by Phase 9 to associate source files with their origin archive.
+        var extractedFileToArchive = new Dictionary<string, Ingestion.ExtractedArchiveInfo>(
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var info in result.ExtractedArchiveInfos)
+            foreach (var f in info.ExtractedFiles)
+                extractedFileToArchive[f] = info;
+
         // ── Phase 1: Scan ─────────────────────────────────────────────────────
         progress.Report(new IngestionProgress { PhaseText = "Scanning incoming files…" });
 
-        var sourceFiles = Directory.GetFiles(incomingDir, "*", SearchOption.AllDirectories).ToList();
+        var sourceFiles = Directory.GetFiles(incomingDir, "*", SearchOption.AllDirectories)
+            .Where(f => !IngestArchiveContainerFilter.IsExtractedArchive(f, extractedArchiveSet))
+            .ToList();
         result.FilesScanned = sourceFiles.Count;
 
         if (sourceFiles.Count == 0)
@@ -8844,6 +8892,16 @@ public partial class MainWindow : Window
             .ToDictionary(r => r.Id, StringComparer.Ordinal);
 
         var allReleaseFiles = store.LoadAllReleaseFiles();
+
+        // Per-archive cleanup tracking (Phase 9).
+        // successfulReleaseIds: pre-seeded with releases already present before this run
+        // (covers re-ingest / allTargetsSatisfied cases), then extended in Phase 7.
+        var successfulReleaseIds    = new HashSet<string>(StringComparer.Ordinal);
+        var archiveTouchedReleases  = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var unmatchedExtractedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (rid, rel) in releases)
+            if (rel.Status == "present")
+                successfulReleaseIds.Add(rid);
 
         // sha1/md5 → list of (releaseId, romName)
         var sha1Index = new Dictionary<string, List<(string ReleaseId, string RomName)>>(
@@ -8951,6 +9009,20 @@ public partial class MainWindow : Window
             });
         }
 
+        // Build archive → release associations and unmatched-file set from the completed copyPlan.
+        // Done here (after hashing) so allTargetsSatisfied files are also covered.
+        foreach (var (srcPath, destinations) in copyPlan)
+        {
+            if (!extractedFileToArchive.TryGetValue(srcPath, out var archInfo)) continue;
+            if (!archiveTouchedReleases.TryGetValue(archInfo.ArchivePath, out var touchSet))
+                archiveTouchedReleases[archInfo.ArchivePath] = touchSet = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (rid, _) in destinations)
+                touchSet.Add(rid);
+        }
+        foreach (var filePath in extractedFileToArchive.Keys)
+            if (!copyPlan.ContainsKey(filePath))
+                unmatchedExtractedFiles.Add(filePath);
+
         // ── Phase 4b: Pre-compute satisfied targets ───────────────────────────────
         // Key: "releaseId|romName". A target is satisfied if equivalent content
         // already resides at the staging destination OR the source destination.
@@ -8995,6 +9067,12 @@ public partial class MainWindow : Window
                 // Check source (already fully acquired in a previous run).
                 var sourcePath = Path.Combine(sourceRoot, safeFolder, romName);
                 if (!File.Exists(sourcePath)) continue;
+
+                // Source exists but release is not yet present → a previous transform failed.
+                // Leave the target unsatisfied so the incoming file re-triggers staging and
+                // a fresh transform attempt, rather than being silently deleted as a duplicate.
+                if (releases.TryGetValue(releaseId, out var srcRel) && srcRel.Status != "present")
+                    continue;
 
                 // Verify size against DAT expectation when available.
                 if (expectedSizeIndex.TryGetValue(key, out var expectedSize))
@@ -9063,9 +9141,13 @@ public partial class MainWindow : Window
         // transformFailedReleases: releases where at least one file's transform failed — their
         //   contributing source files must not be deleted from incoming-roms.
         var successfullyCopied      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var movedFromIncoming       = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allTargetsSatisfied     = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var affectedReleaseIds      = new HashSet<string>(StringComparer.Ordinal);
         var transformFailedReleases = new HashSet<string>(StringComparer.Ordinal);
+        // incompleteReleases: releases where staging completeness check failed (e.g. orphan .bin, missing .cue).
+        // These must also block archive deletion so the ZIP is preserved for recovery.
+        var incompleteReleases      = new HashSet<string>(StringComparer.Ordinal);
         int copyCount = 0;
 
         foreach (var (srcPath, destinations) in copyPlan)
@@ -9084,7 +9166,8 @@ public partial class MainWindow : Window
                 continue;
             }
 
-            bool anyFailed = false;
+            bool anyFailed           = false;
+            bool wasMovedFromIncoming = false;
 
             foreach (var (releaseId, romName) in pending)
             {
@@ -9097,10 +9180,16 @@ public partial class MainWindow : Window
 
                 try
                 {
-                    File.Copy(srcPath, destPath, overwrite: true);
+                    // Move when this is the sole remaining target and paths share a volume
+                    // (same-volume File.Move is an atomic NTFS rename — no byte copy).
+                    // Copy otherwise (fan-out to multiple releases, or cross-volume).
+                    StagingHelpers.StageFile(srcPath, destPath, pending.Count, out var stageOp);
 
-                    if (new FileInfo(destPath).Length != srcInfo.Length)
+                    // Size sanity check only for copies (moves are atomic and integrity-guaranteed).
+                    if (stageOp != "stage-moved" && new FileInfo(destPath).Length != srcInfo.Length)
                         throw new IOException($"Size mismatch after copy for {romName}");
+
+                    if (stageOp == "stage-moved") wasMovedFromIncoming = true;
 
                     // Mark this target satisfied so no later file re-copies it.
                     satisfiedTargets.Add($"{releaseId}|{romName}");
@@ -9109,7 +9198,7 @@ public partial class MainWindow : Window
                     copyCount++;
 
                     var op = new IngestionOperation(
-                        srcInfo.Name, "copy",
+                        srcInfo.Name, stageOp,
                         $"staging/{platformId}/{datLineId}/{safeFolder}/{romName}");
                     result.Operations.Add(op);
 
@@ -9135,7 +9224,12 @@ public partial class MainWindow : Window
             }
 
             if (!anyFailed)
-                successfullyCopied.Add(srcPath);
+            {
+                if (wasMovedFromIncoming)
+                    movedFromIncoming.Add(srcPath);
+                else
+                    successfullyCopied.Add(srcPath);
+            }
         }
 
         // ── Phase 7: Completeness check + source promotion ────────────────────
@@ -9172,6 +9266,10 @@ public partial class MainWindow : Window
                     ? allTools.FirstOrDefault(t => t.Id == folderXform.ToolId)
                     : null;
             }
+            else if (dlRecord?.TransformStrategyType == "release_shape")
+            {
+                datLineStrategyType = "release_shape";
+            }
         }
 
         foreach (var releaseId in affectedReleaseIds)
@@ -9188,7 +9286,21 @@ public partial class MainWindow : Window
             bool complete = expectedFiles.All(f =>
                 File.Exists(Path.Combine(stagingDir, f.RomName)));
 
-            if (!complete) continue;
+            if (!complete)
+            {
+                incompleteReleases.Add(releaseId);
+                var missingFiles = expectedFiles
+                    .Where(f => !File.Exists(Path.Combine(stagingDir, f.RomName)))
+                    .Select(f => f.RomName)
+                    .ToList();
+                var incompleteOp = new IngestionOperation(
+                    release.Name,
+                    "incomplete-skipped",
+                    $"missing: {string.Join(", ", missingFiles)}");
+                result.Operations.Add(incompleteOp);
+                progress.Report(new IngestionProgress { NewOperation = incompleteOp });
+                continue;
+            }
 
             // Move every file from staging → source
             bool sourceOk = true;
@@ -9208,12 +9320,18 @@ public partial class MainWindow : Window
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 sourceOk = false;
-                var failOp = new IngestionOperation(release.Name, "source-failed", ex.Message);
+                var failOp = new IngestionOperation(release.Name, "source-promoted-failed", ex.Message);
                 result.Operations.Add(failOp);
                 progress.Report(new IngestionProgress { NewOperation = failOp });
             }
 
             if (!sourceOk) continue;
+
+            var archOp = new IngestionOperation(
+                release.Name, "source-promoted",
+                $"source/{platformId}/{datLineId}/{safeFolder}");
+            result.Operations.Add(archOp);
+            progress.Report(new IngestionProgress { NewOperation = archOp });
 
             // ── Dispatch: file-oriented or folder-oriented processor ──────────
             if (datLineStrategyType == "release_folder")
@@ -9245,6 +9363,15 @@ public partial class MainWindow : Window
                     progress.Report(new IngestionProgress { NewOperation = failOp });
                 }
             }
+            else if (datLineStrategyType == "release_shape")
+            {
+                ProcessReleaseShapeOrientedRelease(
+                    releaseId, safeFolder, sourceDir, expectedFiles,
+                    allTransforms, allTools,
+                    appRoot, platformId, datLineId,
+                    release.Status,
+                    now, store, result, progress, transformFailedReleases);
+            }
             else
             {
                 // ── Per-file: verify source + persist provenance + transform ──
@@ -9260,13 +9387,8 @@ public partial class MainWindow : Window
             {
                 store.UpdateReleaseStatus(releaseId, "present");
                 result.ReleasesPresent++;
+                successfulReleaseIds.Add(releaseId);
             }
-
-            var archOp = new IngestionOperation(
-                release.Name, "source",
-                $"source/{platformId}/{datLineId}/{safeFolder}");
-            result.Operations.Add(archOp);
-            progress.Report(new IngestionProgress { NewOperation = archOp });
         }
 
         // ── Phase 8: Source file handling ─────────────────────────────────────
@@ -9299,6 +9421,13 @@ public partial class MainWindow : Window
                     result.Operations.Add(op);
                     progress.Report(new IngestionProgress { NewOperation = op });
                 }
+            }
+            else if (movedFromIncoming.Contains(srcPath))
+            {
+                // File was moved (not copied) to staging in Phase 6 — already gone from
+                // incoming-roms.  If a transform failed, the file is preserved in source/
+                // and will be picked up on the next ingest run via the source-present/
+                // derived-missing retry path.  Nothing to delete here.
             }
             else if (allTargetsSatisfied.Contains(srcPath))
             {
@@ -9334,6 +9463,58 @@ public partial class MainWindow : Window
                     var op = new IngestionOperation(fileName, "skip-failed", "could not move to incoming-skip");
                     result.Operations.Add(op);
                     progress.Report(new IngestionProgress { NewOperation = op });
+                }
+            }
+        }
+
+        // ── Finalise result counters ──────────────────────────────────────────
+        result.TransformsFailed    = transformFailedReleases.Count;
+        result.ReleasesIncomplete  = incompleteReleases.Count;
+
+        // ── Phase 9: Per-archive cleanup ──────────────────────────────────────
+        // Each archive is deleted only when every release it contributed to succeeded.
+        // Archives linked to any incomplete or failed release are preserved individually,
+        // so one bad ZIP does not block cleanup of unrelated successful archives.
+        if (result.ExtractedArchiveInfos.Count > 0)
+        {
+            progress.Report(new IngestionProgress { PhaseText = "Cleaning up extracted archives…" });
+            var incomingLabel = Path.GetFileName(Path.GetDirectoryName(incomingDir)) ?? "incoming";
+
+            var decisions = Ingestion.ArchiveCleanupPlanner.Plan(
+                result.ExtractedArchiveInfos,
+                archiveTouchedReleases,
+                successfulReleaseIds,
+                incompleteReleases,
+                transformFailedReleases,
+                unmatchedExtractedFiles);
+
+            foreach (var decision in decisions)
+            {
+                var archiveName = Path.GetFileName(decision.Archive.ArchivePath);
+                if (decision.ShouldDelete)
+                {
+                    try
+                    {
+                        File.Delete(decision.Archive.ArchivePath);
+                        var delOp = new IngestionOperation(archiveName, "archive-deleted", incomingLabel);
+                        result.Operations.Add(delOp);
+                        progress.Report(new IngestionProgress { NewOperation = delOp });
+                        result.FilesDeletedFromIncoming++;
+                    }
+                    catch
+                    {
+                        var failOp = new IngestionOperation(
+                            archiveName, "archive-delete-failed", "could not remove archive");
+                        result.Operations.Add(failOp);
+                        progress.Report(new IngestionProgress { NewOperation = failOp });
+                    }
+                }
+                else
+                {
+                    var presOp = new IngestionOperation(
+                        archiveName, "archive-preserved", decision.Reason);
+                    result.Operations.Add(presOp);
+                    progress.Report(new IngestionProgress { NewOperation = presOp });
                 }
             }
         }
@@ -9676,6 +9857,228 @@ public partial class MainWindow : Window
         }
     }
 
+    // ── Release-shape dispatch processor ─────────────────────────────────────
+    // Dispatches per release based on its detected shape:
+    //   single .iso  → CHD DVD Compression (chd_dvd_compression)
+    //   .cue + .bin  → CHD CD Compression  (chd_cd_compression)
+    // One derived artifact per release; .bin files are dependencies, not transform inputs.
+    // Provenance: content_identity_key = "release:{releaseId}", source_artifact_id = "".
+
+    private void ProcessReleaseShapeOrientedRelease(
+        string                       releaseId,
+        string                       safeFolder,
+        string                       sourceDir,
+        List<ReleaseFileRecord>      expectedFiles,
+        List<TransformRecord>        allTransforms,
+        List<ToolRecord>             allTools,
+        string                       appRoot,
+        string                       platformId,
+        string                       datLineId,
+        string                       releaseStatus,
+        DateTime                     now,
+        DatLineStore                 store,
+        IngestionResult              result,
+        IProgress<IngestionProgress> progress,
+        HashSet<string>              transformFailedReleases)
+    {
+        var plan = ReleaseShapeTransformPlanner.PlanRelease(releaseId, expectedFiles);
+
+        if (plan.Shape == ReleaseTransformShape.Unsupported)
+        {
+            transformFailedReleases.Add(releaseId);
+            var failOp = new IngestionOperation(safeFolder, "transform-config-error",
+                "Release shape is not supported for Per release shape strategy. " +
+                "Expected single .iso or .cue+.bin combination.");
+            result.Operations.Add(failOp);
+            progress.Report(new IngestionProgress { NewOperation = failOp });
+            return;
+        }
+
+        var xform = allTransforms.FirstOrDefault(t => t.Id == plan.TransformId);
+        if (xform == null)
+        {
+            transformFailedReleases.Add(releaseId);
+            var failOp = new IngestionOperation(safeFolder, "transform-config-error",
+                $"Transform '{plan.TransformId}' not found. Ensure chdman is configured.");
+            result.Operations.Add(failOp);
+            progress.Report(new IngestionProgress { NewOperation = failOp });
+            return;
+        }
+
+        var tool = xform.ToolId.Length > 0
+            ? allTools.FirstOrDefault(t => t.Id == xform.ToolId)
+            : null;
+
+        var ck = $"release:{releaseId}";
+
+        try
+        {
+            // ── 1. Ensure release-level content identity ──────────────────────
+            store.EnsureContentIdentity(new Data.ContentIdentityRecord
+            {
+                ContentIdentityKey = ck,
+                DatSha1            = null,
+                DatMd5             = null,
+                DatCrc32           = null,
+                CreatedAtUtc       = now,
+            });
+
+            // ── 2. Build derived artifact destination path ────────────────────
+            var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId);
+            Directory.CreateDirectory(archiveDir);
+            var outputExt  = xform.OutputExtension.Length > 0 ? xform.OutputExtension : ".chd";
+            var destName   = Path.GetFileNameWithoutExtension(plan.MainInputFile) + outputExt;
+            var destPath   = Path.Combine(archiveDir, destName);
+            var relPath    = $"archive/{platformId}/{datLineId}/{destName}";
+
+            // ── 2b. Satisfaction check — skip if artifact is already valid ────
+            // A "present" release whose CHD exists, has size > 0, and whose physical
+            // hash matches the DB record does not need to be re-transformed.
+            bool fileExistedBefore = File.Exists(destPath);
+            {
+                var existingArtifacts = store.GetDerivedArtifactsByReleaseId(releaseId);
+                var check = Ingestion.DerivedArtifactSatisfactionChecker.Check(
+                    releaseStatus, existingArtifacts, destPath);
+                if (check.IsSatisfied)
+                {
+                    var alreadyOp = new IngestionOperation(destName, "already-present", relPath);
+                    result.Operations.Add(alreadyOp);
+                    progress.Report(new IngestionProgress { NewOperation = alreadyOp });
+                    // Source files were promoted to sourceDir — delete them; the CHD covers them.
+                    foreach (var f in expectedFiles)
+                        try { File.Delete(Path.Combine(sourceDir, f.RomName)); } catch { }
+                    try
+                    {
+                        if (!Directory.EnumerateFileSystemEntries(sourceDir).Any())
+                            Directory.Delete(sourceDir);
+                    }
+                    catch { }
+                    return;
+                }
+                if (fileExistedBefore)
+                {
+                    var rebuildOp = new IngestionOperation(destName, "rebuild-required", check.Reason);
+                    result.Operations.Add(rebuildOp);
+                    progress.Report(new IngestionProgress { NewOperation = rebuildOp });
+                }
+            }
+
+            // ── 3. Transform: main input file → derived CHD ───────────────────
+            string workdirNote = "";
+            if (plan.Shape == ReleaseTransformShape.CueBin)
+            {
+                // CUE/BIN: routes through a short-path workdir so chdman never sees long filenames.
+                // File.Exists guard removed — satisfaction check above handles idempotency correctly.
+                if (!CueBinWorkdir.Run(
+                        appRoot, xform, tool, sourceDir,
+                        plan.MainInputFile, plan.DependencyFiles,
+                        destPath, out var workdirUsed, out var xformErr))
+                    throw new InvalidOperationException($"Transform failed: {xformErr}");
+                workdirNote = $"; {plan.DependencyFiles.Count} bin(s), workdir {Path.GetFileName(workdirUsed)}";
+            }
+            else
+            {
+                // SingleIso: always run via workdir; stale partial CHDs are overwritten atomically
+                // only after the workdir output.chd is fully produced and verified.
+                var mainInputPath = Path.Combine(sourceDir, plan.MainInputFile);
+                if (!IsoChdWorkdir.Run(
+                        appRoot, xform, tool, mainInputPath, destPath,
+                        out var workdirUsed, out var hardlinked, out var xformErr))
+                    throw new InvalidOperationException($"Transform failed: {xformErr}");
+                workdirNote = $"; workdir {Path.GetFileName(workdirUsed)}; materialized: {(hardlinked ? "hardlink" : "copy fallback")}";
+            }
+
+            if (fileExistedBefore)
+            {
+                var overwriteOp = new IngestionOperation(destName, "stale-artifact-overwritten", relPath);
+                result.Operations.Add(overwriteOp);
+                progress.Report(new IngestionProgress { NewOperation = overwriteOp });
+            }
+
+            // ── 4. Log transform step ─────────────────────────────────────────
+            var xformOp = new IngestionOperation(
+                plan.MainInputFile, "transform",
+                $"{xform.Name} → {destName}{workdirNote}");
+            result.Operations.Add(xformOp);
+            progress.Report(new IngestionProgress { NewOperation = xformOp });
+
+            // ── 5. Hash derived file (SHA1 + MD5 + CRC32 in one pass) ─────────
+            var (hashedDerivedSha1, hashedDerivedMd5, hashedDerivedCrc32) =
+                ComputeSourceHashes(destPath);
+
+            // ── 6. Persist source provenance + derived artifact ───────────────
+            // Source files are still present in sourceDir at this point (step 8 deletes them).
+            long totalSourceBytes = 0;
+            foreach (var f in expectedFiles)
+            {
+                try { totalSourceBytes += new FileInfo(Path.Combine(sourceDir, f.RomName)).Length; }
+                catch { /* file missing — size contribution stays 0 */ }
+            }
+            store.SaveSourceArtifact(new Data.SourceArtifactRecord
+            {
+                Id                 = Guid.NewGuid().ToString("N"),
+                ContentIdentityKey = ck,
+                SourceSizeBytes    = totalSourceBytes,
+                HashedSourceSha1   = "",
+                HashedSourceMd5    = null,
+                HashedSourceCrc32  = null,
+                VerifiedAtUtc      = now,
+            });
+
+            var derivedSizeBytes = new FileInfo(destPath).Length;
+            store.IngestDerivedArtifact(
+                contentIdentityKey: ck,
+                sourceArtifactId:   "",
+                storageStrategyId:  xform.Id,
+                fileName:           destName,
+                relativePath:       relPath,
+                derivedSizeBytes:   derivedSizeBytes,
+                hashedDerivedSha1:  hashedDerivedSha1,
+                hashedDerivedMd5:   hashedDerivedMd5,
+                hashedDerivedCrc32: hashedDerivedCrc32,
+                archiveTier:        xform.ArchiveTier);
+
+            // ── 7. Link release → release-level content identity ──────────────
+            store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord
+            {
+                Id                 = Guid.NewGuid().ToString("N"),
+                ReleaseId          = releaseId,
+                ContentIdentityKey = ck,
+                CreatedAtUtc       = now,
+            });
+
+            // ── 8. Log derived artifact committed ────────────────────────────
+            var committedOp = new IngestionOperation(
+                destName, "derived-committed",
+                $"archive/{platformId}/{datLineId}/{destName}");
+            result.Operations.Add(committedOp);
+            progress.Report(new IngestionProgress { NewOperation = committedOp });
+
+            // ── 9. Remove source files — derived artifact is valid ────────────
+            if (derivedSizeBytes > 0)
+            {
+                foreach (var f in expectedFiles)
+                {
+                    var srcPath = Path.Combine(sourceDir, f.RomName);
+                    try { File.Delete(srcPath); } catch { /* best-effort */ }
+                }
+                try
+                {
+                    if (!Directory.EnumerateFileSystemEntries(sourceDir).Any())
+                        Directory.Delete(sourceDir);
+                }
+                catch { /* best-effort */ }
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            transformFailedReleases.Add(releaseId);
+            var failOp = new IngestionOperation(safeFolder, "transform-failed", ex.Message);
+            result.Operations.Add(failOp);
+            progress.Report(new IngestionProgress { NewOperation = failOp });
+        }
+    }
+
     // ── Folder-oriented release processor — output_kind = folder ─────────────
     // Processes one promoted release folder as a single unit where the derived
     // artifact is itself a folder (no external compression):
@@ -9998,12 +10401,17 @@ public partial class MainWindow : Window
                 result.Operations.Add(okOp);
                 progress.Report(new IngestionProgress { NewOperation = okOp });
 
-                // Delete archive only on full success — safe because handle is closed above
-                File.Delete(archivePath);
-                var incomingLabel = Path.GetFileName(Path.GetDirectoryName(incomingDir)) ?? "incoming";
-                var delOp = new IngestionOperation(archiveName, "archive-deleted", incomingLabel);
-                result.Operations.Add(delOp);
-                progress.Report(new IngestionProgress { NewOperation = delOp });
+                // Record the archive and every file it produced for per-archive cleanup in Phase 9.
+                var extractedFiles = Directory.Exists(destFolder)
+                    ? (IReadOnlyList<string>)Directory
+                        .GetFiles(destFolder, "*", SearchOption.AllDirectories)
+                        .Select(Path.GetFullPath)
+                        .ToList()
+                    : (IReadOnlyList<string>)Array.Empty<string>();
+                result.ExtractedArchiveInfos.Add(new Ingestion.ExtractedArchiveInfo(
+                    archivePath,
+                    Path.GetFullPath(destFolder),
+                    extractedFiles));
             }
             catch (Exception ex)
             {
@@ -10088,18 +10496,37 @@ public partial class MainWindow : Window
             sb.AppendLine($"Date:         {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
             sb.AppendLine($"DAT Line ID:  {datLineId}");
             sb.AppendLine();
-            sb.AppendLine("COUNTS");
-            sb.AppendLine($"  Files scanned:    {result.FilesScanned}");
-            sb.AppendLine($"  Files matched:    {result.FilesMatched}");
-            sb.AppendLine($"  Files copied:     {result.FilesCopied}");
-            sb.AppendLine($"  Releases present: {result.ReleasesPresent}");
-            sb.AppendLine($"  Files skipped:    {result.FilesSkipped}");
+            sb.AppendLine("── COUNTS ─────────────────────────────────────────────────────────────────");
+            sb.AppendLine($"  Files scanned:          {result.FilesScanned}");
+            sb.AppendLine($"  Files matched:          {result.FilesMatched}");
+            sb.AppendLine($"  Files copied:           {result.FilesCopied}");
+            sb.AppendLine($"  Releases present:       {result.ReleasesPresent}");
+            sb.AppendLine($"  Releases incomplete:    {result.ReleasesIncomplete}");
+            sb.AppendLine($"  Files skipped:          {result.FilesSkipped}");
+            sb.AppendLine($"  Transforms failed:      {result.TransformsFailed}");
+            sb.AppendLine($"  Archives deleted:       {result.FilesDeletedFromIncoming}");
             sb.AppendLine();
-            sb.AppendLine("OPERATIONS");
+
+            if (result.TransformsFailed > 0 || result.ReleasesIncomplete > 0)
+            {
+                sb.AppendLine("── FAILURES ───────────────────────────────────────────────────────────────");
+                foreach (var op in result.Operations)
+                {
+                    if (op.Action == "transform-failed"    ||
+                        op.Action == "transform-config-error" ||
+                        op.Action == "incomplete-skipped")
+                        sb.AppendLine($"  {op.Object,-50} | {op.Action,-22} | {op.Destination}");
+                }
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("── OPERATIONS ─────────────────────────────────────────────────────────────");
             foreach (var op in result.Operations)
-                sb.AppendLine($"  {op.Object,-50} | {op.Action,-14} | {op.Destination}");
+                sb.AppendLine($"  {op.Object,-50} | {op.Action,-22} | {op.Destination}");
             sb.AppendLine();
-            sb.AppendLine(result.Success ? "RESULT: SUCCESS" : $"RESULT: FAILED — {result.Error}");
+            sb.AppendLine($"RESULT: {result.StatusText}");
+            if (result.Error is not null)
+                sb.AppendLine($"  ERROR: {result.Error}");
 
             File.WriteAllText(path, sb.ToString());
         }
@@ -11820,6 +12247,7 @@ public partial class MainWindow : Window
         // ── Aggregate across all per-DAT-line stores ──────────────────────────
         long totalSource  = 0;
         long totalDerived = 0;
+        int  totalDerivedCount = 0;
         var  byStrategy   = new Dictionary<string, long>(StringComparer.Ordinal);
         var  extCounts    = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         int  relMissing = 0, relPending = 0, relOutdated = 0, relPresent = 0, relLost = 0;
@@ -11832,8 +12260,9 @@ public partial class MainWindow : Window
             var store   = new DatLineStore(dbPath);
             var summary = store.GetAnalyticsSummary();
 
-            totalSource  += summary.TotalSourceBytes;
-            totalDerived += summary.TotalDerivedBytes;
+            totalSource       += summary.TotalSourceBytes;
+            totalDerived      += summary.TotalDerivedBytes;
+            totalDerivedCount += summary.TotalDerivedCount;
             foreach (var (sid, bytes) in summary.DerivedByStrategy)
                 byStrategy[sid] = byStrategy.GetValueOrDefault(sid) + bytes;
             foreach (var (ext, cnt) in summary.ExtensionCounts)
@@ -11861,7 +12290,7 @@ public partial class MainWindow : Window
         AnalyticsKpiVolumes.Text         = volumes.Count.ToString("N0");
         int critCount = volumes.Count(v => v.Health == "crit");
         AnalyticsKpiCritVolumes.Text     = critCount.ToString("N0");
-        AnalyticsKpiStoredArtifacts.Text = _catalog.CountStoredArtifacts().ToString("N0");
+        AnalyticsKpiStoredArtifacts.Text = totalDerivedCount.ToString("N0");
         AnalyticsKpiArtifactTypes.Text   = extCounts.Count.ToString("N0");
 
         // Dynamic KPI emphasis

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.ObjectModel;
+using Arkadia.Volumes;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Media;
@@ -63,9 +64,10 @@ public partial class WriteVolumeToDiskDialog : Window
         CopiedLabel.Text   = FormatBytes(copiedBytes);
         VerifiedLabel.Text = FormatBytes(verifiedBytes);
 
-        double speedBps = elapsed.TotalSeconds > 0.5 ? copiedBytes / elapsed.TotalSeconds : 0;
+        double etaSec   = AppendVerifier.CalculateEtaSeconds(copiedBytes, verifiedBytes, _totalBytes, elapsed);
+        double doneWork = copiedBytes + verifiedBytes;
+        double speedBps = elapsed.TotalSeconds > 0.5 ? doneWork / elapsed.TotalSeconds : 0;
         double speedMBs = speedBps / (1024.0 * 1024);
-        double etaSec   = speedBps > 0 ? Math.Max(0, _totalBytes - copiedBytes) / speedBps : 0;
 
         StatusLine.Text =
             $"Files: {filesProcessed:N0} / {_totalFiles:N0}  |  " +

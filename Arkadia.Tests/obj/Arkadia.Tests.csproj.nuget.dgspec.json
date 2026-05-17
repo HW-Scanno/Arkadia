@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj": {}
+    "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj": {}
   },
   "projects": {
-    "d:\\Projects\\Arkadia\\Arkadia.csproj": {
+    "D:\\Projects\\Arkadia\\Arkadia.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "d:\\Projects\\Arkadia\\Arkadia.csproj",
+        "projectUniqueName": "D:\\Projects\\Arkadia\\Arkadia.csproj",
         "projectName": "Arkadia",
-        "projectPath": "d:\\Projects\\Arkadia\\Arkadia.csproj",
+        "projectPath": "D:\\Projects\\Arkadia\\Arkadia.csproj",
         "packagesPath": "C:\\Users\\HWS\\.nuget\\packages\\",
-        "outputPath": "d:\\Projects\\Arkadia\\obj\\",
+        "outputPath": "D:\\Projects\\Arkadia\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\HWS\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -52,6 +52,8 @@
               "version": "[11.3.12, )"
             },
             "Avalonia.Diagnostics": {
+              "include": "None",
+              "suppressParent": "All",
               "target": "Package",
               "version": "[11.3.12, )"
             },
@@ -74,6 +76,12 @@
             "Microsoft.Data.Sqlite": {
               "target": "Package",
               "version": "[8.0.14, )"
+            },
+            "Microsoft.NET.ILLink.Tasks": {
+              "suppressParent": "All",
+              "target": "Package",
+              "version": "[8.0.25, )",
+              "autoReferenced": true
             },
             "Semi.Avalonia": {
               "target": "Package",
@@ -107,6 +115,24 @@
           ],
           "assetTargetFallback": true,
           "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Runtime.win-x64",
+              "version": "[8.0.25, 8.0.25]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Crossgen2.win-x64",
+              "version": "[8.0.25, 8.0.25]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Runtime.win-x64",
+              "version": "[8.0.25, 8.0.25]"
+            },
+            {
+              "name": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
+              "version": "[8.0.25, 8.0.25]"
+            }
+          ],
           "frameworkReferences": {
             "Microsoft.NETCore.App": {
               "privateAssets": "all"
@@ -114,16 +140,21 @@
           },
           "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\8.0.419/PortableRuntimeIdentifierGraph.json"
         }
+      },
+      "runtimes": {
+        "win-x64": {
+          "#import": []
+        }
       }
     },
-    "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj": {
+    "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
+        "projectUniqueName": "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
         "projectName": "Arkadia.Tests",
-        "projectPath": "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
+        "projectPath": "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
         "packagesPath": "C:\\Users\\HWS\\.nuget\\packages\\",
-        "outputPath": "d:\\Projects\\Arkadia\\Arkadia.Tests\\obj\\",
+        "outputPath": "D:\\Projects\\Arkadia\\Arkadia.Tests\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\HWS\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -138,8 +169,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "d:\\Projects\\Arkadia\\Arkadia.csproj": {
-                "projectPath": "d:\\Projects\\Arkadia\\Arkadia.csproj"
+              "D:\\Projects\\Arkadia\\Arkadia.csproj": {
+                "projectPath": "D:\\Projects\\Arkadia\\Arkadia.csproj"
               }
             }
           }

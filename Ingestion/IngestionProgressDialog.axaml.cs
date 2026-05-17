@@ -54,16 +54,27 @@ public partial class IngestionProgressDialog : Window
     private bool PassesFilter(IngestionOperation op)
     {
         var action = op.Action;
-        if (action == "hash"      && FilterHash.IsChecked      == true) return true;
-        if (action == "copy"      && FilterCopy.IsChecked      == true) return true;
-        if (action == "delete"    && FilterDelete.IsChecked    == true) return true;
-        if (action == "source"    && FilterSource.IsChecked    == true) return true;
-        if (action == "transform" && FilterTransform.IsChecked == true) return true;
-        if (action == "skip"      && FilterSkip.IsChecked      == true) return true;
-        if (action.EndsWith("-failed") && FilterFailed.IsChecked == true) return true;
-        // catch-all (e.g. discarded-by-strategy, unrecognized actions) — bucket with Skip
-        if (action != "hash" && action != "copy" && action != "delete"
-            && action != "source" && action != "transform" && !action.EndsWith("-failed")
+        if (action == "hash"               && FilterHash.IsChecked      == true) return true;
+        if (action == "copy"               && FilterCopy.IsChecked      == true) return true;
+        if (action == "stage-moved"        && FilterCopy.IsChecked      == true) return true;
+        if (action == "delete"             && FilterDelete.IsChecked    == true) return true;
+        if (action == "source-promoted"    && FilterSource.IsChecked    == true) return true;
+        if (action == "transform"                && FilterTransform.IsChecked == true) return true;
+        if (action == "derived-committed"        && FilterTransform.IsChecked == true) return true;
+        if (action == "already-present"          && FilterTransform.IsChecked == true) return true;
+        if (action == "rebuild-required"         && FilterTransform.IsChecked == true) return true;
+        if (action == "stale-artifact-overwritten" && FilterTransform.IsChecked == true) return true;
+        if (action == "skip"               && FilterSkip.IsChecked      == true) return true;
+        // incomplete-skipped is failure-like: show under Failed filter
+        if (action == "incomplete-skipped" && FilterFailed.IsChecked    == true) return true;
+        if (action.EndsWith("-failed")     && FilterFailed.IsChecked    == true) return true;
+        // catch-all (e.g. discarded-by-strategy, archive-deleted, unrecognized) — bucket with Skip
+        if (action != "hash" && action != "copy" && action != "stage-moved" && action != "delete"
+            && action != "source-promoted" && action != "transform"
+            && action != "derived-committed" && action != "already-present"
+            && action != "rebuild-required" && action != "stale-artifact-overwritten"
+            && action != "incomplete-skipped"
+            && !action.EndsWith("-failed")
             && FilterSkip.IsChecked == true) return true;
         return false;
     }
@@ -108,19 +119,53 @@ public partial class IngestionProgressDialog : Window
         CountAccepted.Text  = result.FilesMatched.ToString("N0");
         CountRejected.Text  = result.FilesSkipped.ToString("N0");
 
-        if (result.Success)
+        if (result.Error is null)
         {
             SummaryPanel.IsVisible = true;
+            SumStatusTitle.Text    = result.Status switch
+            {
+                IngestionStatus.Success        => "INGESTION COMPLETED",
+                IngestionStatus.PartialSuccess => "PARTIAL SUCCESS",
+                _                              => "FAILED",
+            };
             SumScanned.Text  = result.FilesScanned.ToString("N0");
             SumMatched.Text  = result.FilesMatched.ToString("N0");
             SumCopied.Text   = result.FilesCopied.ToString("N0");
             SumPresent.Text  = result.ReleasesPresent.ToString("N0");
             SumSkipped.Text  = result.FilesSkipped.ToString("N0");
+
+            if (result.TransformsFailed > 0 || result.ReleasesIncomplete > 0)
+            {
+                FailedPanel.IsVisible = true;
+
+                if (result.TransformsFailed > 0 && result.ReleasesIncomplete > 0)
+                {
+                    FailedTitle.Text   = "TRANSFORMS FAILED + INCOMPLETE RELEASES";
+                    FailedMessage.Text =
+                        $"{result.TransformsFailed} release(s) had transform errors; " +
+                        $"{result.ReleasesIncomplete} release(s) were incomplete (missing files). " +
+                        "See the ingestion log for details.";
+                }
+                else if (result.TransformsFailed > 0)
+                {
+                    FailedTitle.Text   = "TRANSFORMS FAILED";
+                    FailedMessage.Text =
+                        $"{result.TransformsFailed} release(s) had transform errors — see the ingestion log for details.";
+                }
+                else
+                {
+                    FailedTitle.Text   = "INCOMPLETE RELEASES";
+                    FailedMessage.Text =
+                        $"{result.ReleasesIncomplete} release(s) were incomplete (missing expected files). " +
+                        "Incoming archives have been preserved. Check staging and add the missing files.";
+                }
+            }
         }
         else
         {
             FailedPanel.IsVisible = true;
-            FailedMessage.Text    = result.Error ?? "Unknown error";
+            FailedTitle.Text      = "OPERATION FAILED";
+            FailedMessage.Text    = result.Error;
         }
 
         OkButton.IsEnabled = true;

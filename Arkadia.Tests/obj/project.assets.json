@@ -107,23 +107,6 @@
           "buildTransitive/Avalonia.BuildServices.targets": {}
         }
       },
-      "Avalonia.Controls.ColorPicker/11.3.12": {
-        "type": "package",
-        "dependencies": {
-          "Avalonia": "11.3.12",
-          "Avalonia.Remote.Protocol": "11.3.12"
-        },
-        "compile": {
-          "lib/net8.0/Avalonia.Controls.ColorPicker.dll": {
-            "related": ".xml"
-          }
-        },
-        "runtime": {
-          "lib/net8.0/Avalonia.Controls.ColorPicker.dll": {
-            "related": ".xml"
-          }
-        }
-      },
       "Avalonia.Desktop/11.3.12": {
         "type": "package",
         "dependencies": {
@@ -140,24 +123,6 @@
         },
         "runtime": {
           "lib/net8.0/Avalonia.Desktop.dll": {
-            "related": ".xml"
-          }
-        }
-      },
-      "Avalonia.Diagnostics/11.3.12": {
-        "type": "package",
-        "dependencies": {
-          "Avalonia": "11.3.12",
-          "Avalonia.Controls.ColorPicker": "11.3.12",
-          "Avalonia.Themes.Simple": "11.3.12"
-        },
-        "compile": {
-          "lib/net8.0/Avalonia.Diagnostics.dll": {
-            "related": ".xml"
-          }
-        },
-        "runtime": {
-          "lib/net8.0/Avalonia.Diagnostics.dll": {
             "related": ".xml"
           }
         }
@@ -264,22 +229,6 @@
         },
         "runtime": {
           "lib/net8.0/Avalonia.Themes.Fluent.dll": {
-            "related": ".xml"
-          }
-        }
-      },
-      "Avalonia.Themes.Simple/11.3.12": {
-        "type": "package",
-        "dependencies": {
-          "Avalonia": "11.3.12"
-        },
-        "compile": {
-          "lib/net8.0/Avalonia.Themes.Simple.dll": {
-            "related": ".xml"
-          }
-        },
-        "runtime": {
-          "lib/net8.0/Avalonia.Themes.Simple.dll": {
             "related": ".xml"
           }
         }
@@ -1476,7 +1425,6 @@
         "dependencies": {
           "Avalonia": "11.3.12",
           "Avalonia.Desktop": "11.3.12",
-          "Avalonia.Diagnostics": "11.3.12",
           "Avalonia.Fonts.Inter": "11.3.12",
           "Avalonia.Themes.Fluent": "11.3.12",
           "LibVLCSharp": "3.9.0",
@@ -1702,24 +1650,6 @@
         "tools/netstandard2.0/runtimeconfig.json"
       ]
     },
-    "Avalonia.Controls.ColorPicker/11.3.12": {
-      "sha512": "NIqh2J3LUYpKvk+eeIc6jXcPWwuL/Dr5DQF6ZL3qRETkOhGdec1G7D9aMFwxltx0cLhXPnuSpYnKPIBp31OrHw==",
-      "type": "package",
-      "path": "avalonia.controls.colorpicker/11.3.12",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "Icon.png",
-        "avalonia.controls.colorpicker.11.3.12.nupkg.sha512",
-        "avalonia.controls.colorpicker.nuspec",
-        "lib/net6.0/Avalonia.Controls.ColorPicker.dll",
-        "lib/net6.0/Avalonia.Controls.ColorPicker.xml",
-        "lib/net8.0/Avalonia.Controls.ColorPicker.dll",
-        "lib/net8.0/Avalonia.Controls.ColorPicker.xml",
-        "lib/netstandard2.0/Avalonia.Controls.ColorPicker.dll",
-        "lib/netstandard2.0/Avalonia.Controls.ColorPicker.xml"
-      ]
-    },
     "Avalonia.Desktop/11.3.12": {
       "sha512": "zwtEFNvXB60z7rHD92oISkCQq0PcFyttfAW+cgcfALECegtNkd9P9/UXIuE0GvMVBVUPTRUQeSB6/jhwZKqqRQ==",
       "type": "package",
@@ -1736,24 +1666,6 @@
         "lib/net8.0/Avalonia.Desktop.xml",
         "lib/netstandard2.0/Avalonia.Desktop.dll",
         "lib/netstandard2.0/Avalonia.Desktop.xml"
-      ]
-    },
-    "Avalonia.Diagnostics/11.3.12": {
-      "sha512": "fV+CTB/IDsFPqUVu5OQbpFLNeGLv9EmwxEjjuesJkzgT5R7mhkpLdZN3iWNC8gWkb2zfWG6mhu/q9jzDkiNhLA==",
-      "type": "package",
-      "path": "avalonia.diagnostics/11.3.12",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "Icon.png",
-        "avalonia.diagnostics.11.3.12.nupkg.sha512",
-        "avalonia.diagnostics.nuspec",
-        "lib/net6.0/Avalonia.Diagnostics.dll",
-        "lib/net6.0/Avalonia.Diagnostics.xml",
-        "lib/net8.0/Avalonia.Diagnostics.dll",
-        "lib/net8.0/Avalonia.Diagnostics.xml",
-        "lib/netstandard2.0/Avalonia.Diagnostics.dll",
-        "lib/netstandard2.0/Avalonia.Diagnostics.xml"
       ]
     },
     "Avalonia.Fonts.Inter/11.3.12": {
@@ -1863,24 +1775,6 @@
         "lib/net8.0/Avalonia.Themes.Fluent.xml",
         "lib/netstandard2.0/Avalonia.Themes.Fluent.dll",
         "lib/netstandard2.0/Avalonia.Themes.Fluent.xml"
-      ]
-    },
-    "Avalonia.Themes.Simple/11.3.12": {
-      "sha512": "Zubwo5oC2mjLGgHbkhqFIGnOLiPX6I8CfIBMknrhLH1YndKNSpm15o6jn5FASa+rshuBsylKA7iypEIPosXjWw==",
-      "type": "package",
-      "path": "avalonia.themes.simple/11.3.12",
-      "files": [
-        ".nupkg.metadata",
-        ".signature.p7s",
-        "Icon.png",
-        "avalonia.themes.simple.11.3.12.nupkg.sha512",
-        "avalonia.themes.simple.nuspec",
-        "lib/net6.0/Avalonia.Themes.Simple.dll",
-        "lib/net6.0/Avalonia.Themes.Simple.xml",
-        "lib/net8.0/Avalonia.Themes.Simple.dll",
-        "lib/net8.0/Avalonia.Themes.Simple.xml",
-        "lib/netstandard2.0/Avalonia.Themes.Simple.dll",
-        "lib/netstandard2.0/Avalonia.Themes.Simple.xml"
       ]
     },
     "Avalonia.Win32/11.3.12": {
@@ -5038,11 +4932,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
+      "projectUniqueName": "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
       "projectName": "Arkadia.Tests",
-      "projectPath": "d:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
+      "projectPath": "D:\\Projects\\Arkadia\\Arkadia.Tests\\Arkadia.Tests.csproj",
       "packagesPath": "C:\\Users\\HWS\\.nuget\\packages\\",
-      "outputPath": "d:\\Projects\\Arkadia\\Arkadia.Tests\\obj\\",
+      "outputPath": "D:\\Projects\\Arkadia\\Arkadia.Tests\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\HWS\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -5057,8 +4951,8 @@
         "net8.0": {
           "targetAlias": "net8.0",
           "projectReferences": {
-            "d:\\Projects\\Arkadia\\Arkadia.csproj": {
-              "projectPath": "d:\\Projects\\Arkadia\\Arkadia.csproj"
+            "D:\\Projects\\Arkadia\\Arkadia.csproj": {
+              "projectPath": "D:\\Projects\\Arkadia\\Arkadia.csproj"
             }
           }
         }

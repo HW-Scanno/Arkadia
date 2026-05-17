@@ -1155,6 +1155,28 @@ public sealed class DatLineStore
         return ReadDerived(r);
     }
 
+    public List<DerivedArtifactRecord> GetDerivedArtifactsByReleaseId(string releaseId)
+    {
+        var list = new List<DerivedArtifactRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT da.id, da.storage_strategy_id, da.source_artifact_id, da.content_identity_key,
+                   da.file_name, da.relative_path, da.derived_size_bytes,
+                   da.hashed_derived_sha1, da.hashed_derived_md5, da.hashed_derived_crc32,
+                   da.status, da.created_at_utc, da.verified_at_utc, da.archive_tier
+            FROM release_content_links rcl
+            JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+            WHERE rcl.release_id = $releaseId
+            ORDER BY da.file_name
+            """;
+        cmd.Parameters.AddWithValue("$releaseId", releaseId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(ReadDerived(r));
+        return list;
+    }
+
     // ── Content Identities ────────────────────────────────────────────────────
 
     /// <summary>
@@ -1634,7 +1656,8 @@ public sealed class DatLineStore
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = $"""
-            SELECT da.id, r.name, da.file_name, da.relative_path, da.derived_size_bytes
+            SELECT da.id, r.name, da.file_name, da.relative_path, da.derived_size_bytes,
+                   da.hashed_derived_sha1
             FROM derived_artifacts da
             JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
             JOIN releases              r   ON r.id = rcl.release_id
@@ -1656,6 +1679,7 @@ public sealed class DatLineStore
                 FileName          = r.GetString(2),
                 RelativePath      = r.GetString(3),
                 SizeBytes         = r.GetInt64(4),
+                ExpectedSha1      = r.GetString(5),
             });
         }
 

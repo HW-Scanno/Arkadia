@@ -48,7 +48,7 @@ public sealed class LibraryEntry
     /// <summary>Catalog DAT line ID — used to load extension mappings for transform display.</summary>
     public string DatLineId { get; init; } = "";
 
-    /// <summary>Transform strategy for this DAT line: "none", "file_extension", or "release_folder".</summary>
+    /// <summary>Transform strategy for this DAT line: "none", "file_extension", "release_folder", or "release_shape".</summary>
     public string TransformStrategyType { get; init; } = "none";
 
     /// <summary>

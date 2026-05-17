@@ -127,4 +127,79 @@ public sealed class DatLineStoreTests : IDisposable
         // Both are ISO-8601; second must be >= first
         Assert.True(string.Compare(second, first, StringComparison.Ordinal) >= 0);
     }
+
+    // ── GetDerivedArtifactsByReleaseId ────────────────────────────────────────
+
+    [Fact]
+    public void GetDerivedArtifactsByReleaseId_ReturnsRowsLinkedViaContentKey()
+    {
+        var store   = Open();
+        var relId   = "rel-shape-001";
+        var ck      = $"release:{relId}";
+        var stratId = "xform-chd";
+
+        store.EnsureContentIdentity(new ContentIdentityRecord
+        {
+            ContentIdentityKey = ck,
+            DatSha1 = null, DatMd5 = null, DatCrc32 = null,
+            CreatedAtUtc = DateTime.UtcNow,
+        });
+        store.IngestDerivedArtifact(
+            contentIdentityKey: ck,
+            sourceArtifactId:   "",
+            storageStrategyId:  stratId,
+            fileName:           "game.chd",
+            relativePath:       "archive/ps2/test/game.chd",
+            derivedSizeBytes:   1234,
+            hashedDerivedSha1:  "abc123");
+        store.SaveReleaseContentLink(new ReleaseContentLinkRecord
+        {
+            Id                 = Guid.NewGuid().ToString("N"),
+            ReleaseId          = relId,
+            ContentIdentityKey = ck,
+            CreatedAtUtc       = DateTime.UtcNow,
+        });
+
+        var derived = store.GetDerivedArtifactsByReleaseId(relId);
+        Assert.Single(derived);
+        Assert.Equal("game.chd", derived[0].FileName);
+        Assert.Equal("present",  derived[0].Status);
+        Assert.Equal(1234L,      derived[0].DerivedSizeBytes);
+    }
+
+    [Fact]
+    public void GetDerivedArtifactsByReleaseId_ReturnsEmpty_WhenNoLink()
+    {
+        var store  = Open();
+        var result = store.GetDerivedArtifactsByReleaseId("no-such-release");
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public void GetDerivedArtifactsByReleaseId_DoesNotReturnArtifactsLinkedToOtherReleases()
+    {
+        var store  = Open();
+        var ck1    = "release:rel-A";
+        var ck2    = "release:rel-B";
+        var stratId = "xform-chd";
+
+        foreach (var ck in new[] { ck1, ck2 })
+            store.EnsureContentIdentity(new ContentIdentityRecord
+            {
+                ContentIdentityKey = ck,
+                DatSha1 = null, DatMd5 = null, DatCrc32 = null,
+                CreatedAtUtc = DateTime.UtcNow,
+            });
+
+        store.IngestDerivedArtifact(ck1, "", stratId, "a.chd", "archive/a.chd", 100, "sha-a");
+        store.IngestDerivedArtifact(ck2, "", stratId, "b.chd", "archive/b.chd", 200, "sha-b");
+        store.SaveReleaseContentLink(new ReleaseContentLinkRecord
+            { Id = Guid.NewGuid().ToString("N"), ReleaseId = "rel-A", ContentIdentityKey = ck1, CreatedAtUtc = DateTime.UtcNow });
+        store.SaveReleaseContentLink(new ReleaseContentLinkRecord
+            { Id = Guid.NewGuid().ToString("N"), ReleaseId = "rel-B", ContentIdentityKey = ck2, CreatedAtUtc = DateTime.UtcNow });
+
+        var forA = store.GetDerivedArtifactsByReleaseId("rel-A");
+        Assert.Single(forA);
+        Assert.Equal("a.chd", forA[0].FileName);
+    }
 }
