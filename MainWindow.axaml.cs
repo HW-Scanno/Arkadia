@@ -2652,6 +2652,7 @@ public partial class MainWindow : Window
         VolActArtifacts.IsEnabled = hasVol
             && entry!.ArtifactCount > 0
             && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
+
     }
 
     private async void OnVolumeArtifactsDetails(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -2771,8 +2772,7 @@ public partial class MainWindow : Window
                 int processed = 0;
                 foreach (var vi in verifyInfos)
                 {
-                    var absPath = Path.Combine(volumeRoot,
-                        SafeFileName(vi.ReleaseName), vi.FileName);
+                    var absPath = Path.Combine(volumeRoot, vi.FileName);
                     string result, detail;
 
                     if (!File.Exists(absPath))
@@ -4620,8 +4620,8 @@ public partial class MainWindow : Window
             {
                 var src = Path.Combine(appRoot,
                     info.RelativePath.Replace('/', Path.DirectorySeparatorChar));
-                var dst = Path.Combine(volumeRoot,
-                    SafeFileName(info.ReleaseName), info.FileName);
+                // Flat layout: artifacts written directly into volume root, no release sub-folder.
+                var dst = Path.Combine(volumeRoot, info.FileName);
                 return (Info: info, Src: src, Dst: dst);
             })
             .Where(x => File.Exists(x.Src) && !File.Exists(x.Dst))
