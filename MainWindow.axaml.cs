@@ -1696,6 +1696,9 @@ public partial class MainWindow : Window
     private IReadOnlyList<LibraryEntry> _activeDatasetEntries = [];
     private List<LibraryDataset> _activeLibraryDatasets = [];
 
+    // Single source of truth for Library selection — tracks by ReleaseId, not list index.
+    private readonly LibrarySelectionState _librarySelection = new();
+
     // ── Disks ─────────────────────────────────────────────────────────────────
 
     private List<DiskEntry> _allDiskEntries  = [];
@@ -5497,6 +5500,9 @@ public partial class MainWindow : Window
         _activeDatasetEntries = _activeLibraryDatasets
             .FirstOrDefault(d => d.Platform == platform && d.DatLine == datLine)
             ?.Entries ?? [];
+        // Dataset changed — a ReleaseId from the old dataset must not accidentally
+        // re-match an entry in the new one (IDs are scoped per DAT-line store).
+        _librarySelection.Clear();
         ApplyLibraryFilter();
     }
 
@@ -5507,23 +5513,33 @@ public partial class MainWindow : Window
         => ApplyLibraryFilter();
 
     private void OnLibrarySelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
-        => UpdateDetailPanel(LibraryList.SelectedItem as LibraryEntry);
+    {
+        var entry = LibraryList.SelectedItem as LibraryEntry;
+        _librarySelection.Select(entry);      // record the new selection by ReleaseId
+        UpdateDetailPanel(entry);
+    }
 
     private void ApplyLibraryFilter()
     {
         var search = LibrarySearchBox.Text?.Trim() ?? string.Empty;
         var status = LibraryStatusFilter.SelectedItem as string ?? "All Statuses";
 
-        var filtered = _activeDatasetEntries
-            .Where(e => search == string.Empty ||
-                        e.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                        e.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase))
-            .Where(e => status == "All Statuses"
-                     || (status == "New" ? e.IsNew : e.Status == status))
-            .ToList();
+        var filtered = LibraryFilterService.Apply(_activeDatasetEntries, search, status);
 
+        // Suppress SelectionChanged while rebuilding ItemsSource so that Avalonia's
+        // internal selection-model update (which may auto-select by index or fire
+        // spuriously) cannot race with the explicit selection restoration below.
+        LibraryList.SelectionChanged -= OnLibrarySelectionChanged;
         LibraryList.ItemsSource = filtered;
-        UpdateDetailPanel(null);
+
+        // Restore the selection by ReleaseId (single source of truth).
+        // If the previously selected release is no longer in the filtered list, clear both
+        // the list selection and the detail pane — never leave a stale highlight visible.
+        var selectedEntry = _librarySelection.ResolveAfterFilter(filtered);
+        LibraryList.SelectedItem = selectedEntry;   // null = clear visual selection
+
+        LibraryList.SelectionChanged += OnLibrarySelectionChanged;
+        UpdateDetailPanel(selectedEntry);           // always driven by the resolved entry
 
         var total = _activeDatasetEntries.Count;
         LibraryCountText.Text = filtered.Count == total
