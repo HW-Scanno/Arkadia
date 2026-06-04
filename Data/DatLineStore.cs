@@ -235,6 +235,9 @@ public sealed class DatLineStore
         TryAddColumn(alter, "release_metadata", "release_type  TEXT NOT NULL DEFAULT ''");
         TryAddColumn(alter, "release_metadata", "rating        TEXT NOT NULL DEFAULT ''");
         TryAddColumn(alter, "release_metadata", "notes         TEXT NOT NULL DEFAULT ''");
+
+        // Add show_in_catalog (v3 migration). Existing rows default to 1 (visible).
+        TryAddColumn(alter, "releases", "show_in_catalog INTEGER NOT NULL DEFAULT 1");
     }
 
     private static void TryAddColumn(SqliteConnection conn, string table, string columnDef)
@@ -265,8 +268,8 @@ public sealed class DatLineStore
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO releases(id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key, introduced_at_utc, content_category_id)
-                VALUES($id, $datLineId, $name, $status, $tier, $region, $languages, $format, $size, $contentKey, $introducedAt, $contentCategoryId)
+                INSERT INTO releases(id, dat_line_id, name, status, tier, region, languages, format, size, release_content_key, introduced_at_utc, content_category_id, show_in_catalog)
+                VALUES($id, $datLineId, $name, $status, $tier, $region, $languages, $format, $size, $contentKey, $introducedAt, $contentCategoryId, $showInCatalog)
                 """;
             cmd.Parameters.AddWithValue("$id",                r.Id);
             cmd.Parameters.AddWithValue("$datLineId",         r.DatLineId);
@@ -282,6 +285,7 @@ public sealed class DatLineStore
                 ? (object)r.IntroducedAtUtc.Value.ToString("o")
                 : DBNull.Value);
             cmd.Parameters.AddWithValue("$contentCategoryId", r.ContentCategoryId.Length > 0 ? r.ContentCategoryId : "games");
+            cmd.Parameters.AddWithValue("$showInCatalog",     r.ShowInCatalog ? 1 : 0);
             cmd.ExecuteNonQuery();
         }
 
@@ -316,7 +320,7 @@ public sealed class DatLineStore
                        ''
                    ) AS effective_tier,
                    r.region, r.languages, r.format, r.size, r.release_content_key, r.introduced_at_utc,
-                   r.content_category_id
+                   r.content_category_id, COALESCE(r.show_in_catalog, 1)
             FROM releases r
             ORDER BY r.name
             """;
@@ -337,6 +341,7 @@ public sealed class DatLineStore
                 IntroducedAtUtc     = reader.IsDBNull(10) ? null
                     : DateTime.Parse(reader.GetString(10)),
                 ContentCategoryId   = reader.IsDBNull(11) ? "games" : reader.GetString(11),
+                ShowInCatalog       = reader.IsDBNull(12) || reader.GetInt64(12) != 0,
             });
         return list;
     }
@@ -358,7 +363,7 @@ public sealed class DatLineStore
                        ''
                    ) AS effective_tier,
                    r.region, r.languages, r.format, r.size, r.release_content_key, r.introduced_at_utc,
-                   r.content_category_id
+                   r.content_category_id, COALESCE(r.show_in_catalog, 1)
             FROM releases r
             WHERE r.dat_line_id = $datLineId
             ORDER BY r.name
@@ -381,6 +386,7 @@ public sealed class DatLineStore
                 IntroducedAtUtc   = reader.IsDBNull(10) ? null
                     : DateTime.Parse(reader.GetString(10)),
                 ContentCategoryId = reader.IsDBNull(11) ? "games" : reader.GetString(11),
+                ShowInCatalog     = reader.IsDBNull(12) || reader.GetInt64(12) != 0,
             });
         return list;
     }
@@ -825,10 +831,10 @@ public sealed class DatLineStore
     }
 
     /// <summary>
-    /// Returns counts for all five release statuses in a single query.
-    /// Used by the dashboard to avoid loading every release row into memory.
+    /// Returns counts for all release statuses in a single query.
+    /// Used by the dashboard and analytics to avoid loading every release row.
     /// </summary>
-    public (int Missing, int Pending, int Outdated, int Present, int Lost) GetAllStatusCounts()
+    public (int Missing, int Pending, int Outdated, int Present, int Lost, int Unwanted) GetAllStatusCounts()
     {
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
@@ -838,13 +844,14 @@ public sealed class DatLineStore
                 COALESCE(SUM(CASE WHEN status = 'pending'  THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN status = 'outdated' THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN status = 'present'  THEN 1 ELSE 0 END), 0),
-                COALESCE(SUM(CASE WHEN status = 'lost'     THEN 1 ELSE 0 END), 0)
+                COALESCE(SUM(CASE WHEN status = 'lost'     THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'unwanted' THEN 1 ELSE 0 END), 0)
             FROM releases
             """;
         using var reader = cmd.ExecuteReader();
-        if (!reader.Read()) return (0, 0, 0, 0, 0);
+        if (!reader.Read()) return (0, 0, 0, 0, 0, 0);
         return (reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2),
-                reader.GetInt32(3), reader.GetInt32(4));
+                reader.GetInt32(3), reader.GetInt32(4), reader.GetInt32(5));
     }
 
     /// <summary>
@@ -1106,7 +1113,7 @@ public sealed class DatLineStore
                     ELSE 'missing'
                 END
                 WHERE id IN ({rp})
-                  AND status NOT IN ('outdated', 'pending')
+                  AND status NOT IN ('outdated', 'pending', 'unwanted')
                 """;
             for (int i = 0; i < releaseIds.Count; i++)
                 updCmd.Parameters.AddWithValue($"$r{i}", releaseIds[i]);
@@ -2410,6 +2417,47 @@ public sealed class DatLineStore
         cmd.Parameters.AddWithValue("$releaseId", releaseId);
         cmd.Parameters.AddWithValue("$mediaType", mediaType);
         cmd.Parameters.AddWithValue("$filePath",  filePath);
+        cmd.ExecuteNonQuery();
+    }
+
+    // ── Purge support ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Hard-deletes a single derived_artifact row by ID.
+    /// Call only after the physical file has been confirmed absent.
+    /// </summary>
+    public void DeleteDerivedArtifactRow(string derivedArtifactId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM derived_artifacts WHERE id = $id";
+        cmd.Parameters.AddWithValue("$id", derivedArtifactId);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Hard-deletes all release_content_links rows for the given release.
+    /// Call as part of Purge after all derived artifacts have been removed.
+    /// </summary>
+    public void DeleteReleaseContentLinks(string releaseId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM release_content_links WHERE release_id = $rid";
+        cmd.Parameters.AddWithValue("$rid", releaseId);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// Sets show_in_catalog for the given release. 1 = visible, 0 = hidden.
+    /// </summary>
+    public void SetShowInCatalog(string releaseId, bool visible)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "UPDATE releases SET show_in_catalog = $v WHERE id = $id";
+        cmd.Parameters.AddWithValue("$v",  visible ? 1 : 0);
+        cmd.Parameters.AddWithValue("$id", releaseId);
         cmd.ExecuteNonQuery();
     }
 

@@ -21,6 +21,7 @@ public static class LibraryFilterService
     /// <param name="statusFilter">
     ///     "All Statuses" passes everything.
     ///     "New" passes entries where <see cref="LibraryEntry.IsNew"/> is true.
+    ///     "Hidden" passes entries where <see cref="LibraryEntry.ShowInCatalog"/> is false.
     ///     Any other value is matched exactly against <see cref="LibraryEntry.Status"/>.
     /// </param>
     public static List<LibraryEntry> Apply(
@@ -33,7 +34,9 @@ public static class LibraryFilterService
                         e.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                         e.DisplayName.Contains(search, StringComparison.OrdinalIgnoreCase))
             .Where(e => statusFilter == "All Statuses"
-                     || (statusFilter == "New" ? e.IsNew : e.Status == statusFilter))
+                     || (statusFilter == "New"    ? e.IsNew
+                       : statusFilter == "Hidden" ? !e.ShowInCatalog
+                       : e.Status == statusFilter))
             .ToList();
     }
 }

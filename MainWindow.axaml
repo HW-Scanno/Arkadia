@@ -980,6 +980,11 @@
                                 <TextBlock x:Name="DetailStorageTitle" Classes="widget-title" Text="STORAGE" Margin="0,0,0,10" IsVisible="False"/>
                                 <StackPanel x:Name="DetailStorageList" Spacing="6" IsVisible="False"/>
 
+                                <!-- ACTIONS section -->
+                                <Border x:Name="DetailActionsDivider" Classes="card-divider" Margin="0,16,0,14" IsVisible="False"/>
+                                <TextBlock x:Name="DetailActionsTitle" Classes="widget-title" Text="ACTIONS" Margin="0,0,0,10" IsVisible="False"/>
+                                <StackPanel x:Name="DetailActionsPanel" Spacing="6" IsVisible="False"/>
+
                                 <!-- DEBUG INFO section (visibility controlled by show_debug_artifact_info setting) -->
                                 <Border x:Name="DetailDebugDivider"    Classes="card-divider" Margin="0,16,0,14" IsVisible="False"/>
                                 <TextBlock x:Name="DetailDebugTitle"   Classes="widget-title" Text="DEBUG INFO" Margin="0,0,0,10" IsVisible="False"/>

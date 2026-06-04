@@ -5358,7 +5358,7 @@ public partial class MainWindow : Window
     private void InitLibrary()
     {
         RebuildLibraryDatasets();
-        LibraryStatusFilter.ItemsSource   = new[] { "All Statuses", "Present", "Outdated", "Pending", "Missing", "Lost", "New" };
+        LibraryStatusFilter.ItemsSource   = new[] { "All Statuses", "Present", "Outdated", "Pending", "Missing", "Lost", "Unwanted", "New", "Hidden" };
         LibraryStatusFilter.SelectedIndex = 0;
     }
 
@@ -5411,6 +5411,7 @@ public partial class MainWindow : Window
                         DatLineId             = dl.Id,
                         TransformStrategyType = dl.TransformStrategyType,
                         IntroducedAtUtc       = r.IntroducedAtUtc,
+                        ShowInCatalog         = r.ShowInCatalog,
                     };
                 })
                 .ToList();
@@ -5806,6 +5807,14 @@ public partial class MainWindow : Window
         DetailStorageTitle.IsVisible   = showStorage;
         DetailStorageList.IsVisible    = showStorage;
 
+        // ACTIONS — Purge / Mark Unwanted / Restore Wanted / Catalog Visibility
+        DetailActionsPanel.Children.Clear();
+        BuildDetailActions(entry);
+        bool showActions = DetailActionsPanel.Children.Count > 0;
+        DetailActionsDivider.IsVisible = showActions;
+        DetailActionsTitle.IsVisible   = showActions;
+        DetailActionsPanel.IsVisible   = showActions;
+
         // DEBUG INFO — only rendered when the setting is enabled
         DetailDebugDivider.IsVisible  = _showDebugArtifactInfo;
         DetailDebugTitle.IsVisible    = _showDebugArtifactInfo;
@@ -5850,6 +5859,201 @@ public partial class MainWindow : Window
                 Sha1      = rom.Sha1,
             });
         return result;
+    }
+
+    // ── Detail pane action buttons ────────────────────────────────────────────
+
+    private void BuildDetailActions(Library.LibraryEntry entry)
+    {
+        var appRoot = AppContext.BaseDirectory;
+        var status  = entry.Status;
+
+        if (status == "Unwanted")
+        {
+            // Restore Wanted
+            var restoreBtn = MakeActionButton("Restore Wanted", "#4CAF50");
+            restoreBtn.Click += async (_, _) =>
+            {
+                var relName1 = entry.DisplayName.Length > 0 ? entry.DisplayName : entry.Name;
+                var ok = await new ConfirmDialog("Restore Wanted",
+                    $"Mark \"{relName1}\" as wanted again?\n\n" +
+                    "Status will be set to Missing. No files are restored.")
+                    .ShowDialog<bool>(this);
+                if (!ok) return;
+
+                if (entry.DbPath.Length > 0 && File.Exists(entry.DbPath))
+                {
+                    var store = new Data.DatLineStore(entry.DbPath);
+                    store.UpdateReleaseStatus(entry.ReleaseId, "missing");
+                    store.SetShowInCatalog(entry.ReleaseId, true);
+                }
+                RebuildLibraryDatasets();
+                BuildAnalytics();
+                ApplyLibraryFilter();
+            };
+            DetailActionsPanel.Children.Add(restoreBtn);
+
+            // Show / Hide in catalog
+            AddCatalogVisibilityButton(entry);
+            return;
+        }
+
+        // Show / Hide in catalog — available for all statuses
+        AddCatalogVisibilityButton(entry);
+
+        bool hasArtifacts = entry.RomFiles.Count > 0 && entry.DbPath.Length > 0 &&
+                            File.Exists(entry.DbPath) &&
+                            new Data.DatLineStore(entry.DbPath)
+                                .GetDerivedArtifactIdsByRelease(entry.ReleaseId).Count > 0;
+
+        if (hasArtifacts)
+        {
+            // Purge button — only when artifacts exist
+            var purgeBtn = MakeActionButton("Purge…", "#EF5350");
+            purgeBtn.Click += async (_, _) => await OnPurgeRelease(entry, appRoot);
+            DetailActionsPanel.Children.Add(purgeBtn);
+        }
+        else if (status != "Present")
+        {
+            // Mark as Unwanted — only when no physical artifacts
+            var unwantedBtn = MakeActionButton("Mark as Unwanted", "#9E9E9E");
+            unwantedBtn.Click += async (_, _) =>
+            {
+                var relName2 = entry.DisplayName.Length > 0 ? entry.DisplayName : entry.Name;
+                var ok = await new ConfirmDialog("Mark as Unwanted",
+                    $"Mark \"{relName2}\" as Unwanted?\n\n" +
+                    "This release will be excluded from the wanted set and hidden from the catalog.")
+                    .ShowDialog<bool>(this);
+                if (!ok) return;
+
+                if (entry.DbPath.Length > 0 && File.Exists(entry.DbPath))
+                {
+                    var store = new Data.DatLineStore(entry.DbPath);
+                    store.UpdateReleaseStatus(entry.ReleaseId, "unwanted");
+                    store.SetShowInCatalog(entry.ReleaseId, false);
+                }
+                RebuildLibraryDatasets();
+                BuildAnalytics();
+                ApplyLibraryFilter();
+            };
+            DetailActionsPanel.Children.Add(unwantedBtn);
+        }
+    }
+
+    private void AddCatalogVisibilityButton(Library.LibraryEntry entry)
+    {
+        var label = entry.ShowInCatalog ? "Hide from Catalog" : "Show in Catalog";
+        var btn   = MakeActionButton(label, "#7B68EE");
+        btn.Click += async (_, _) =>
+        {
+            if (entry.DbPath.Length > 0 && File.Exists(entry.DbPath))
+            {
+                var store = new Data.DatLineStore(entry.DbPath);
+                store.SetShowInCatalog(entry.ReleaseId, !entry.ShowInCatalog);
+            }
+            await System.Threading.Tasks.Task.CompletedTask; // satisfy async
+            RebuildLibraryDatasets();
+            ApplyLibraryFilter();
+        };
+        DetailActionsPanel.Children.Add(btn);
+    }
+
+    private async System.Threading.Tasks.Task OnPurgeRelease(Library.LibraryEntry entry, string appRoot)
+    {
+        var planner = new Purge.PurgeReleasePlanner(appRoot, _catalog);
+        var plan    = planner.Plan(
+            entry.ReleaseId,
+            entry.DisplayName.Length > 0 ? entry.DisplayName : entry.Name,
+            entry.Status,
+            entry.DatLineId,
+            entry.DbPath);
+
+        // Build human-readable plan summary
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine($"Release: {plan.ReleaseName}");
+        sb.AppendLine($"Status:  {plan.CurrentStatus}");
+        sb.AppendLine();
+
+        if (plan.LocalArtifacts.Count > 0)
+        {
+            sb.AppendLine($"Local archive files ({plan.LocalArtifacts.Count}):");
+            foreach (var la in plan.LocalArtifacts)
+                sb.AppendLine($"  {la.FileName}  {FormatBytes(la.Bytes)}" +
+                              (la.FileExists ? "" : "  [already absent]"));
+            sb.AppendLine($"  → {FormatBytes(plan.TotalLocalBytes)} freed from archive");
+            sb.AppendLine();
+        }
+
+        if (plan.VolumeArtifacts.Count > 0)
+        {
+            sb.AppendLine($"Volume copies ({plan.VolumeArtifacts.Count}):");
+            foreach (var va in plan.VolumeArtifacts)
+                sb.AppendLine($"  {va.VolumeLabel} / {va.FileName}  {FormatBytes(va.Bytes)}" +
+                              (va.DiskMounted ? "" : $"  [disk {va.DiskLabel} offline]"));
+            sb.AppendLine($"  → {FormatBytes(plan.TotalVolumeBytes)} freed from volumes");
+            sb.AppendLine();
+        }
+
+        if (plan.OfflineDiskLabels.Count > 0)
+            sb.AppendLine($"⚠ Required disks offline: {string.Join(", ", plan.OfflineDiskLabels)}");
+
+        foreach (var w in plan.Warnings) sb.AppendLine($"⚠ {w}");
+        foreach (var i in plan.Issues)   sb.AppendLine($"✗ {i}");
+
+        if (!plan.CanExecute)
+        {
+            await new InfoDialog("Purge Blocked", sb.ToString()).ShowDialog<bool>(this);
+            return;
+        }
+
+        sb.AppendLine();
+        sb.AppendLine("This action is irreversible. Type your confirmation below.");
+
+        var ok = await new ConfirmDialog("Confirm Purge", sb.ToString()).ShowDialog<bool>(this);
+        if (!ok) return;
+
+        var svc    = new Purge.PurgeReleaseService(appRoot, _catalog);
+        var result = svc.Execute(plan);
+
+        if (!result.Success)
+        {
+            await new InfoDialog("Purge Failed", result.ErrorMessage ?? "Unknown error.").ShowDialog<bool>(this);
+            return;
+        }
+
+        var summary = new System.Text.StringBuilder();
+        summary.AppendLine($"Release marked UNWANTED.");
+        summary.AppendLine($"Files deleted: {result.FilesDeleted}");
+        if (result.LocalBytesFreed > 0)
+            summary.AppendLine($"Archive freed: {FormatBytes(result.LocalBytesFreed)}");
+        if (result.VolumeBytesFreed > 0)
+            summary.AppendLine($"Volume freed:  {FormatBytes(result.VolumeBytesFreed)}");
+        if (result.RefreshedVolumeLabels.Count > 0)
+            summary.AppendLine($"Volumes refreshed: {string.Join(", ", result.RefreshedVolumeLabels)}");
+
+        await new InfoDialog("Purge Complete", summary.ToString()).ShowDialog<bool>(this);
+
+        RebuildLibraryDatasets();
+        BuildAnalytics();
+        ApplyLibraryFilter();
+        RefreshDiskDetailIfSelected();
+    }
+
+    private static Button MakeActionButton(string label, string hexColor)
+    {
+        var btn = new Button
+        {
+            Content             = label,
+            FontSize            = 12,
+            Padding             = new Avalonia.Thickness(10, 5),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left,
+            Background          = new SolidColorBrush(Color.Parse("#1A1A2E")),
+            Foreground          = new SolidColorBrush(Color.Parse(hexColor)),
+            BorderBrush         = new SolidColorBrush(Color.Parse(hexColor)),
+            BorderThickness     = new Avalonia.Thickness(1),
+            CornerRadius        = new Avalonia.CornerRadius(4),
+        };
+        return btn;
     }
 
     private static bool IsSourceVerified(Data.ReleaseFileRecord f, Data.SourceArtifactRecord? src)
@@ -6484,7 +6688,7 @@ public partial class MainWindow : Window
             if (dl.DataStorePath.Length == 0) continue;
             var dbPath = Path.Combine(_dataDir, dl.DataStorePath);
             if (!File.Exists(dbPath)) continue;
-            var (missing, pending, outdated, present, _) = new DatLineStore(dbPath).GetAllStatusCounts();
+            var (missing, pending, outdated, present, _, _) = new DatLineStore(dbPath).GetAllStatusCounts();
             relMissing  += missing;
             relPending  += pending;
             relOutdated += outdated;
@@ -12232,7 +12436,7 @@ public partial class MainWindow : Window
         double                     SavedPct,
         Dictionary<string, long>   DerivedByStrategy,
         Dictionary<string, int>    ExtensionCounts,
-        int RelMissing, int RelPending, int RelOutdated, int RelPresent, int RelLost,
+        int RelMissing, int RelPending, int RelOutdated, int RelPresent, int RelLost, int RelUnwanted,
         List<VolumeRecord>         Volumes,
         Dictionary<string, string> PlatformNames,
         Dictionary<string, string> DatLineNames,
@@ -12266,7 +12470,7 @@ public partial class MainWindow : Window
         int  totalDerivedCount = 0;
         var  byStrategy   = new Dictionary<string, long>(StringComparer.Ordinal);
         var  extCounts    = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        int  relMissing = 0, relPending = 0, relOutdated = 0, relPresent = 0, relLost = 0;
+        int  relMissing = 0, relPending = 0, relOutdated = 0, relPresent = 0, relLost = 0, relUnwanted = 0;
 
         foreach (var dl in datLines)
         {
@@ -12284,9 +12488,10 @@ public partial class MainWindow : Window
             foreach (var (ext, cnt) in summary.ExtensionCounts)
                 extCounts[ext] = extCounts.GetValueOrDefault(ext) + cnt;
 
-            var (m, pe, o, pr, l) = store.GetAllStatusCounts();
+            var (m, pe, o, pr, l, u) = store.GetAllStatusCounts();
             relMissing  += m;  relPending  += pe;
-            relOutdated += o;  relPresent  += pr;  relLost += l;
+            relOutdated += o;  relPresent  += pr;
+            relLost     += l;  relUnwanted += u;
         }
 
         long   savedBytes = Math.Max(0L, totalSource - totalDerived);
@@ -12295,7 +12500,7 @@ public partial class MainWindow : Window
         _analyticsData = new AnalyticsData(
             totalSource, totalDerived, savedBytes, savedPct,
             byStrategy, extCounts,
-            relMissing, relPending, relOutdated, relPresent, relLost,
+            relMissing, relPending, relOutdated, relPresent, relLost, relUnwanted,
             volumes, platNames, dlNames, stratNames);
 
         // ── KPI strip ─────────────────────────────────────────────────────────
@@ -12331,7 +12536,7 @@ public partial class MainWindow : Window
         AnalyticsBuildSectionC(extCounts);
         AnalyticsBuildSectionD(volumes, platNames, dlNames, volArtCounts);
         AnalyticsBuildSectionDisk();
-        AnalyticsBuildSectionE(relMissing, relPending, relOutdated, relPresent, relLost, volumes);
+        AnalyticsBuildSectionE(relMissing, relPending, relOutdated, relPresent, relLost, relUnwanted, volumes);
     }
 
     /// <summary>
@@ -13241,19 +13446,27 @@ public partial class MainWindow : Window
     // ── Section E: Archive State Overview ─────────────────────────────────────
 
     private void AnalyticsBuildSectionE(
-        int missing, int pending, int outdated, int present, int lost,
+        int missing, int pending, int outdated, int present, int lost, int unwanted,
         List<VolumeRecord> volumes)
     {
         // Release status
         AnalyticsReleaseStatusPanel.Children.Clear();
-        int relTotal = missing + pending + outdated + present + lost;
+        int relTotal  = missing + pending + outdated + present + lost + unwanted;
+        int relWanted = relTotal - unwanted;   // DAT total minus explicitly excluded
+
+        // Coverage metrics
+        double wantedCoveragePct = relWanted > 0 ? present * 100.0 / relWanted : 0.0;
+        double fullDatCoveragePct = relTotal > 0
+            ? (present + unwanted) * 100.0 / relTotal : 0.0;  // unwanted are "done" in DAT terms
+
         var relRows  = new (string Label, int Count, string Hex)[]
         {
             ("Present",  present,  "#4CAF50"),  // green  — canonical present
-            ("Missing",  missing,  "#FFA726"),  // orange — matches Library StatusBrush
-            ("Outdated", outdated, "#FF8A65"),  // salmon — matches Library StatusBrush
-            ("Pending",  pending,  "#FFD54F"),  // amber  — matches Library StatusBrush
-            ("Lost",     lost,     "#EF5350"),  // red    — canonical lost
+            ("Missing",  missing,  "#FFA726"),  // orange
+            ("Outdated", outdated, "#FF8A65"),  // salmon
+            ("Pending",  pending,  "#FFD54F"),  // amber
+            ("Lost",     lost,     "#EF5350"),  // red
+            ("Unwanted", unwanted, "#9E9E9E"),  // grey   — user decision, excluded from wanted set
         };
         foreach (var (lbl, cnt, hex) in relRows)
         {
@@ -13262,6 +13475,20 @@ public partial class MainWindow : Window
                 MakeBarRow(lbl, cnt, Math.Max(relTotal, 1), $"{cnt:N0} ({pct:F1}%)", Color.Parse(hex),
                            labelWidth: 75, valueWidth: 110));
         }
+
+        // Coverage summary rows
+        AnalyticsReleaseStatusPanel.Children.Add(new Border
+        {
+            Height     = 1,
+            Background = new SolidColorBrush(Color.Parse("#222233")),
+            Margin     = new Avalonia.Thickness(0, 8, 0, 8),
+        });
+        AnalyticsReleaseStatusPanel.Children.Add(
+            MakeCoverageRow("Wanted",   $"{relWanted:N0} releases",    $"{wantedCoveragePct:F1}%",   Color.Parse("#4CAF50")));
+        AnalyticsReleaseStatusPanel.Children.Add(
+            MakeCoverageRow("Full DAT", $"{relTotal:N0} releases",     $"{fullDatCoveragePct:F1}%",  Color.Parse("#7B68EE")));
+        AnalyticsReleaseStatusPanel.Children.Add(
+            MakeCoverageRow("Unwanted", $"{unwanted:N0} excluded",     "",                           Color.Parse("#9E9E9E")));
 
         // Volume health
         AnalyticsVolumeHealthPanel.Children.Clear();
@@ -13284,7 +13511,48 @@ public partial class MainWindow : Window
         }
     }
 
-    // ── Shared helper ─────────────────────────────────────────────────────────
+    // ── Shared helpers ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Two-column coverage summary row: [label + denominator] [coverage %].
+    /// Used in Section E to show Wanted and Full DAT coverage at a glance.
+    /// </summary>
+    private static Grid MakeCoverageRow(string label, string denominator, string pct, Color pctColor)
+    {
+        var row = new Grid { Margin = new Avalonia.Thickness(0, 2, 0, 2) };
+        row.ColumnDefinitions = new ColumnDefinitions("*,Auto");
+
+        var left = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 6 };
+        left.Children.Add(new TextBlock
+        {
+            Text       = label,
+            FontSize   = 11,
+            FontWeight = FontWeight.SemiBold,
+            Foreground = new SolidColorBrush(Color.Parse("#AAAACC")),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        });
+        if (denominator.Length > 0)
+            left.Children.Add(new TextBlock
+            {
+                Text       = denominator,
+                FontSize   = 10,
+                Foreground = new SolidColorBrush(Color.Parse("#555566")),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            });
+        row.Children.Add(left);
+
+        if (pct.Length > 0)
+            row.Children.Add(new TextBlock
+            {
+                Text       = pct,
+                FontSize   = 12,
+                FontWeight = FontWeight.SemiBold,
+                Foreground = new SolidColorBrush(pctColor),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                [Grid.ColumnProperty] = 1,
+            });
+        return row;
+    }
 
     private static TextBlock EmptyNote(string text) => new()
     {

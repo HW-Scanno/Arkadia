@@ -9,9 +9,15 @@ public sealed class ReleaseRecord
     public string Name      { get; set; } = "";
     /// <summary>
     /// Lowercase status value.
-    /// Allowed values: "present", "pending", "missing", "lost", "outdated".
+    /// Allowed values: "present", "pending", "missing", "lost", "outdated", "unwanted".
     /// </summary>
     public string Status    { get; set; } = "missing";
+
+    /// <summary>
+    /// Whether this release is shown in the normal catalog view.
+    /// Defaults to true. Unwanted releases default to hidden.
+    /// </summary>
+    public bool ShowInCatalog { get; set; } = true;
     /// <summary>"A", "B", "C", or empty string.</summary>
     public string Tier      { get; set; } = "";
     public string Region    { get; set; } = "";

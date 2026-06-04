@@ -2051,6 +2051,85 @@ public sealed class CatalogService
         return result;
     }
 
+    // ── Purge support ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns volume_artifact rows for a given derived artifact ID across all volumes.
+    /// Used by the purge planner to discover which volumes hold a release's artifacts.
+    /// </summary>
+    public List<VolumeArtifactRecord> GetVolumeArtifactsByDerivedId(string derivedArtifactId)
+    {
+        var list = new List<VolumeArtifactRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, volume_id, dat_line_id, derived_artifact_id, content_identity_key, status, added_at_utc
+            FROM volume_artifacts
+            WHERE derived_artifact_id = $did
+            """;
+        cmd.Parameters.AddWithValue("$did", derivedArtifactId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(new VolumeArtifactRecord
+            {
+                Id                 = r.GetString(0),
+                VolumeId           = r.GetString(1),
+                DatLineId          = r.GetString(2),
+                DerivedArtifactId  = r.GetString(3),
+                ContentIdentityKey = r.GetString(4),
+                Status             = r.GetString(5),
+                AddedAtUtc         = DateTime.Parse(r.GetString(6)),
+            });
+        return list;
+    }
+
+    /// <summary>
+    /// Returns a single volume by ID, or null if not found.
+    /// </summary>
+    public VolumeRecord? GetVolumeById(string volumeId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, label, hardware_family_id, dat_line_id, status,
+                   planned_size_bytes, actual_size_bytes, created_at, verified_at, health
+            FROM volumes WHERE id = $id
+            """;
+        cmd.Parameters.AddWithValue("$id", volumeId);
+        using var r = cmd.ExecuteReader();
+        return r.Read() ? ReadVolume(r) : null;
+    }
+
+    /// <summary>
+    /// Hard-deletes a single volume_artifact row by its ID.
+    /// Call only after the physical file has been confirmed absent.
+    /// Adjusts volumes.actual_size_bytes by decrementing <paramref name="artifactBytes"/>.
+    /// </summary>
+    public void DeleteVolumeArtifactRow(string volumeArtifactId, string volumeId, long artifactBytes)
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        using var del = conn.CreateCommand();
+        del.Transaction = tx;
+        del.CommandText = "DELETE FROM volume_artifacts WHERE id = $id";
+        del.Parameters.AddWithValue("$id", volumeArtifactId);
+        del.ExecuteNonQuery();
+
+        using var upd = conn.CreateCommand();
+        upd.Transaction = tx;
+        upd.CommandText = """
+            UPDATE volumes
+            SET actual_size_bytes = MAX(0, actual_size_bytes - $bytes)
+            WHERE id = $vid
+            """;
+        upd.Parameters.AddWithValue("$bytes", artifactBytes);
+        upd.Parameters.AddWithValue("$vid",   volumeId);
+        upd.ExecuteNonQuery();
+
+        tx.Commit();
+    }
+
     // ── Volume Deletion ───────────────────────────────────────────────────────
 
     /// <summary>

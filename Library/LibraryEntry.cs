@@ -22,8 +22,11 @@ public sealed class LibraryEntry
     /// <summary>Catalog metadata for this release, if populated. Null when no metadata exists.</summary>
     public ReleaseMetadataRecord? Metadata { get; set; }
 
-    /// <summary>Human-readable status: "Present", "Pending", "Missing", "Lost", or "Outdated".</summary>
+    /// <summary>Human-readable status: "Present", "Pending", "Missing", "Lost", "Outdated", or "Unwanted".</summary>
     public required string Status   { get; init; }
+
+    /// <summary>Whether this release is shown in the default catalog view.</summary>
+    public bool ShowInCatalog { get; init; } = true;
 
     public required string Region    { get; set; }
     public required string Languages { get; init; }
@@ -60,8 +63,8 @@ public sealed class LibraryEntry
     /// <summary>True when this release was newly introduced by a DAT update (change marker).</summary>
     public bool IsNew => IntroducedAtUtc.HasValue;
 
-    /// <summary>Display value: "—" for Missing/Pending status or unassigned tier; otherwise the raw tier.</summary>
-    public string TierDisplay => Status is "Missing" or "Pending" || Tier == "" ? "—" : Tier;
+    /// <summary>Display value: "—" for Missing/Pending/Unwanted status or unassigned tier; otherwise the raw tier.</summary>
+    public string TierDisplay => Status is "Missing" or "Pending" or "Unwanted" || Tier == "" ? "—" : Tier;
 
     /// <summary>Foreground brush derived from <see cref="Status"/> — used directly in the row template.</summary>
     public IBrush StatusBrush => Status switch
@@ -71,6 +74,7 @@ public sealed class LibraryEntry
         "Missing"  => new SolidColorBrush(Color.Parse("#FFA726")),
         "Outdated" => new SolidColorBrush(Color.Parse("#FF8A65")),
         "Lost"     => new SolidColorBrush(Color.Parse("#EF5350")),
+        "Unwanted" => new SolidColorBrush(Color.Parse("#9E9E9E")),
         _          => new SolidColorBrush(Color.Parse("#888899")),
     };
 
