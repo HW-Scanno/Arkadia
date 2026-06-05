@@ -7780,7 +7780,10 @@ public partial class MainWindow : Window
 
     private void InitCatalog()
     {
-        CatalogStatusFilter.ItemsSource   = new[] { "All Statuses", "Present", "Outdated", "Pending", "Missing", "Lost", "New" };
+        CatalogStatusFilter.ItemsSource   = new[] {
+            "All Statuses", "Present", "Outdated", "Pending", "Missing", "Lost", "New",
+            "Unwanted", "Hidden",
+        };
         CatalogStatusFilter.SelectedIndex = 0;
         BuildCatalogJumpList();
 
@@ -7853,15 +7856,8 @@ public partial class MainWindow : Window
         var search = CatalogSearch.Text?.Trim() ?? string.Empty;
         var status = CatalogStatusFilter.SelectedItem as string ?? "All Statuses";
 
-        // Search matches raw DAT name and metadata title (when available)
-        _filteredCatalogEntries = _catalogDatasetEntries
-            .Where(e => search == string.Empty ||
-                        e.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
-                        (e.Metadata?.Title is { Length: > 0 } t &&
-                         t.Contains(search, StringComparison.OrdinalIgnoreCase)))
-            .Where(e => status == "All Statuses" ||
-                        (status == "New" ? e.IsNew : e.Status == status))
-            .ToList();
+        _filteredCatalogEntries = Catalog.CatalogFilterService.Apply(
+            _catalogDatasetEntries, search, status);
 
         var total = _catalogDatasetEntries.Count;
         CatalogCountText.Text = _filteredCatalogEntries.Count == total

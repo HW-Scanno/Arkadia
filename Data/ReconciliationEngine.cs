@@ -23,13 +23,16 @@ public static class ReconciliationEngine
     /// 1. Load the existing release set from the store.
     /// 2. Partition into: kept (name still present in new DAT), removed (name gone).
     /// 3. Mark removed releases OUTDATED (status written as "outdated").
+    ///    Exception: releases with status "unwanted" retain that status — it is a
+    ///    user curator decision and must not be overwritten by a DAT update.
     /// 4. For each new game name not in the old set (introduced):
     ///    - Search only among removed releases whose PRE-UPDATE status was physically
     ///      reusable (currently: "present" only).
     ///    - Require exact non-empty ContentKey equality AND a unique match (count == 1).
     ///    - If exactly one reusable match: new release → PENDING, insert pending row.
     ///    - Otherwise (zero matches, ambiguous, or all matches non-reusable): → MISSING.
-    ///    A prior MISSING or LOST release is never reusable and must never produce PENDING.
+    ///    A prior MISSING or LOST or UNWANTED release is never reusable and must never
+    ///    produce PENDING.
     /// 5. Kept releases retain their current status; their ContentKey is updated if the
     ///    old value was empty and the new DAT now provides one.
     /// 6. Persist the full resulting release set via SaveReleases.
@@ -68,9 +71,11 @@ public static class ReconciliationEngine
 
         // Capture pre-update status before mutating, then mark removed as OUTDATED.
         // Pre-update status is what determines reusability for matching.
+        // "unwanted" is a user curator decision — never overwrite it with "outdated".
         var preUpdateStatus = removed.ToDictionary(r => r.Id, r => r.Status, StringComparer.Ordinal);
         foreach (var r in removed)
-            r.Status = "outdated";
+            if (r.Status != "unwanted")
+                r.Status = "outdated";
 
         // Update ReleaseContentKey on kept releases when previously empty.
         var newGameByName = newGames.ToDictionary(g => g.Name, StringComparer.Ordinal);
@@ -172,7 +177,7 @@ public static class ReconciliationEngine
         return new ReconciliationResult
         {
             Kept     = kept.Count,
-            Outdated = removed.Count,
+            Outdated = removed.Count(r => r.Status == "outdated"),  // excludes retained "unwanted"
             Pending  = introduced.Count(r => r.Status == "pending"),
             Missing  = introduced.Count(r => r.Status == "missing"),
         };
@@ -184,7 +189,7 @@ public sealed record ReconciliationResult
 {
     /// <summary>Releases present in both old and new DAT — status preserved.</summary>
     public int Kept     { get; init; }
-    /// <summary>Releases removed from the new DAT — marked OUTDATED.</summary>
+    /// <summary>Releases removed from the new DAT — marked OUTDATED (unwanted releases retain their status).</summary>
     public int Outdated { get; init; }
     /// <summary>New releases with exactly one unique content-key match — marked PENDING.</summary>
     public int Pending  { get; init; }

@@ -359,4 +359,162 @@ public sealed class ReconciliationEngineTests : IDisposable
         Assert.Equal("missing", store.LoadReleases().Single(r => r.Name == "New Title").Status);
         Assert.Empty(store.LoadPendingReconciliations());
     }
+
+    // ── UNWANTED persistence through DAT update ───────────────────────────────
+
+    /// <summary>
+    /// A release marked UNWANTED that is still present in the updated DAT
+    /// (i.e. its name is still in the new game list) must retain status "unwanted".
+    /// </summary>
+    [Fact]
+    public void DatUpdate_PreservesUnwantedStatus_KeptRelease()
+    {
+        const string dlId = "snes-no-intro";
+        var store = OpenStore();
+        store.SaveReleases([Release(dlId, "Shovelware (USA)", status: "unwanted")]);
+
+        var result = ReconciliationEngine.ApplyDatUpdate(
+            store, dlId, [Game("Shovelware (USA)")]);   // still in DAT
+
+        var r = Assert.Single(store.LoadReleases());
+        Assert.Equal("unwanted", r.Status);
+        Assert.Equal(1, result.Kept);
+        Assert.Equal(0, result.Outdated);
+    }
+
+    /// <summary>
+    /// show_in_catalog = false must survive a DAT update for a kept release.
+    /// </summary>
+    [Fact]
+    public void DatUpdate_PreservesShowInCatalogFalse()
+    {
+        const string dlId = "snes-no-intro";
+        var store = OpenStore();
+        store.SaveReleases([new ReleaseRecord
+        {
+            Id            = Guid.NewGuid().ToString("N"),
+            DatLineId     = dlId,
+            Name          = "Hidden Game (USA)",
+            Status        = "unwanted",
+            ShowInCatalog = false,
+        }]);
+
+        ReconciliationEngine.ApplyDatUpdate(
+            store, dlId, [Game("Hidden Game (USA)")]);  // still in DAT
+
+        var r = Assert.Single(store.LoadReleases());
+        Assert.False(r.ShowInCatalog);
+        Assert.Equal("unwanted", r.Status);
+    }
+
+    /// <summary>
+    /// RecalculateReleaseStatusForArtifacts must not touch releases with status "unwanted".
+    /// Even if all linked derived artifacts are present, the status stays "unwanted".
+    /// </summary>
+    [Fact]
+    public void StatusRecalc_DoesNotChangeUnwanted()
+    {
+        const string dlId = "snes-no-intro";
+        var store = OpenStore();
+
+        store.SaveReleases([new ReleaseRecord
+        {
+            Id        = "r-unwanted",
+            DatLineId = dlId,
+            Name      = "Purged Game (USA)",
+            Status    = "unwanted",
+        }]);
+
+        // Pretend we have a derived artifact linked to this release.
+        var cik  = "sha1:aaaa000000000000000000000000000000000000";
+        var daId = store.IngestDerivedArtifact(
+            contentIdentityKey: cik, sourceArtifactId: "",
+            storageStrategyId: "chd", fileName: "Purged Game.chd",
+            relativePath: "archive/snes/dl/Purged Game/Purged Game.chd",
+            derivedSizeBytes: 512, hashedDerivedSha1: "bbbb");
+        store.SaveReleaseContentLink(new ReleaseContentLinkRecord
+        {
+            Id = Guid.NewGuid().ToString("N"), ReleaseId = "r-unwanted",
+            ContentIdentityKey = cik, CreatedAtUtc = DateTime.UtcNow,
+        });
+
+        // Trigger recalculation as if the artifact became "present"
+        store.RecalculateReleaseStatusForArtifacts([daId]);
+
+        var r = Assert.Single(store.LoadReleases());
+        Assert.Equal("unwanted", r.Status);  // must not be overwritten to "present"
+    }
+
+    /// <summary>
+    /// A newly introduced release (not present in old DAT) must default to "missing",
+    /// never to "unwanted" — UNWANTED is a user decision, not a DAT-derived default.
+    /// </summary>
+    [Fact]
+    public void DatUpdate_NewReleaseDefaultsToMissingNotUnwanted()
+    {
+        const string dlId = "snes-no-intro";
+        var store = OpenStore();
+        store.SaveReleases([Release(dlId, "Old Game (USA)", status: "present")]);
+
+        ReconciliationEngine.ApplyDatUpdate(
+            store, dlId, [
+                Game("Old Game (USA)"),       // kept
+                Game("Brand New Game (USA)"), // introduced
+            ]);
+
+        var releases  = store.LoadReleases();
+        var newRelease = releases.Single(r => r.Name == "Brand New Game (USA)");
+        Assert.Equal("missing", newRelease.Status);
+        Assert.NotEqual("unwanted", newRelease.Status);
+    }
+
+    /// <summary>
+    /// A "present" release that is kept in the DAT must remain "present" after the update.
+    /// Regression: the unwanted guard must not interfere with normal kept-release behavior.
+    /// </summary>
+    [Fact]
+    public void DatUpdate_ExistingPresentCanUpdateNormally()
+    {
+        const string dlId = "snes-no-intro";
+        var sha1 = "cccc000000000000000000000000000000000001";
+        var store = OpenStore();
+        store.SaveReleases([Release(dlId, "Good Game (USA)", sha1, status: "present")]);
+
+        var result = ReconciliationEngine.ApplyDatUpdate(
+            store, dlId, [Game("Good Game (USA)", sha1)]);
+
+        var r = Assert.Single(store.LoadReleases());
+        Assert.Equal("present", r.Status);
+        Assert.Equal(1, result.Kept);
+        Assert.Equal(0, result.Outdated);
+    }
+
+    /// <summary>
+    /// When a release marked UNWANTED is REMOVED from the DAT (name gone), it must
+    /// retain status "unwanted" rather than being overwritten with "outdated".
+    /// The user's exclusion decision outlasts the DAT entry.
+    /// </summary>
+    [Fact]
+    public void DatUpdate_RemovedUnwanted_RemainsUnwanted()
+    {
+        const string dlId = "snes-no-intro";
+        var store = OpenStore();
+        store.SaveReleases([
+            Release(dlId, "Shovelware (USA)", status: "unwanted"),
+            Release(dlId, "Good Game (USA)", status: "present"),
+        ]);
+
+        // New DAT: "Shovelware" is gone, "Good Game" stays
+        var result = ReconciliationEngine.ApplyDatUpdate(
+            store, dlId, [Game("Good Game (USA)")]);
+
+        var releases = store.LoadReleases();
+        Assert.Equal("unwanted", releases.Single(r => r.Name == "Shovelware (USA)").Status);
+        Assert.Equal("present",  releases.Single(r => r.Name == "Good Game (USA)").Status);
+
+        // "Shovelware" is in the removed bucket but must NOT appear as "outdated"
+        // Outdated count should reflect only truly-outdated releases (0 here)
+        Assert.Equal(0, result.Outdated);
+        Assert.Equal(1, result.Kept);
+    }
 }
