@@ -53,10 +53,11 @@ public sealed class VolumeVerifyService
     ///     Paths to ALL known DAT-line SQLite files, used for cross-volume SHA1 lookup.
     /// </param>
     public VolumeVerifyResult Verify(
-        string                 volumeId,
-        string                 volumeRoot,
-        DatLineStore           store,
-        IReadOnlyList<string>  allDatLineDbPaths)
+        string                          volumeId,
+        string                          volumeRoot,
+        DatLineStore                    store,
+        IReadOnlyList<string>           allDatLineDbPaths,
+        IProgress<FoundFileProgress>?   foundFileProgress = null)
     {
         var log = new List<string>();
 
@@ -75,7 +76,7 @@ public sealed class VolumeVerifyService
 
         // ── Recursive scan ────────────────────────────────────────────────────
         log.Add("recursive-scan-start");
-        var physFiles = ScanFiles(volumeRoot, log);
+        var physFiles = ScanFiles(volumeRoot, log, foundFileProgress);
         log.Add($"recursive-scan-complete  total={physFiles.Count}");
 
         // ── Classify each active-area file ────────────────────────────────────
@@ -237,7 +238,9 @@ public sealed class VolumeVerifyService
 
     // ── Scan ──────────────────────────────────────────────────────────────────
 
-    private static List<PhysicalVolumeFile> ScanFiles(string volumeRoot, List<string> log)
+    private static List<PhysicalVolumeFile> ScanFiles(
+        string volumeRoot, List<string> log,
+        IProgress<FoundFileProgress>? foundFileProgress)
     {
         var result = new List<PhysicalVolumeFile>();
         if (!Directory.Exists(volumeRoot)) return result;
@@ -264,6 +267,11 @@ public sealed class VolumeVerifyService
                 IsInRoot          = inRoot,
                 IsInManagedFolder = inManaged,
             });
+
+            // Emit found-file progress for active-area files only (not managed-folder files).
+            // This is neutral discovery — does not affect any verify counter.
+            if (!inManaged)
+                foundFileProgress?.Report(new FoundFileProgress(rel, fullPath, size));
         }
 
         return result;

@@ -19,6 +19,7 @@ public sealed class VerifyResultColorConverter : IValueConverter
             "MISMATCH"    => "#FF7043",
             "UNEXPECTED"  => "#FFB74D",
             "SKIPPED"     => "#555566",
+            "found-file"  => "#444455",  // neutral dim — scan discovery, not a verify result
             _             => "#888899",
         };
         return new SolidColorBrush(Color.Parse(hex));

@@ -865,4 +865,106 @@ public sealed class VolumeVerifyServiceTests : IDisposable
         Assert.False(result.IsHealthy);
         Assert.Equal(0, result.Verified);
     }
+
+    // ── Progress / found-file tests ───────────────────────────────────────────
+
+    // Synchronous IProgress<T> for testing — invokes the action immediately on Report().
+    private sealed class SyncProgress<T>(Action<T> action) : IProgress<T>
+    {
+        public void Report(T value) => action(value);
+    }
+
+    // ── 36. RecursiveScan_EmitsFoundFileProgress ──────────────────────────────
+
+    [Fact]
+    public void RecursiveScan_EmitsFoundFileProgress()
+    {
+        var content = new byte[] { 130, 131 };
+        var (vol, _) = ProvisionOne("vol-fp1", "Scan.chd", content);
+        WriteVolumeFile("vol-fp1", "Scan.chd", content);
+        WriteVolumeFile("vol-fp1", "extra.txt", new byte[] { 9 });
+
+        var reports = new List<FoundFileProgress>();
+        var progress = new SyncProgress<FoundFileProgress>(p => reports.Add(p));
+
+        var catalog = OpenCatalog();
+        var store   = OpenStore();
+        new VolumeVerifyService(catalog).Verify(vol.Id, VolumeRoot(vol.Label), store, [], progress);
+
+        // Both active-area files must have been reported
+        Assert.Equal(2, reports.Count);
+    }
+
+    // ── 37. FoundFileProgress_IsNeutral ──────────────────────────────────────
+
+    [Fact]
+    public void FoundFileProgress_IsNeutral()
+    {
+        // found-file events must not affect verify counters.
+        // With 1 expected artifact and 1 unknown file, result must be:
+        //   Verified=1, UnknownMoved=1 — the extra file is not counted as verified/missing.
+        var content = new byte[] { 132, 133 };
+        var (vol, _) = ProvisionOne("vol-fp2", "A.chd", content);
+        WriteVolumeFile("vol-fp2", "A.chd", content);
+        WriteVolumeFile("vol-fp2", "ciao.txt", new byte[] { 0xFF });
+
+        var reports  = new List<FoundFileProgress>();
+        var progress = new SyncProgress<FoundFileProgress>(p => reports.Add(p));
+
+        var catalog = OpenCatalog();
+        var store   = OpenStore();
+        var result  = new VolumeVerifyService(catalog).Verify(
+            vol.Id, VolumeRoot(vol.Label), store, [], progress);
+
+        Assert.Equal(2, reports.Count);          // 2 found-file events
+        Assert.Equal(1, result.Verified);        // only the CHD is verified
+        Assert.Equal(0, result.Missing);         // nothing missing
+        Assert.Equal(1, result.UnknownMoved);    // txt moved to unknown\
+    }
+
+    // ── 38. FoundFile_DoesNotIncrementVerifiedMissingMismatch ─────────────────
+
+    [Fact]
+    public void FoundFile_DoesNotIncrementVerifiedMissingMismatch()
+    {
+        var content = new byte[] { 134, 135 };
+        var (vol, _) = ProvisionOne("vol-fp3", "B.chd", content);
+        WriteVolumeFile("vol-fp3", "B.chd", content);
+
+        int reportCount = 0;
+        var progress = new SyncProgress<FoundFileProgress>(_ => reportCount++);
+
+        var catalog = OpenCatalog();
+        var store   = OpenStore();
+        var result  = new VolumeVerifyService(catalog).Verify(
+            vol.Id, VolumeRoot(vol.Label), store, [], progress);
+
+        Assert.Equal(1, reportCount);     // one found-file event
+        Assert.Equal(1, result.Verified); // counter matches actual verified result
+        Assert.Equal(0, result.Missing);
+        // Verified counter must equal found-and-valid, not total-reported
+        Assert.True(result.Verified <= reportCount);
+    }
+
+    // ── 39. FoundFile_IncludesPathAndSize ─────────────────────────────────────
+
+    [Fact]
+    public void FoundFile_IncludesPathAndSize()
+    {
+        var content = new byte[] { 136, 137, 138 };
+        var (vol, _) = ProvisionOne("vol-fp4", "C.chd", content);
+        WriteVolumeFile("vol-fp4", "C.chd", content);
+
+        var reports  = new List<FoundFileProgress>();
+        var progress = new SyncProgress<FoundFileProgress>(p => reports.Add(p));
+
+        var catalog = OpenCatalog();
+        var store   = OpenStore();
+        new VolumeVerifyService(catalog).Verify(vol.Id, VolumeRoot(vol.Label), store, [], progress);
+
+        var report = Assert.Single(reports);
+        Assert.Equal("C.chd", report.RelativePath);
+        Assert.Equal(content.Length, report.SizeBytes);
+        Assert.EndsWith("C.chd", report.FullPath, StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -2755,6 +2755,12 @@ public partial class MainWindow : Window
         Volumes.VolumeVerifyResult? result = null;
         string? errorMessage = null;
 
+        // Create a progress handler on the UI thread so callbacks are dispatched there.
+        var foundFileProgress = new Progress<Volumes.FoundFileProgress>(p =>
+        {
+            dlg.AppendRow(entry.Label, "found-file", p.RelativePath, FormatBytes(p.SizeBytes));
+        });
+
         try
         {
             await Task.Run(async () =>
@@ -2765,7 +2771,7 @@ public partial class MainWindow : Window
                 var store   = new Data.DatLineStore(entry.DbPath);
                 var svc     = new Volumes.VolumeVerifyService(_catalog);
 
-                result = svc.Verify(entry.Id, volumeRoot, store, allDbPaths);
+                result = svc.Verify(entry.Id, volumeRoot, store, allDbPaths, foundFileProgress);
 
                 // Stream a subset of log lines to the dialog
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
