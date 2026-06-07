@@ -2051,6 +2051,36 @@ public sealed class CatalogService
         return result;
     }
 
+    // ── Volume full-scan support ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the non-lost volumes that own the given derived artifact,
+    /// excluding <paramref name="excludeVolumeId"/> (the volume currently being verified).
+    /// Used to classify KNOWN_UNEXPECTED files during full-scan verify.
+    /// </summary>
+    public List<(string VolumeId, string VolumeLabel)> GetOwningVolumesForArtifact(
+        string derivedArtifactId, string excludeVolumeId)
+    {
+        var result = new List<(string, string)>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT v.id, v.label
+            FROM volume_artifacts va
+            JOIN volumes v ON v.id = va.volume_id
+            WHERE va.derived_artifact_id = $did
+              AND v.status != 'lost'
+              AND v.id != $excl
+            ORDER BY v.label
+            """;
+        cmd.Parameters.AddWithValue("$did",  derivedArtifactId);
+        cmd.Parameters.AddWithValue("$excl", excludeVolumeId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            result.Add((r.GetString(0), r.GetString(1)));
+        return result;
+    }
+
     // ── Purge support ─────────────────────────────────────────────────────────
 
     /// <summary>

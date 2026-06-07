@@ -181,7 +181,7 @@ public sealed class ReabsorbVolumeTests : IDisposable
             .Select(va =>
             {
                 var info = infoById[va.DerivedArtifactId];
-                var src  = Path.Combine(volumeRoot, SafeFileName(info.ReleaseName), info.FileName);
+                var src  = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, info.FileName);
                 var dst  = Path.Combine(appRoot,
                     info.RelativePath.Replace('/', Path.DirectorySeparatorChar));
                 return (Info: info, Src: src, Dst: dst);
@@ -214,10 +214,6 @@ public sealed class ReabsorbVolumeTests : IDisposable
                 {
                     // Valid — delete volume copy, mark success
                     File.Delete(src);
-                    var srcDir = Path.GetDirectoryName(src)!;
-                    if (Directory.Exists(srcDir) &&
-                        !Directory.EnumerateFileSystemEntries(srcDir).Any())
-                        Directory.Delete(srcDir);
                     successDaIds.Add(info.DerivedArtifactId);
                     continue;
                 }
@@ -239,10 +235,6 @@ public sealed class ReabsorbVolumeTests : IDisposable
             }
 
             File.Delete(src);
-            var srcDirB = Path.GetDirectoryName(src)!;
-            if (Directory.Exists(srcDirB) &&
-                !Directory.EnumerateFileSystemEntries(srcDirB).Any())
-                Directory.Delete(srcDirB);
             successDaIds.Add(info.DerivedArtifactId);
         }
 
@@ -289,12 +281,12 @@ public sealed class ReabsorbVolumeTests : IDisposable
 
     // ── Seed helpers ──────────────────────────────────────────────────────────
 
-    /// <summary>Writes the artifact file at its volume path.</summary>
-    private void SeedOnVolume(ArtifactSpec s, string volumeRoot)
+    /// <summary>Writes the artifact file at its flat volume path.</summary>
+    private static void SeedOnVolume(ArtifactSpec s, string volumeRoot)
     {
-        var dir = Path.Combine(volumeRoot, SafeFileName(s.ReleaseName));
-        Directory.CreateDirectory(dir);
-        File.WriteAllBytes(Path.Combine(dir, s.FileName), s.Content);
+        Directory.CreateDirectory(volumeRoot);
+        var path = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, s.FileName);
+        File.WriteAllBytes(path, s.Content);
     }
 
     /// <summary>Writes the artifact file at its local-archive (dst) path.</summary>
@@ -305,8 +297,8 @@ public sealed class ReabsorbVolumeTests : IDisposable
         File.WriteAllBytes(Path.Combine(dir, s.FileName), s.Content);
     }
 
-    private string VolumeSrcPath(ArtifactSpec s, string volumeRoot)
-        => Path.Combine(volumeRoot, SafeFileName(s.ReleaseName), s.FileName);
+    private static string VolumeSrcPath(ArtifactSpec s, string volumeRoot)
+        => Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, s.FileName);
 
     private string LocalArchivePath(ArtifactSpec s)
         => Path.Combine(_tempRoot,

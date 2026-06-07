@@ -3,7 +3,8 @@ namespace Arkadia.Data;
 /// <summary>
 /// Build info extended with SHA1 for volume verification.
 /// The expected file path within a volume root is:
-///   SafeFileName(ReleaseName) / FileName
+///   FileName  (flat layout — no release-name subfolder)
+/// Use <see cref="Volumes.VolumeArtifactPathBuilder.GetFlatFullPath"/> to build paths.
 /// </summary>
 public sealed class ArtifactVerifyInfo
 {

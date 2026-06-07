@@ -2420,6 +2420,40 @@ public sealed class DatLineStore
         cmd.ExecuteNonQuery();
     }
 
+    // ── Volume full-scan support ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Finds a derived artifact by its observed SHA1 hash.
+    /// Returns the artifact ID, canonical file name, and whether
+    /// the owning release has status 'unwanted'.
+    /// Returns null if no artifact with this SHA1 is recorded.
+    /// </summary>
+    public (string DerivedArtifactId, string FileName, bool IsUnwanted)? FindArtifactBySha1(string sha1)
+    {
+        if (sha1.Length == 0) return null;
+
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT da.id, da.file_name,
+                   COALESCE(
+                       (SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END
+                        FROM release_content_links rcl2
+                        JOIN releases r2 ON r2.id = rcl2.release_id
+                        WHERE rcl2.content_identity_key = da.content_identity_key
+                          AND r2.status = 'unwanted'),
+                       0
+                   ) AS is_unwanted
+            FROM derived_artifacts da
+            WHERE da.hashed_derived_sha1 = $sha1
+            LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("$sha1", sha1);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return (r.GetString(0), r.GetString(1), r.GetInt32(2) != 0);
+    }
+
     // ── Purge support ─────────────────────────────────────────────────────────
 
     /// <summary>

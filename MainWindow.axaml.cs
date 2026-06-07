@@ -2728,13 +2728,8 @@ public partial class MainWindow : Window
             }
         }
 
-        // ── Load artifact list ─────────────────────────────────────────────
-        var store       = new Data.DatLineStore(entry.DbPath);
-        var vaIds       = _catalog.GetVolumeArtifacts(entry.Id)
-                                  .Select(va => va.DerivedArtifactId).ToList();
-        var verifyInfos = store.GetArtifactVerifyInfos(vaIds);
-
-        if (verifyInfos.Count == 0)
+        // ── Check there is something to verify ────────────────────────────
+        if (_catalog.GetVolumeArtifacts(entry.Id).Count == 0)
         {
             await new InfoDialog("Nothing to Verify",
                 $"Volume \"{entry.Label}\" has no assigned artifacts.")
@@ -2742,122 +2737,66 @@ public partial class MainWindow : Window
             return;
         }
 
-        // ── Prepare log ───────────────────────────────────────────────────
-        bool logEnabled = _catalog.GetBoolSetting("log_on_copy", true);
-        var  log        = logEnabled ? new System.Text.StringBuilder() : null;
-        var  startTime  = DateTime.UtcNow;
-        var  volSlug    = SafeFileName(entry.Label);
-        bool wasLost    = entry.Status == "lost";
+        // ── Collect all DAT-line DB paths for cross-volume SHA1 lookup ────
+        var allDbPaths = _catalog.LoadDatLines()
+            .Where(dl => dl.DataStorePath.Length > 0)
+            .Select(dl => Path.Combine(_dataDir, dl.DataStorePath))
+            .Where(File.Exists)
+            .ToList();
 
-        if (log is not null)
-        {
-            log.AppendLine("Volume Verify");
-            log.AppendLine($"Started:   {startTime:o}");
-            log.AppendLine($"Volume:    {entry.Label}  (status={entry.Status})");
-            log.AppendLine($"Root:      {volumeRoot}");
-            log.AppendLine($"Artifacts: {verifyInfos.Count}");
-            log.AppendLine();
-        }
+        var  startTime = DateTime.UtcNow;
+        var  volSlug   = SafeFileName(entry.Label);
+        bool wasLost   = entry.Status == "lost";
 
         // ── Show dialog ───────────────────────────────────────────────────
         var dlg     = new DatLineVerifyDialog(entry.DatLineId, entry.PlatformId);
         var dlgTask = dlg.ShowDialog(this);
 
-        int okCount = 0, missingCount = 0, mismatchCount = 0;
-        var presentDaIds = new List<string>();
-        var badDaIds     = new List<string>();
+        Volumes.VolumeVerifyResult? result = null;
         string? errorMessage = null;
 
         try
         {
             await Task.Run(async () =>
             {
-                int processed = 0;
-                foreach (var vi in verifyInfos)
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                    dlg.SetStatus("Scanning volume filesystem..."));
+
+                var store   = new Data.DatLineStore(entry.DbPath);
+                var svc     = new Volumes.VolumeVerifyService(_catalog);
+
+                result = svc.Verify(entry.Id, volumeRoot, store, allDbPaths);
+
+                // Stream a subset of log lines to the dialog
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                 {
-                    var absPath = Path.Combine(volumeRoot, vi.FileName);
-                    string result, detail;
-
-                    if (!File.Exists(absPath))
+                    foreach (var line in result.LogLines)
                     {
-                        missingCount++;
-                        badDaIds.Add(vi.DerivedArtifactId);
-                        result = "MISSING";
-                        detail = "";
-                        log?.AppendLine($"MISSING  {vi.FileName}  ({vi.ReleaseName})");
+                        string rowResult, detail;
+                        if (line.StartsWith("verify-ok"))      { rowResult = "OK";              detail = line; }
+                        else if (line.StartsWith("missing"))   { rowResult = "MISSING";         detail = line; }
+                        else if (line.StartsWith("misplaced")) { rowResult = "MISPLACED";       detail = line; }
+                        else if (line.StartsWith("unwanted"))  { rowResult = "UNWANTED";        detail = line; }
+                        else if (line.StartsWith("known-"))    { rowResult = "KNOWN-UNEXPECTED"; detail = line; }
+                        else if (line.StartsWith("unknown-f")) { rowResult = "UNKNOWN";         detail = line; }
+                        else continue;
+                        dlg.AppendRow(entry.Label, rowResult, "", detail);
                     }
-                    else if (vi.Sha1.Length > 0)
-                    {
-                        var actual = ComputeFileSha1(absPath);
-                        if (string.Equals(actual, vi.Sha1, StringComparison.OrdinalIgnoreCase))
-                        {
-                            okCount++;
-                            presentDaIds.Add(vi.DerivedArtifactId);
-                            result = "OK";
-                            detail = $"sha1={actual}";
-                            log?.AppendLine($"OK       {vi.FileName}  sha1={actual}");
-                        }
-                        else
-                        {
-                            mismatchCount++;
-                            badDaIds.Add(vi.DerivedArtifactId);
-                            result = "MISMATCH";
-                            detail = $"expected={vi.Sha1}  actual={actual}";
-                            log?.AppendLine($"MISMATCH {vi.FileName}  expected={vi.Sha1}  actual={actual}");
-                        }
-                    }
-                    else
-                    {
-                        okCount++;
-                        presentDaIds.Add(vi.DerivedArtifactId);
-                        result = "OK";
-                        detail = "present (no hash)";
-                        log?.AppendLine($"OK       {vi.FileName}  (no hash recorded)");
-                    }
-
-                    processed++;
-                    int snap_ok = okCount, snap_miss = missingCount, snap_mismatch = mismatchCount;
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        dlg.AppendRow(entry.Label, result, vi.FileName, detail);
-                        dlg.UpdateStats(1, 0, 0, verifyInfos.Count, snap_ok, snap_miss, snap_mismatch);
-                        dlg.SetStatus($"Verifying {processed}/{verifyInfos.Count}...");
-                    });
-                }
+                    dlg.SetStatus("Applying state updates...");
+                });
             });
         }
         catch (Exception ex) { errorMessage = ex.Message; }
 
-        // ── Apply state updates (Verify is authoritative) ─────────────────
-        if (errorMessage is null)
+        // ── Volume-level DB updates (health, status, location) ────────────
+        if (errorMessage is null && result is not null)
         {
-            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                dlg.SetStatus("Applying state updates..."));
+            bool allHealthy = result.IsHealthy;
 
-            bool allPresent = badDaIds.Count == 0 && presentDaIds.Count == verifyInfos.Count;
-            string newHealth = allPresent ? "ok" : "crit";
-
-            // Update artifact statuses to match filesystem truth.
-            if (presentDaIds.Count > 0)
-                store.BatchUpdateDerivedArtifactStatus(presentDaIds, "present");
-            if (badDaIds.Count > 0)
-                store.BatchUpdateDerivedArtifactStatus(badDaIds, "missing");
-
-            var allChanged = new List<string>(presentDaIds.Count + badDaIds.Count);
-            allChanged.AddRange(presentDaIds);
-            allChanged.AddRange(badDaIds);
-            if (allChanged.Count > 0)
-                store.RecalculateReleaseStatusForArtifacts(allChanged);
-
-            log?.AppendLine();
-            log?.AppendLine($"State updates: present={presentDaIds.Count}  bad={badDaIds.Count}");
-
-            // LOST → restore if every artifact is verified present.
-            if (wasLost && allPresent)
+            if (wasLost && allHealthy)
             {
                 _catalog.UpdateVolumeStatus(entry.Id, "present");
                 _catalog.UpdateVolumeHealth(entry.Id, "ok");
-
                 var wsRoot       = Path.Combine(appRoot, "volumes", SafeFileName(entry.Label));
                 bool isWorkspace = volumeRoot.StartsWith(wsRoot, StringComparison.OrdinalIgnoreCase);
                 _catalog.SetCurrentLocation(new Data.VolumeLocationRecord
@@ -2870,11 +2809,10 @@ public partial class MainWindow : Window
                     IsCurrent    = true,
                     CreatedAt    = DateTime.UtcNow,
                 });
-                log?.AppendLine("Volume RESTORED: lost -> present");
             }
             else
             {
-                _catalog.UpdateVolumeHealth(entry.Id, newHealth);
+                _catalog.UpdateVolumeHealth(entry.Id, allHealthy ? "ok" : "crit");
             }
 
             await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
@@ -2887,40 +2825,43 @@ public partial class MainWindow : Window
         }
 
         // ── Write log ─────────────────────────────────────────────────────
-        if (log is not null && _catalog.GetBoolSetting("auto_export_verify_logs", defaultValue: true))
+        bool logEnabled = _catalog.GetBoolSetting("log_on_copy", true);
+        if (logEnabled && result is not null &&
+            _catalog.GetBoolSetting("auto_export_verify_logs", defaultValue: true))
         {
             var endTime = DateTime.UtcNow;
-            log.AppendLine();
-            log.AppendLine($"Summary:   OK={okCount}  MISSING={missingCount}  MISMATCH={mismatchCount}");
-            log.AppendLine($"Completed: {endTime:o}");
-            log.AppendLine($"Duration:  {(endTime - startTime).TotalSeconds:F1}s");
-            if (errorMessage is not null)
-                log.AppendLine($"Error:     {errorMessage}");
             try
             {
                 var logDir  = Path.Combine(appRoot, "logs", "volume-verify");
                 Directory.CreateDirectory(logDir);
                 var logFile = Path.Combine(logDir,
                     $"{startTime:yyyyMMdd-HHmmss}-volume-verify-{volSlug}.log");
-                File.WriteAllText(logFile, log.ToString());
+                File.WriteAllLines(logFile, result.LogLines);
             }
             catch { /* non-fatal */ }
         }
 
+        // ── Set dialog final state ────────────────────────────────────────
         if (errorMessage is not null)
-            dlg.SetFailed(errorMessage);
-        else
         {
-            dlg.UpdateStats(1, 1, 0, verifyInfos.Count, okCount, missingCount, mismatchCount);
-            bool allPresent = badDaIds.Count == 0;
-            string statusLine = wasLost && allPresent
-                ? "Volume RESTORED from LOST."
-                : wasLost
-                    ? $"Volume remains LOST ({missingCount + mismatchCount} artifact(s) not valid)."
-                    : allPresent ? "All artifacts verified — volume is healthy."
-                                 : $"Volume health updated to CRIT ({missingCount + mismatchCount} issue(s)).";
+            dlg.SetFailed(errorMessage);
+        }
+        else if (result is not null)
+        {
+            string statusLine;
+            if (wasLost && result.IsHealthy)
+                statusLine = "Volume RESTORED from LOST.";
+            else if (result.IsHealthy && result.HadRecoveryActions)
+                statusLine = "Healthy after recovery actions.";
+            else if (result.IsHealthy)
+                statusLine = "All artifacts verified — volume is healthy.";
+            else
+                statusLine = $"Issues remain: {result.Missing} missing, {result.Errors} error(s).";
+
             dlg.SetCompleted(
-                $"OK: {okCount}   Missing: {missingCount}   Mismatch: {mismatchCount}\n{statusLine}");
+                $"Verified: {result.Verified}  Restored: {result.MisplacedRestored}  " +
+                $"Moved out: {result.UnwantedMoved + result.KnownUnexpectedMoved + result.UnknownMoved}  " +
+                $"Missing: {result.Missing}\n{statusLine}");
         }
 
         await dlgTask;
@@ -2962,7 +2903,7 @@ public partial class MainWindow : Window
         var repairTargets = new List<Data.ArtifactVerifyInfo>();
         foreach (var vi in verifyInfos)
         {
-            var absPath = Path.Combine(volumeRoot, SafeFileName(vi.ReleaseName), vi.FileName);
+            var absPath = Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, vi.FileName);
             if (!File.Exists(absPath))
             {
                 repairTargets.Add(vi);
@@ -3303,9 +3244,8 @@ public partial class MainWindow : Window
 
         foreach (var vi in repairTargets)
         {
-            var safe     = SafeFileName(vi.ReleaseName);
-            var dispPath = $"{safe}/{vi.FileName}";
-            var dstPath  = Path.Combine(volumeRoot, safe, vi.FileName);
+            var dstPath  = Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, vi.FileName);
+            var dispPath = vi.FileName;
 
             if (!available.TryGetValue(vi.DerivedArtifactId, out var srcPath))
             {
@@ -3355,9 +3295,8 @@ public partial class MainWindow : Window
         {
             if (!reintegratedDaIds.Contains(vi.DerivedArtifactId)) continue;
 
-            var safe     = SafeFileName(vi.ReleaseName);
-            var dispPath = $"{safe}/{vi.FileName}";
-            var dstPath  = Path.Combine(volumeRoot, safe, vi.FileName);
+            var dstPath  = Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, vi.FileName);
+            var dispPath = vi.FileName;
 
             if (!File.Exists(dstPath))
             {
@@ -4862,8 +4801,7 @@ public partial class MainWindow : Window
             .Select(va =>
             {
                 var info = infoById[va.DerivedArtifactId];
-                var src  = Path.Combine(volumeRoot,
-                    SafeFileName(info.ReleaseName), info.FileName);
+                var src  = Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, info.FileName);
                 var dst  = Path.Combine(appRoot,
                     info.RelativePath.Replace('/', Path.DirectorySeparatorChar));
                 return (Info: info, Src: src, Dst: dst);
@@ -4984,10 +4922,6 @@ public partial class MainWindow : Window
                             try
                             {
                                 File.Delete(src);
-                                var srcDir = Path.GetDirectoryName(src)!;
-                                if (Directory.Exists(srcDir) &&
-                                    !Directory.EnumerateFileSystemEntries(srcDir).Any())
-                                    Directory.Delete(srcDir);
                                 sb?.AppendLine($"delete-from-volume  {info.FileName}");
                             }
                             catch (Exception ex)
@@ -5047,10 +4981,6 @@ public partial class MainWindow : Window
                     try
                     {
                         File.Delete(src);
-                        var srcDirB = Path.GetDirectoryName(src)!;
-                        if (Directory.Exists(srcDirB) &&
-                            !Directory.EnumerateFileSystemEntries(srcDirB).Any())
-                            Directory.Delete(srcDirB);
                         sb?.AppendLine($"delete-from-volume  {info.FileName}");
                     }
                     catch (Exception ex)
@@ -7363,12 +7293,11 @@ public partial class MainWindow : Window
             var expectedByRelPath = new Dictionary<string, Data.ArtifactVerifyInfo>(
                 StringComparer.OrdinalIgnoreCase);
             foreach (var e in expected)
-                expectedByRelPath[Path.Combine(SafeFileName(e.ReleaseName), e.FileName)] = e;
+                expectedByRelPath[e.FileName] = e;
 
             var actualFiles = Directory
-                .EnumerateFiles(srcRoot, "*", SearchOption.AllDirectories)
-                .Select(f => f.Substring(srcRoot.Length)
-                              .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+                .EnumerateFiles(srcRoot, "*", SearchOption.TopDirectoryOnly)
+                .Select(f => Path.GetFileName(f))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             int volVerified = 0, volMissing = 0, volMismatch = 0, volUnexpected = 0;
@@ -7377,9 +7306,8 @@ public partial class MainWindow : Window
             // ── Per-artifact verify ──────────────────────────────────────────
             foreach (var ei in expected)
             {
-                var relPath  = Path.Combine(SafeFileName(ei.ReleaseName), ei.FileName);
-                var absPath  = Path.Combine(srcRoot, relPath);
-                var dispPath = $"{SafeFileName(ei.ReleaseName)}/{ei.FileName}";
+                var absPath  = Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(srcRoot, ei.FileName);
+                var dispPath = ei.FileName;
 
                 if (!File.Exists(absPath))
                 {
@@ -7417,10 +7345,8 @@ public partial class MainWindow : Window
                                        $"expected={ei.Sha1}  actual={actualSha1}");
                         if (quarantineMismatch)
                         {
-                            var qDir  = Path.Combine(quarantineBaseDir,
-                                SafeFileName(ei.ReleaseName));
                             bool moved = TryQuarantineFile(absPath, ei.FileName,
-                                qDir, out var moveErr);
+                                quarantineBaseDir, out var moveErr);
                             if (moved)
                             {
                                 log.AppendLine($"    QUARANTINED  {dispPath}  → incoming-skip");

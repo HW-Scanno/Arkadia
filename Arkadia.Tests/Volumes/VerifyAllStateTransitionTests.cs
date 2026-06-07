@@ -183,15 +183,15 @@ public sealed class VerifyAllStateTransitionTests : IDisposable
         }
     }
 
-    /// <summary>Writes artifact files into a volume workspace root.</summary>
+    /// <summary>Writes artifact files into a volume workspace root (flat layout).</summary>
     private string WriteVolumeFiles(string volLabel, IEnumerable<ArtifactSpec> specs)
     {
         var root = Path.Combine(_volumesDir, volLabel);
+        Directory.CreateDirectory(root);
         foreach (var s in specs)
         {
-            var dir = Path.Combine(root, s.ReleaseName);
-            Directory.CreateDirectory(dir);
-            File.WriteAllBytes(Path.Combine(dir, s.FileName), s.Content);
+            var path = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, s.FileName);
+            File.WriteAllBytes(path, s.Content);
         }
         return root;
     }
@@ -406,12 +406,11 @@ public sealed class VerifyAllStateTransitionTests : IDisposable
             var expectedByRelPath = new Dictionary<string, ArtifactVerifyInfo>(
                 StringComparer.OrdinalIgnoreCase);
             foreach (var e in expected)
-                expectedByRelPath[Path.Combine(e.ReleaseName, e.FileName)] = e;
+                expectedByRelPath[e.FileName] = e;
 
             var actualFiles = Directory
-                .EnumerateFiles(srcRoot, "*", SearchOption.AllDirectories)
-                .Select(f => f.Substring(srcRoot.Length)
-                              .TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+                .EnumerateFiles(srcRoot, "*", SearchOption.TopDirectoryOnly)
+                .Select(f => Path.GetFileName(f))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             int volVerified = 0, volMissing = 0, volMismatch = 0, volUnexpected = 0;
@@ -419,8 +418,7 @@ public sealed class VerifyAllStateTransitionTests : IDisposable
 
             foreach (var ei in expected)
             {
-                var relPath = Path.Combine(ei.ReleaseName, ei.FileName);
-                var absPath = Path.Combine(srcRoot, relPath);
+                var absPath = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(srcRoot, ei.FileName);
 
                 if (!File.Exists(absPath))
                 {
@@ -992,10 +990,9 @@ public sealed class VerifyAllStateTransitionTests : IDisposable
 
         // Write specs[0] correctly; specs[1] with corrupted content
         var root = Path.Combine(_volumesDir, "vol-g5b");
-        Directory.CreateDirectory(Path.Combine(root, specs[0].ReleaseName));
-        File.WriteAllBytes(Path.Combine(root, specs[0].ReleaseName, specs[0].FileName), specs[0].Content);
-        Directory.CreateDirectory(Path.Combine(root, specs[1].ReleaseName));
-        File.WriteAllBytes(Path.Combine(root, specs[1].ReleaseName, specs[1].FileName),
+        Directory.CreateDirectory(root);
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[0].FileName), specs[0].Content);
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("WRONG CONTENT"));
 
         // Use quarantine so the mismatch artifact is explicitly marked missing.
@@ -1033,10 +1030,9 @@ public sealed class VerifyAllStateTransitionTests : IDisposable
 
         // Write specs[0] ok, specs[1] corrupted
         var root = Path.Combine(_volumesDir, "vol-g5d");
-        Directory.CreateDirectory(Path.Combine(root, specs[0].ReleaseName));
-        File.WriteAllBytes(Path.Combine(root, specs[0].ReleaseName, specs[0].FileName), specs[0].Content);
-        Directory.CreateDirectory(Path.Combine(root, specs[1].ReleaseName));
-        File.WriteAllBytes(Path.Combine(root, specs[1].ReleaseName, specs[1].FileName),
+        Directory.CreateDirectory(root);
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[0].FileName), specs[0].Content);
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("BAD"));
 
         SimulateVerifyAll(catalog, store, new[] { vol }.ToList());

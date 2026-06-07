@@ -155,13 +155,13 @@ public sealed class VerifyVolumeStateTransitionTests : IDisposable
     /// <summary>
     /// Writes all artifact files for the specified specs into the volume root.
     /// </summary>
-    private void WriteFiles(string volumeRoot, IEnumerable<ArtifactSpec> specs)
+    private static void WriteFiles(string volumeRoot, IEnumerable<ArtifactSpec> specs)
     {
+        Directory.CreateDirectory(volumeRoot);
         foreach (var s in specs)
         {
-            var dir = Path.Combine(volumeRoot, s.ReleaseName);
-            Directory.CreateDirectory(dir);
-            File.WriteAllBytes(Path.Combine(dir, s.FileName), s.Content);
+            var path = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, s.FileName);
+            File.WriteAllBytes(path, s.Content);
         }
     }
 
@@ -184,7 +184,7 @@ public sealed class VerifyVolumeStateTransitionTests : IDisposable
 
         foreach (var vi in verifyInfos)
         {
-            var absPath = Path.Combine(volumeRoot, vi.ReleaseName, vi.FileName);
+            var absPath = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, vi.FileName);
 
             if (!File.Exists(absPath))
             {
@@ -400,10 +400,9 @@ public sealed class VerifyVolumeStateTransitionTests : IDisposable
         var root = Path.Combine(_volumesDir, "vol-mismatch");
 
         // Write specs[0] correctly; write specs[1] with wrong content
-        Directory.CreateDirectory(Path.Combine(root, specs[0].ReleaseName));
-        Directory.CreateDirectory(Path.Combine(root, specs[1].ReleaseName));
-        File.WriteAllBytes(Path.Combine(root, specs[0].ReleaseName, specs[0].FileName), specs[0].Content);
-        File.WriteAllBytes(Path.Combine(root, specs[1].ReleaseName, specs[1].FileName),
+        Directory.CreateDirectory(root);
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[0].FileName), specs[0].Content);
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("CORRUPTED DATA"));
 
         SimulateVerify(catalog, store, volume, root);
@@ -422,8 +421,8 @@ public sealed class VerifyVolumeStateTransitionTests : IDisposable
         var (catalog, store, volume, specs) = Provision("vol-mismatch2", "present", 1);
         var root = Path.Combine(_volumesDir, "vol-mismatch2");
 
-        Directory.CreateDirectory(Path.Combine(root, specs[0].ReleaseName));
-        File.WriteAllBytes(Path.Combine(root, specs[0].ReleaseName, specs[0].FileName),
+        Directory.CreateDirectory(root);
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[0].FileName),
             System.Text.Encoding.UTF8.GetBytes("WRONG_BYTES"));
 
         SimulateVerify(catalog, store, volume, root);
@@ -528,8 +527,8 @@ public sealed class VerifyVolumeStateTransitionTests : IDisposable
         });
 
         var root = Path.Combine(_volumesDir, "vol-nohash");
-        Directory.CreateDirectory(Path.Combine(root, relName));
-        File.WriteAllBytes(Path.Combine(root, relName, fileName),
+        Directory.CreateDirectory(root);
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, fileName),
             System.Text.Encoding.UTF8.GetBytes("any content"));
 
         var (present, bad) = SimulateVerify(catalog, store, volume, root);

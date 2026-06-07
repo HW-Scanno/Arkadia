@@ -160,11 +160,11 @@ public sealed class VerifyAllHardeningTests : IDisposable
     private string WriteVolumeFiles(string volLabel, IEnumerable<ArtifactSpec> specs)
     {
         var root = Path.Combine(_volumesDir, volLabel);
+        Directory.CreateDirectory(root);
         foreach (var s in specs)
         {
-            var dir = Path.Combine(root, s.ReleaseName);
-            Directory.CreateDirectory(dir);
-            File.WriteAllBytes(Path.Combine(dir, s.FileName), s.Content);
+            var path = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, s.FileName);
+            File.WriteAllBytes(path, s.Content);
         }
         return root;
     }
@@ -354,7 +354,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
 
             var expectedByRelPath = new Dictionary<string, ArtifactVerifyInfo>(StringComparer.OrdinalIgnoreCase);
             foreach (var e in expected)
-                expectedByRelPath[Path.Combine(e.ReleaseName, e.FileName)] = e;
+                expectedByRelPath[e.FileName] = e;
 
             int volVerified = 0, volMissing = 0, volMismatch = 0;
             int volQuarantined = 0, volQuarantineFailed = 0;
@@ -362,7 +362,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
 
             foreach (var ei in expected)
             {
-                var absPath = Path.Combine(srcRoot, ei.ReleaseName, ei.FileName);
+                var absPath = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(srcRoot, ei.FileName);
 
                 if (!File.Exists(absPath))
                 {
@@ -674,10 +674,9 @@ public sealed class VerifyAllHardeningTests : IDisposable
 
         // Write specs[0] correctly; specs[1] corrupted
         var root = Path.Combine(_volumesDir, "vol-b2");
-        Directory.CreateDirectory(Path.Combine(root, specs[0].ReleaseName));
-        File.WriteAllBytes(Path.Combine(root, specs[0].ReleaseName, specs[0].FileName), specs[0].Content);
-        Directory.CreateDirectory(Path.Combine(root, specs[1].ReleaseName));
-        File.WriteAllBytes(Path.Combine(root, specs[1].ReleaseName, specs[1].FileName),
+        Directory.CreateDirectory(root);
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[0].FileName), specs[0].Content);
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("BAD_CONTENT"));
 
         var result = SimulateVerifyAll(catalog, store, new[] { vol }.ToList(),
@@ -699,7 +698,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
 
         var root = WriteVolumeFiles("vol-b3", specs);
         // Corrupt specs[1] after writing
-        File.WriteAllBytes(Path.Combine(root, specs[1].ReleaseName, specs[1].FileName),
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("WRONG"));
 
         var result = SimulateVerifyAll(catalog, store, new[] { vol }.ToList(),
@@ -720,7 +719,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
         var vol = AddVolume(catalog, "vol-b3r", platformId, dlId, "present", allSpecs);
 
         var root = WriteVolumeFiles("vol-b3r", allSpecs);
-        File.WriteAllBytes(Path.Combine(root, allSpecs[1].ReleaseName, allSpecs[1].FileName),
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, allSpecs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("CORRUPTED"));
 
         // Pre-mark release status as "present" so we can observe it being recalculated
@@ -751,7 +750,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
         var vol = AddVolume(catalog, "vol-b4", platformId, dlId, "present", specs);
 
         var root = WriteVolumeFiles("vol-b4", specs);
-        File.WriteAllBytes(Path.Combine(root, specs[1].ReleaseName, specs[1].FileName),
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("CORRUPTED"));
 
         // Explicitly set specs[1] to "present" so we can check it stays that way
@@ -787,7 +786,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
 
         var root = WriteVolumeFiles("vol-c1", allSpecs);
         // Corrupt specs[1] — quarantine will fail
-        File.WriteAllBytes(Path.Combine(root, allSpecs[1].ReleaseName, allSpecs[1].FileName),
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, allSpecs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("BAD"));
 
         var result = SimulateVerifyAll(catalog, store, new[] { vol }.ToList(),
@@ -809,7 +808,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
         var vol = AddVolume(catalog, "vol-c2", platformId, dlId, "present", allSpecs);
 
         var root = WriteVolumeFiles("vol-c2", allSpecs);
-        File.WriteAllBytes(Path.Combine(root, allSpecs[1].ReleaseName, allSpecs[1].FileName),
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, allSpecs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("CORRUPTED"));
 
         SimulateVerifyAll(catalog, store, new[] { vol }.ToList(),
@@ -832,7 +831,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
         var vol = AddVolume(catalog, "vol-c3", platformId, dlId, "present", specs);
 
         var root = WriteVolumeFiles("vol-c3", specs);
-        File.WriteAllBytes(Path.Combine(root, specs[0].ReleaseName, specs[0].FileName),
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[0].FileName),
             System.Text.Encoding.UTF8.GetBytes("BAD"));
 
         SimulateVerifyAll(catalog, store, new[] { vol }.ToList(),
@@ -1001,7 +1000,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
 
         var root = WriteVolumeFiles("vol-e2", specs);
         // Corrupt one file
-        File.WriteAllBytes(Path.Combine(root, specs[2].ReleaseName, specs[2].FileName),
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[2].FileName),
             System.Text.Encoding.UTF8.GetBytes("CORRUPT"));
 
         var result = SimulateVerifyAll(catalog, store, new[] { vol }.ToList());
@@ -1046,7 +1045,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
         var vol = AddVolume(catalog, "vol-e4", platformId, dlId, "lost", specs);
 
         var root = WriteVolumeFiles("vol-e4", specs);
-        File.WriteAllBytes(Path.Combine(root, specs[1].ReleaseName, specs[1].FileName),
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, specs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("BAD_CONTENT"));
 
         var result = SimulateVerifyAll(catalog, store, new[] { vol }.ToList(),
@@ -1193,7 +1192,7 @@ public sealed class VerifyAllHardeningTests : IDisposable
 
         WriteVolumeFiles("vol-x2-1", vol1Specs);
         var root2 = WriteVolumeFiles("vol-x2-2", vol2Specs);
-        File.WriteAllBytes(Path.Combine(root2, vol2Specs[1].ReleaseName, vol2Specs[1].FileName),
+        File.WriteAllBytes(Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root2, vol2Specs[1].FileName),
             System.Text.Encoding.UTF8.GetBytes("CORRUPT"));
 
         var result = SimulateVerifyAll(catalog, store, new[] { vol1, vol2 }.ToList(),

@@ -170,7 +170,7 @@ public sealed class RepairVolumeTests : IDisposable
         var repairTargets = new List<ArtifactVerifyInfo>();
         foreach (var vi in verifyInfos)
         {
-            var absPath = Path.Combine(volumeRoot, SafeFileName(vi.ReleaseName), vi.FileName);
+            var absPath = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, vi.FileName);
             if (!File.Exists(absPath))
             {
                 repairTargets.Add(vi);
@@ -238,8 +238,7 @@ public sealed class RepairVolumeTests : IDisposable
                 skippedDaIds.Add(vi.DerivedArtifactId); continue;
             }
 
-            var safe    = SafeFileName(vi.ReleaseName);
-            var dstPath = Path.Combine(volumeRoot, safe, vi.FileName);
+            var dstPath = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, vi.FileName);
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(dstPath)!);
@@ -253,8 +252,7 @@ public sealed class RepairVolumeTests : IDisposable
         {
             if (!reintegratedDaIds.Contains(vi.DerivedArtifactId)) continue;
 
-            var safe    = SafeFileName(vi.ReleaseName);
-            var dstPath = Path.Combine(volumeRoot, safe, vi.FileName);
+            var dstPath = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, vi.FileName);
 
             if (!File.Exists(dstPath))
             {
@@ -346,11 +344,11 @@ public sealed class RepairVolumeTests : IDisposable
         File.WriteAllBytes(Path.Combine(dir, s.FileName), s.Content);
     }
 
-    private void SeedVolumeFile(ArtifactSpec s, string volumeRoot)
+    private static void SeedVolumeFile(ArtifactSpec s, string volumeRoot)
     {
-        var dir = Path.Combine(volumeRoot, SafeFileName(s.ReleaseName));
-        Directory.CreateDirectory(dir);
-        File.WriteAllBytes(Path.Combine(dir, s.FileName), s.Content);
+        Directory.CreateDirectory(volumeRoot);
+        var path = Arkadia.Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, s.FileName);
+        File.WriteAllBytes(path, s.Content);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
