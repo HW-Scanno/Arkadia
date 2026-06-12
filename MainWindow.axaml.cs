@@ -2609,6 +2609,7 @@ public partial class MainWindow : Window
     private void ApplyVolumesFilter()
     {
         _filteredVolumes        = _allVolumeEntries;
+        VolumesList.ItemsSource = null;           // force Avalonia re-render
         VolumesList.ItemsSource = _filteredVolumes;
         UpdateVolumeDetailPanel(null);
     }
@@ -2641,6 +2642,9 @@ public partial class MainWindow : Window
         VolActResize.IsEnabled   = isNotLost;
         VolActAppend.IsEnabled   = isPhysical;   // requires files on disk/workspace
         VolActReabsorb.IsEnabled = isPhysical;   // requires physical source
+        VolActFillback.IsEnabled = isPhysical    // source must be physical, have artifacts, valid DB
+            && entry!.ArtifactCount > 0
+            && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
         VolActMarkLost.IsEnabled    = isNotLost;  // already-lost volumes are no-ops
         VolActDeleteVolume.IsEnabled = hasVol;    // enforcement is at click time
 
@@ -2656,6 +2660,25 @@ public partial class MainWindow : Window
             && entry!.ArtifactCount > 0
             && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
 
+    }
+
+    private void RefreshAfterVolumeStorageMutation(string preserveVolumeId)
+    {
+        RebuildLibraryDatasets();
+        RefreshVolumes();
+        RefreshAnalyticsIfBuilt();
+        RefreshDiskDetailIfSelected();
+
+        var updatedEntry = _filteredVolumes.FirstOrDefault(v => v.Id == preserveVolumeId);
+        if (updatedEntry is not null)
+        {
+            VolumesList.SelectedItem = updatedEntry;
+            UpdateVolumeDetailPanel(updatedEntry);
+        }
+        else
+        {
+            UpdateVolumeDetailPanel(null);
+        }
     }
 
     private async void OnVolumeArtifactsDetails(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -2755,10 +2778,19 @@ public partial class MainWindow : Window
         Volumes.VolumeVerifyResult? result = null;
         string? errorMessage = null;
 
-        // Create a progress handler on the UI thread so callbacks are dispatched there.
+        // Progress handlers on the UI thread so callbacks are dispatched there.
+        // found-file fires during the recursive scan; verify-progress fires during
+        // the hash / classification / recovery phases (otherwise multi-minute silence).
         var foundFileProgress = new Progress<Volumes.FoundFileProgress>(p =>
         {
             dlg.AppendRow(entry.Label, "found-file", p.RelativePath, FormatBytes(p.SizeBytes));
+        });
+        var verifyProgress = new Progress<Volumes.VolumeVerifyProgress>(p =>
+        {
+            dlg.AppendRow(entry.Label, p.Action, p.Path, p.Detail);
+            // Update the phase line so the user sees which expensive step is running.
+            if (p.Action == "hashing")    dlg.SetStatus($"Hashing files...  {p.Path}");
+            else if (p.Action == "classified") dlg.SetStatus($"Classifying files...  {p.Path}");
         });
 
         try
@@ -2771,25 +2803,11 @@ public partial class MainWindow : Window
                 var store   = new Data.DatLineStore(entry.DbPath);
                 var svc     = new Volumes.VolumeVerifyService(_catalog);
 
-                result = svc.Verify(entry.Id, volumeRoot, store, allDbPaths, foundFileProgress);
+                result = svc.Verify(entry.Id, volumeRoot, store, allDbPaths,
+                    foundFileProgress, verifyProgress);
 
-                // Stream a subset of log lines to the dialog
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    foreach (var line in result.LogLines)
-                    {
-                        string rowResult, detail;
-                        if (line.StartsWith("verify-ok"))      { rowResult = "OK";              detail = line; }
-                        else if (line.StartsWith("missing"))   { rowResult = "MISSING";         detail = line; }
-                        else if (line.StartsWith("misplaced")) { rowResult = "MISPLACED";       detail = line; }
-                        else if (line.StartsWith("unwanted"))  { rowResult = "UNWANTED";        detail = line; }
-                        else if (line.StartsWith("known-"))    { rowResult = "KNOWN-UNEXPECTED"; detail = line; }
-                        else if (line.StartsWith("unknown-f")) { rowResult = "UNKNOWN";         detail = line; }
-                        else continue;
-                        dlg.AppendRow(entry.Label, rowResult, "", detail);
-                    }
-                    dlg.SetStatus("Applying state updates...");
-                });
+                    dlg.SetStatus("Applying state updates..."));
             });
         }
         catch (Exception ex) { errorMessage = ex.Message; }
@@ -5094,6 +5112,116 @@ public partial class MainWindow : Window
         {
             UpdateVolumeDetailPanel(null);
         }
+    }
+
+    // ── Volume Fillback ───────────────────────────────────────────────────────
+
+    private async void OnFillbackVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var entry = VolumesList.SelectedItem as VolumeEntry;
+        if (entry is null) return;
+        if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath)) return;
+        if (entry.ArtifactCount == 0) return;
+
+        var appRoot = AppContext.BaseDirectory;
+
+        // ── Resolve source root ───────────────────────────────────────────────
+        string? sourceRoot = ResolveVolumeRoot(entry, appRoot);
+        if (sourceRoot is null)
+        {
+            await new InfoDialog("Volume Not Accessible",
+                $"Volume \"{entry.Label}\" could not be found in the workspace or on a mounted disk.\n\n" +
+                "Mount the disk containing this volume, then try Fillback again.")
+                .ShowDialog<bool>(this);
+            return;
+        }
+
+        var sourceDiskLabel = entry.DiskLabel ?? "";
+        var store           = new DatLineStore(entry.DbPath);
+
+        // ── Build candidate target list ───────────────────────────────────────
+        // Candidates: same DatLine (by RawDatLineId), status == present, different volume, accessible
+        var allVolumes = _catalog.GetVolumes()
+            .Where(v => v.Id != entry.Id
+                     && v.Status == "present"
+                     && v.DatLineId == entry.RawDatLineId)
+            .ToList();
+
+        var disks = Data.DiskDiscoveryService.DiscoverAll()
+            .Where(d => d.DiskId.Length > 0)
+            .ToDictionary(d => d.DiskId, StringComparer.Ordinal);
+
+        var candidates = new List<FillbackTargetCandidate>();
+        foreach (var v in allVolumes)
+        {
+            // Try workspace first, then mounted disk
+            var wsRoot = Path.Combine(appRoot, "volumes", SafeFileName(v.Label));
+            if (Directory.Exists(wsRoot))
+            {
+                candidates.Add(new FillbackTargetCandidate
+                {
+                    VolumeId    = v.Id,
+                    VolumeLabel = v.Label,
+                    RootPath    = wsRoot,
+                    DiskLabel   = "Local Archive",
+                });
+                continue;
+            }
+
+            // Need the VolumeEntry to find DiskId; query catalog location
+            var loc = _catalog.GetCurrentLocation(v.Id);
+            if (loc?.DiskId is null) continue;
+            if (!disks.TryGetValue(loc.DiskId, out var rt)) continue;
+            var diskRoot = Path.Combine(rt.Mountpoint, SafeFileName(v.Label));
+            if (!Directory.Exists(diskRoot)) continue;
+
+            string diskLabel = _catalog.GetDisks()
+                .FirstOrDefault(d => d.Id == loc.DiskId)?.Label ?? loc.DiskId;
+
+            candidates.Add(new FillbackTargetCandidate
+            {
+                VolumeId    = v.Id,
+                VolumeLabel = v.Label,
+                RootPath    = diskRoot,
+                DiskLabel   = diskLabel,
+            });
+        }
+
+        if (candidates.Count == 0)
+        {
+            await new InfoDialog("No Target Volumes",
+                $"No accessible volumes belonging to the same DAT line as \"{entry.Label}\" " +
+                "could be found.\n\n" +
+                "Ensure a target volume on the same DAT line is mounted, then try again.")
+                .ShowDialog<bool>(this);
+            return;
+        }
+
+        // ── Open Fillback dialog ──────────────────────────────────────────────
+        var dialog = new FillbackVolumeDialog(
+            entry.Id, entry.Label, sourceRoot, sourceDiskLabel,
+            candidates, _catalog, store);
+
+        var ok = await dialog.ShowDialog<bool>(this);
+        if (!ok) return;
+
+        var result = dialog.ExecutionResult;
+        if (result is null) return;
+
+        // ── Refresh UI ────────────────────────────────────────────────────────
+        RefreshAfterVolumeStorageMutation(entry.Id);
+
+        // ── Write log ─────────────────────────────────────────────────────────
+        try
+        {
+            var logDir = Path.Combine(appRoot, "logs", "volume-fillback");
+            Directory.CreateDirectory(logDir);
+            var slug    = SafeFileName(entry.Label);
+            var ts      = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            var logPath = Path.Combine(logDir, $"{ts}-fillback-{slug}.log");
+            File.WriteAllLines(logPath, result.LogLines);
+        }
+        catch { /* log write failure is non-fatal */ }
     }
 
     // ── Mark Volume Lost ──────────────────────────────────────────────────────

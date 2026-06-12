@@ -1582,6 +1582,8 @@
                                 Content="Append"    Click="OnAppendVolume"/>
                         <Button x:Name="VolActReabsorb"  Classes="view-toggle" IsEnabled="False"
                                 Content="Reabsorb"  Click="OnReabsorbVolume"/>
+                        <Button x:Name="VolActFillback"   Classes="view-toggle" IsEnabled="False"
+                                Content="Fillback"  Click="OnFillbackVolume"/>
                         <Button x:Name="VolActMarkLost"    Classes="view-toggle" IsEnabled="False"
                                 Content="Mark Lost"    Click="OnMarkVolumeLost"/>
                         <Button x:Name="VolActDeleteVolume" Classes="view-toggle danger" IsEnabled="False"

@@ -2160,6 +2160,52 @@ public sealed class CatalogService
         tx.Commit();
     }
 
+    /// <summary>
+    /// Atomically moves a volume_artifact to a different volume and adjusts both volumes'
+    /// actual_size_bytes in a single transaction.
+    /// Call only after the physical file operation (move or copy+delete) is confirmed.
+    /// </summary>
+    public void MoveVolumeArtifactToVolume(
+        string volumeArtifactId,
+        string sourceVolumeId,
+        string targetVolumeId,
+        long   sizeBytes)
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        using var upd = conn.CreateCommand();
+        upd.Transaction = tx;
+        upd.CommandText = "UPDATE volume_artifacts SET volume_id = $tgt WHERE id = $id";
+        upd.Parameters.AddWithValue("$tgt", targetVolumeId);
+        upd.Parameters.AddWithValue("$id",  volumeArtifactId);
+        upd.ExecuteNonQuery();
+
+        using var decSrc = conn.CreateCommand();
+        decSrc.Transaction = tx;
+        decSrc.CommandText = """
+            UPDATE volumes
+            SET actual_size_bytes = MAX(0, actual_size_bytes - $bytes)
+            WHERE id = $vid
+            """;
+        decSrc.Parameters.AddWithValue("$bytes", sizeBytes);
+        decSrc.Parameters.AddWithValue("$vid",   sourceVolumeId);
+        decSrc.ExecuteNonQuery();
+
+        using var incTgt = conn.CreateCommand();
+        incTgt.Transaction = tx;
+        incTgt.CommandText = """
+            UPDATE volumes
+            SET actual_size_bytes = actual_size_bytes + $bytes
+            WHERE id = $vid
+            """;
+        incTgt.Parameters.AddWithValue("$bytes", sizeBytes);
+        incTgt.Parameters.AddWithValue("$vid",   targetVolumeId);
+        incTgt.ExecuteNonQuery();
+
+        tx.Commit();
+    }
+
     // ── Volume Deletion ───────────────────────────────────────────────────────
 
     /// <summary>

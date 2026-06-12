@@ -303,6 +303,49 @@ public sealed class DatLineStore
         tx.Commit();
     }
 
+    /// <summary>
+    /// Inserts or updates a single release row without touching any other rows.
+    /// Useful for test helpers and incremental provisioning.
+    /// </summary>
+    public void UpsertRelease(ReleaseRecord r)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO releases(id, dat_line_id, name, status, tier, region, languages, format, size,
+                                 release_content_key, introduced_at_utc, content_category_id, show_in_catalog)
+            VALUES($id, $datLineId, $name, $status, $tier, $region, $languages, $format, $size,
+                   $contentKey, $introducedAt, $contentCategoryId, $showInCatalog)
+            ON CONFLICT(id) DO UPDATE SET
+                name                = excluded.name,
+                status              = excluded.status,
+                tier                = excluded.tier,
+                region              = excluded.region,
+                languages           = excluded.languages,
+                format              = excluded.format,
+                size                = excluded.size,
+                release_content_key = excluded.release_content_key,
+                introduced_at_utc   = excluded.introduced_at_utc,
+                content_category_id = excluded.content_category_id,
+                show_in_catalog     = excluded.show_in_catalog
+            """;
+        cmd.Parameters.AddWithValue("$id",               r.Id);
+        cmd.Parameters.AddWithValue("$datLineId",         r.DatLineId);
+        cmd.Parameters.AddWithValue("$name",              r.Name);
+        cmd.Parameters.AddWithValue("$status",            r.Status);
+        cmd.Parameters.AddWithValue("$tier",              r.Tier);
+        cmd.Parameters.AddWithValue("$region",            r.Region);
+        cmd.Parameters.AddWithValue("$languages",         r.Languages);
+        cmd.Parameters.AddWithValue("$format",            r.Format);
+        cmd.Parameters.AddWithValue("$size",              r.Size);
+        cmd.Parameters.AddWithValue("$contentKey",        r.ReleaseContentKey);
+        cmd.Parameters.AddWithValue("$introducedAt",      r.IntroducedAtUtc.HasValue
+            ? (object)r.IntroducedAtUtc.Value.ToString("o") : DBNull.Value);
+        cmd.Parameters.AddWithValue("$contentCategoryId", r.ContentCategoryId.Length > 0 ? r.ContentCategoryId : "games");
+        cmd.Parameters.AddWithValue("$showInCatalog",     r.ShowInCatalog ? 1 : 0);
+        cmd.ExecuteNonQuery();
+    }
+
     public List<ReleaseRecord> LoadReleases()
     {
         var list = new List<ReleaseRecord>();
@@ -1589,6 +1632,53 @@ public sealed class DatLineStore
             """;
         for (int i = 0; i < ids.Count; i++)
             cmd.Parameters.AddWithValue($"$d{i}", ids[i]);
+
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var daId = r.GetString(0);
+            if (!seenDaId.Add(daId)) continue;
+            result.Add(new ArtifactVerifyInfo
+            {
+                DerivedArtifactId = daId,
+                ReleaseName       = r.GetString(1),
+                FileName          = r.GetString(2),
+                SizeBytes         = r.GetInt64(3),
+                Sha1              = r.GetString(4),
+            });
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Like <see cref="GetArtifactVerifyInfos"/> but excludes artifacts whose linked
+    /// release has status 'unwanted'. Used by the Fillback planner to build the
+    /// candidate list without including unwanted content.
+    /// </summary>
+    public List<ArtifactVerifyInfo> GetFillbackCandidateInfos(IReadOnlyList<string> derivedArtifactIds)
+    {
+        if (derivedArtifactIds.Count == 0) return [];
+
+        var result   = new List<ArtifactVerifyInfo>(derivedArtifactIds.Count);
+        var seenDaId = new HashSet<string>(StringComparer.Ordinal);
+
+        var placeholders = string.Join(",",
+            Enumerable.Range(0, derivedArtifactIds.Count).Select(i => $"$d{i}"));
+
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = $"""
+            SELECT da.id, r.name, da.file_name, da.derived_size_bytes, da.hashed_derived_sha1
+            FROM derived_artifacts da
+            JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
+            JOIN releases              r   ON r.id = rcl.release_id
+            WHERE da.id IN ({placeholders})
+              AND r.status != 'unwanted'
+            ORDER BY r.name, da.file_name
+            """;
+        for (int i = 0; i < derivedArtifactIds.Count; i++)
+            cmd.Parameters.AddWithValue($"$d{i}", derivedArtifactIds[i]);
 
         using var r = cmd.ExecuteReader();
         while (r.Read())

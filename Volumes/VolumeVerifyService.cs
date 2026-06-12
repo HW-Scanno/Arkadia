@@ -53,11 +53,12 @@ public sealed class VolumeVerifyService
     ///     Paths to ALL known DAT-line SQLite files, used for cross-volume SHA1 lookup.
     /// </param>
     public VolumeVerifyResult Verify(
-        string                          volumeId,
-        string                          volumeRoot,
-        DatLineStore                    store,
-        IReadOnlyList<string>           allDatLineDbPaths,
-        IProgress<FoundFileProgress>?   foundFileProgress = null)
+        string                            volumeId,
+        string                            volumeRoot,
+        DatLineStore                      store,
+        IReadOnlyList<string>             allDatLineDbPaths,
+        IProgress<FoundFileProgress>?     foundFileProgress = null,
+        IProgress<VolumeVerifyProgress>?  verifyProgress    = null)
     {
         var log = new List<string>();
 
@@ -91,8 +92,16 @@ public sealed class VolumeVerifyService
                 continue;
             }
 
+            // Emit "hashing" before SHA1 computation — files can be multi-GB.
+            verifyProgress?.Report(new VolumeVerifyProgress(
+                "hashing", pf.RelativePath, FormatSize(pf.SizeBytes)));
+
             pf.Sha1 = ComputeSha1(pf.FullPath);
             ClassifyFile(pf, ownedBySha1, vaByDaId, store, allDatLineDbPaths, volumeId);
+
+            // Emit "classified" with the result — neutral until recovery decides outcome.
+            verifyProgress?.Report(new VolumeVerifyProgress(
+                "classified", pf.RelativePath, pf.Classification.ToString()));
         }
 
         // ── Identify missing expected artifacts ───────────────────────────────
@@ -104,7 +113,10 @@ public sealed class VolumeVerifyService
             .Where(vi => !foundDaIds.Contains(vi.DerivedArtifactId))
             .ToList();
         foreach (var vi in missingVis)
+        {
             log.Add($"missing  {vi.FileName}");
+            verifyProgress?.Report(new VolumeVerifyProgress("missing", vi.FileName, "not found on volume"));
+        }
 
         // ── Execute recovery moves ────────────────────────────────────────────
         int misplacedFound = 0, misplacedRestored = 0, misplacedCollisions = 0;
@@ -126,32 +138,45 @@ public sealed class VolumeVerifyService
 
                 case VolumeFileClass.OkWanted:
                     log.Add($"verify-ok  {pf.RelativePath}  sha1={pf.Sha1}");
+                    verifyProgress?.Report(new VolumeVerifyProgress(
+                        "verify-ok", pf.RelativePath,
+                        pf.Sha1.Length >= 8 ? $"sha1={pf.Sha1[..8]}…" : ""));
                     presentDaIds.Add(pf.DerivedArtifactId!);
                     break;
 
                 case VolumeFileClass.MisplacedWanted:
                     misplacedFound++;
                     log.Add($"misplaced-found  {pf.RelativePath}  canonical={pf.CanonicalFileName}");
+                    verifyProgress?.Report(new VolumeVerifyProgress(
+                        "misplaced-found", pf.RelativePath, $"→ {pf.CanonicalFileName}"));
                     if (TryRestoreMisplaced(pf, volumeRoot, log))
                     {
                         misplacedRestored++;
                         presentDaIds.Add(pf.DerivedArtifactId!);
                         TryRemoveEmptyDir(Path.GetDirectoryName(pf.FullPath)!, volumeRoot);
+                        verifyProgress?.Report(new VolumeVerifyProgress(
+                            "misplaced-restored", pf.CanonicalFileName ?? pf.FileName, "restored to flat root"));
                     }
                     else
                     {
                         misplacedCollisions++;
                         errors++;
                         badDaIds.Add(pf.DerivedArtifactId!);
+                        verifyProgress?.Report(new VolumeVerifyProgress(
+                            "collision", pf.RelativePath, "target already exists"));
                     }
                     break;
 
                 case VolumeFileClass.UnwantedFound:
                     unwantedFound++;
                     log.Add($"unwanted-found  {pf.RelativePath}");
+                    verifyProgress?.Report(new VolumeVerifyProgress(
+                        "unwanted-found", pf.RelativePath, pf.CanonicalFileName ?? ""));
                     if (TryMoveToManaged(pf.FullPath, Path.Combine(volumeRoot, "unwanted"), pf.FileName, log, "unwanted-moved"))
                     {
                         unwantedMoved++;
+                        verifyProgress?.Report(new VolumeVerifyProgress(
+                            "unwanted-moved", pf.FileName, $"→ unwanted\\"));
                         // Remove VA row and decrement usage if it was counted as active
                         if (pf.DerivedArtifactId is not null
                             && vaByDaId.TryGetValue(pf.DerivedArtifactId, out var va)
@@ -169,16 +194,28 @@ public sealed class VolumeVerifyService
                     var volLabel = pf.ExpectedVolumeLabel ?? "unknown-volume";
                     var knownDir = Path.Combine(volumeRoot, "known", MakeSafeSegment(volLabel));
                     log.Add($"known-unexpected-found  {pf.RelativePath}  expected-volume={volLabel}");
+                    verifyProgress?.Report(new VolumeVerifyProgress(
+                        "known-unexpected-found", pf.RelativePath, $"expected volume: {volLabel}"));
                     if (TryMoveToManaged(pf.FullPath, knownDir, pf.FileName, log, "known-unexpected-moved"))
+                    {
                         knownMoved++;
+                        verifyProgress?.Report(new VolumeVerifyProgress(
+                            "known-unexpected-moved", pf.FileName, $"→ known\\{volLabel}\\"));
+                    }
                     TryRemoveEmptyDir(Path.GetDirectoryName(pf.FullPath)!, volumeRoot);
                     break;
 
                 case VolumeFileClass.UnknownFile:
                     unknownFound++;
                     log.Add($"unknown-found  {pf.RelativePath}");
+                    verifyProgress?.Report(new VolumeVerifyProgress(
+                        "unknown-found", pf.RelativePath, ""));
                     if (TryMoveToManaged(pf.FullPath, Path.Combine(volumeRoot, "unknown"), pf.FileName, log, "unknown-moved"))
+                    {
                         unknownMoved++;
+                        verifyProgress?.Report(new VolumeVerifyProgress(
+                            "unknown-moved", pf.FileName, $"→ unknown\\"));
+                    }
                     TryRemoveEmptyDir(Path.GetDirectoryName(pf.FullPath)!, volumeRoot);
                     break;
             }
@@ -446,5 +483,15 @@ public sealed class VolumeVerifyService
         using var fs   = File.OpenRead(filePath);
         using var sha1 = SHA1.Create();
         return Convert.ToHexString(sha1.ComputeHash(fs)).ToLowerInvariant();
+    }
+
+    /// <summary>Compact human-readable byte size, e.g. "4.12 GB".</summary>
+    internal static string FormatSize(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double size = bytes;
+        int unit = 0;
+        while (size >= 1024 && unit < units.Length - 1) { size /= 1024; unit++; }
+        return unit == 0 ? $"{bytes} {units[unit]}" : $"{size:0.##} {units[unit]}";
     }
 }

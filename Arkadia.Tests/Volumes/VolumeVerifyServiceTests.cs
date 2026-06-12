@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using Arkadia.Data;
 using Arkadia.Volumes;
@@ -966,5 +967,152 @@ public sealed class VolumeVerifyServiceTests : IDisposable
         Assert.Equal("C.chd", report.RelativePath);
         Assert.Equal(content.Length, report.SizeBytes);
         Assert.EndsWith("C.chd", report.FullPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── Verify-progress (hashing / classification / recovery) tests ───────────
+
+    private List<VolumeVerifyProgress> RunWithVerifyProgress(VolumeRecord vol)
+    {
+        var events  = new List<VolumeVerifyProgress>();
+        var catalog = OpenCatalog();
+        var store   = OpenStore();
+        var vp      = new SyncProgress<VolumeVerifyProgress>(p => events.Add(p));
+        new VolumeVerifyService(catalog).Verify(vol.Id, VolumeRoot(vol.Label), store, [], null, vp);
+        return events;
+    }
+
+    // ── 40. HashingProgress_EmittedBeforeHashComputation ─────────────────────
+
+    [Fact]
+    public void HashingProgress_EmittedBeforeHashComputation()
+    {
+        var content = new byte[] { 140, 141 };
+        var (vol, _) = ProvisionOne("vol-vp1", "H.chd", content);
+        WriteVolumeFile("vol-vp1", "H.chd", content);
+
+        var events = RunWithVerifyProgress(vol);
+
+        // A "hashing" event must precede the "classified"/"verify-ok" events for the file.
+        int hashIdx       = events.FindIndex(e => e.Action == "hashing");
+        int classifiedIdx = events.FindIndex(e => e.Action == "classified");
+        Assert.True(hashIdx >= 0, "expected a hashing event");
+        Assert.True(classifiedIdx > hashIdx, "hashing must come before classified");
+    }
+
+    // ── 41. HashingProgress_IncludesPathAndSize ──────────────────────────────
+
+    [Fact]
+    public void HashingProgress_IncludesPathAndSize()
+    {
+        var content = new byte[] { 142, 143, 144 };
+        var (vol, _) = ProvisionOne("vol-vp2", "Sized.chd", content);
+        WriteVolumeFile("vol-vp2", "Sized.chd", content);
+
+        var events  = RunWithVerifyProgress(vol);
+        var hashing = events.Find(e => e.Action == "hashing");
+
+        Assert.NotNull(hashing);
+        Assert.Equal("Sized.chd", hashing!.Path);
+        // Detail carries a human-readable size (small files render as "<n> B")
+        Assert.Contains("B", hashing.Detail);
+    }
+
+    // ── 42. HashingProgress_IsNeutralAndDoesNotIncrementCounters ─────────────
+
+    [Fact]
+    public void HashingProgress_IsNeutralAndDoesNotIncrementCounters()
+    {
+        var content = new byte[] { 145, 146 };
+        var (vol, _) = ProvisionOne("vol-vp3", "N.chd", content);
+        WriteVolumeFile("vol-vp3", "N.chd", content);
+
+        var events  = new List<VolumeVerifyProgress>();
+        var catalog = OpenCatalog();
+        var store   = OpenStore();
+        var vp      = new SyncProgress<VolumeVerifyProgress>(p => events.Add(p));
+        var result  = new VolumeVerifyService(catalog).Verify(
+            vol.Id, VolumeRoot(vol.Label), store, [], null, vp);
+
+        int hashingCount = events.Count(e => e.Action == "hashing");
+        Assert.Equal(1, hashingCount);
+        // hashing must not inflate counters — exactly one verified, nothing missing
+        Assert.Equal(1, result.Verified);
+        Assert.Equal(0, result.Missing);
+    }
+
+    // ── 43. ClassifiedProgress_EmittedAfterHashComputation ───────────────────
+
+    [Fact]
+    public void ClassifiedProgress_EmittedAfterHashComputation()
+    {
+        var content = new byte[] { 147, 148 };
+        var (vol, _) = ProvisionOne("vol-vp4", "C2.chd", content);
+        WriteVolumeFile("vol-vp4", "C2.chd", content);
+
+        var events = RunWithVerifyProgress(vol);
+
+        Assert.Contains(events, e => e.Action == "classified");
+    }
+
+    // ── 44. ClassifiedProgress_IncludesClassification ────────────────────────
+
+    [Fact]
+    public void ClassifiedProgress_IncludesClassification()
+    {
+        var content = new byte[] { 149, 150 };
+        var (vol, _) = ProvisionOne("vol-vp5", "OkFile.chd", content);
+        WriteVolumeFile("vol-vp5", "OkFile.chd", content);
+
+        var events     = RunWithVerifyProgress(vol);
+        var classified = events.Find(e => e.Action == "classified");
+
+        Assert.NotNull(classified);
+        Assert.Equal(VolumeFileClass.OkWanted.ToString(), classified!.Detail);
+    }
+
+    // ── 45. RecoveryProgress_EmittedForMisplacedWanted ───────────────────────
+
+    [Fact]
+    public void RecoveryProgress_EmittedForMisplacedWanted()
+    {
+        var content = new byte[] { 151, 152 };
+        var (vol, _) = ProvisionOne("vol-vp6", "M.chd", content);
+        WriteVolumeFileNested("vol-vp6", "Sub", "M.chd", content);
+
+        var events = RunWithVerifyProgress(vol);
+
+        Assert.Contains(events, e => e.Action == "misplaced-found");
+        Assert.Contains(events, e => e.Action == "misplaced-restored");
+    }
+
+    // ── 46. RecoveryProgress_EmittedForUnknownMoved ──────────────────────────
+
+    [Fact]
+    public void RecoveryProgress_EmittedForUnknownMoved()
+    {
+        var content = new byte[] { 153, 154 };
+        var (vol, _) = ProvisionOne("vol-vp7", "K.chd", content);
+        WriteVolumeFile("vol-vp7", "K.chd", content);
+        WriteVolumeFile("vol-vp7", "mystery.dat", new byte[] { 0xAB, 0xCD });
+
+        var events = RunWithVerifyProgress(vol);
+
+        Assert.Contains(events, e => e.Action == "unknown-found");
+        Assert.Contains(events, e => e.Action == "unknown-moved");
+    }
+
+    // ── 47. RecoveryProgress_EmittedForUnwantedMoved ─────────────────────────
+
+    [Fact]
+    public void RecoveryProgress_EmittedForUnwantedMoved()
+    {
+        var content = new byte[] { 155, 156 };
+        var (vol, _) = ProvisionOne("vol-vp8", "U.chd", content, "unwanted");
+        WriteVolumeFile("vol-vp8", "U.chd", content);
+
+        var events = RunWithVerifyProgress(vol);
+
+        Assert.Contains(events, e => e.Action == "unwanted-found");
+        Assert.Contains(events, e => e.Action == "unwanted-moved");
     }
 }
