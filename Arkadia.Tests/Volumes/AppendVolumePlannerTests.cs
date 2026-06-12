@@ -383,4 +383,74 @@ public sealed class AppendVolumePlannerTests : IDisposable
         Assert.Equal(1, plan.ArchiveMissingSkipped);
         Assert.True(plan.SkipReasonCounts[AppendVolumePlanner.SkipReason.ArchiveMissing] >= 1);
     }
+
+    // ── 12. ExcludesUnwantedDerivedArtifacts (shared-release edge case) ───────
+
+    [Fact]
+    public void AppendPlan_ExcludesUnwantedDerivedArtifacts_EvenWhenSharedWithPresentRelease()
+    {
+        // Same content identity is linked to BOTH a present release AND an unwanted release.
+        // The NOT EXISTS guard in GetAllWantedArtifactInfos must exclude the artifact entirely.
+        var content = new byte[] { 50, 51, 52, 53 };
+        var sha1    = Sha1Hex(content);
+        var cik     = $"sha1:{sha1}";
+        var store   = OpenStore();
+
+        var relPresentId  = Guid.NewGuid().ToString("N");
+        var relUnwantedId = Guid.NewGuid().ToString("N");
+
+        store.UpsertRelease(new ReleaseRecord
+        {
+            Id = relPresentId, DatLineId = "dl1", Name = "Present Release", Status = "present"
+        });
+        store.UpsertRelease(new ReleaseRecord
+        {
+            Id = relUnwantedId, DatLineId = "dl1", Name = "Unwanted Release", Status = "unwanted"
+        });
+        store.EnsureContentIdentity(new ContentIdentityRecord
+        {
+            ContentIdentityKey = cik, DatSha1 = sha1,
+            DatMd5 = null, DatCrc32 = null, CreatedAtUtc = DateTime.UtcNow
+        });
+        // Both releases link to the same content identity
+        store.SaveReleaseContentLink(new ReleaseContentLinkRecord
+        {
+            Id = Guid.NewGuid().ToString("N"), ReleaseId = relPresentId,
+            ContentIdentityKey = cik, CreatedAtUtc = DateTime.UtcNow
+        });
+        store.SaveReleaseContentLink(new ReleaseContentLinkRecord
+        {
+            Id = Guid.NewGuid().ToString("N"), ReleaseId = relUnwantedId,
+            ContentIdentityKey = cik, CreatedAtUtc = DateTime.UtcNow
+        });
+        store.IngestDerivedArtifact(
+            cik, "", "chd", "Shared.chd", RelPath("Shared.chd"), content.Length, sha1);
+        WriteArchiveFile("Shared.chd", content);
+
+        var target = ProvisionEmptyVolume("vol-shared-target");
+        var plan   = RunPlan(target);
+
+        // The artifact must be excluded because one of its releases is unwanted
+        Assert.Equal(0, plan.TotalCandidates);
+        Assert.Equal(0, plan.PlannedCount);
+        Assert.False(plan.CanExecute);
+    }
+
+    // ── 13. ReportsReleaseUnwantedSkipReason ──────────────────────────────────
+
+    [Fact]
+    public void AppendPlan_ReportsReleaseUnwantedSkipReason()
+    {
+        // Artifact belongs to an unwanted release → planner must report ReleaseUnwanted
+        ProvisionArtifact("vol-uw-diag", "UnwantedDiag.chd", new byte[] { 60, 61 },
+            relStatus: "unwanted");
+        var target = ProvisionEmptyVolume("vol-uw-diag-target");
+
+        var plan = RunPlan(target);
+
+        Assert.Equal(0, plan.TotalCandidates);
+        Assert.True(plan.ReleaseUnwantedSkipped >= 1);
+        Assert.True(plan.SkipReasonCounts.ContainsKey(AppendVolumePlanner.SkipReason.ReleaseUnwanted));
+        Assert.True(plan.SkipReasonCounts[AppendVolumePlanner.SkipReason.ReleaseUnwanted] >= 1);
+    }
 }

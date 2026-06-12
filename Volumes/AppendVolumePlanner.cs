@@ -27,6 +27,7 @@ public sealed class AppendVolumePlanner
         public const string TargetPathExists                = "TargetPathExists";
         public const string TooLargeForRemainingTargetSpace = "TooLargeForRemainingTargetSpace";
         public const string InvalidHash                     = "InvalidHash";
+        public const string ReleaseUnwanted                 = "ReleaseUnwanted";
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
@@ -47,14 +48,17 @@ public sealed class AppendVolumePlanner
             return Empty(volume, volumeRootPath);
 
         // ── DB candidates (all non-unwanted artifacts in this DAT line) ───
-        var candidates    = store.GetAllWantedArtifactInfos();
-        var assignedDaIds = _catalog.GetAssignedDerivedIdsByDatLine(volume.DatLineId);
+        var candidates       = store.GetAllWantedArtifactInfos();
+        int releaseUnwanted  = store.GetUnwantedArtifactCount();
+        var assignedDaIds    = _catalog.GetAssignedDerivedIdsByDatLine(volume.DatLineId);
 
         long targetFree = volume.PlannedSizeBytes - volume.ActualSizeBytes;
         long allocated  = 0;
 
         var entries          = new List<AppendEntry>();
         var skipReasonCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        if (releaseUnwanted > 0)
+            skipReasonCounts[SkipReason.ReleaseUnwanted] = releaseUnwanted;
 
         int alreadyAssigned = 0, archiveMissing = 0, targetCollision = 0,
             tooLarge = 0, invalidHash = 0;
@@ -145,8 +149,9 @@ public sealed class AppendVolumePlanner
             AlreadyAssignedSkipped = alreadyAssigned,
             ArchiveMissingSkipped  = archiveMissing,
             TargetCollisionSkipped = targetCollision,
-            TooLargeSkipped        = tooLarge,
-            InvalidHashSkipped     = invalidHash,
+            TooLargeSkipped         = tooLarge,
+            InvalidHashSkipped      = invalidHash,
+            ReleaseUnwantedSkipped  = releaseUnwanted,
             Entries               = entries,
             SkipReasonCounts      = skipReasonCounts,
             CanExecute            = plannedCount > 0,
@@ -173,8 +178,9 @@ public sealed class AppendVolumePlanner
         AlreadyAssignedSkipped = 0,
         ArchiveMissingSkipped  = 0,
         TargetCollisionSkipped = 0,
-        TooLargeSkipped        = 0,
-        InvalidHashSkipped     = 0,
+        TooLargeSkipped         = 0,
+        InvalidHashSkipped      = 0,
+        ReleaseUnwantedSkipped  = 0,
         Entries               = [],
         SkipReasonCounts      = new Dictionary<string, int>(),
         CanExecute            = false,

@@ -87,6 +87,7 @@ public partial class AppendVolumeDialog : Window
         StatAssigned.Text  = plan.AlreadyAssignedSkipped.ToString("N0");
         StatMissing.Text   = plan.ArchiveMissingSkipped.ToString("N0");
         StatCollision.Text = plan.TargetCollisionSkipped.ToString("N0");
+        StatUnwanted.Text  = plan.ReleaseUnwantedSkipped.ToString("N0");
         PlanStatsPanel.IsVisible = true;
 
         // Plan rows (show only planned entries to keep list short; skips visible via summary)
@@ -139,6 +140,10 @@ public partial class AppendVolumeDialog : Window
 
     private static string BuildDiagnosticHint(AppendVolumePlan plan)
     {
+        if (plan.TotalCandidates == 0 && plan.ReleaseUnwantedSkipped > 0
+            && plan.AlreadyAssignedSkipped == 0 && plan.ArchiveMissingSkipped == 0)
+            return $"No append candidates found. All {plan.ReleaseUnwantedSkipped} archive artifact(s) belong to releases marked unwanted.";
+
         if (plan.AlreadyAssignedSkipped > 0 && plan.AlreadyAssignedSkipped == plan.TotalCandidates)
             return "No append candidates found. All archive artifacts are already assigned to active volumes.";
 

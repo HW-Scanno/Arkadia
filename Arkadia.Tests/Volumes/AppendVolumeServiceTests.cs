@@ -175,4 +175,60 @@ public sealed class AppendVolumeServiceTests : IDisposable
         var after = catalog.GetVolumeById(vol.Id)!;
         Assert.Equal(content.Length, after.ActualSizeBytes);
     }
+
+    // ── 15. DoesNotCreateVolumeArtifactForUnwanted ────────────────────────────
+
+    [Fact]
+    public void AppendExecution_DoesNotCreateVolumeArtifactForUnwanted()
+    {
+        // An unwanted artifact is excluded at the planner level; the service must
+        // not create any VA row even if given an empty-but-valid plan.
+        var store   = OpenStore();
+        var catalog = OpenCatalog();
+        var content = new byte[] { 11, 22, 33 };
+        var sha1    = Sha1Hex(content);
+        var cik     = $"sha1:{sha1}";
+        var relId   = Guid.NewGuid().ToString("N");
+        var volId   = Guid.NewGuid().ToString("N");
+
+        store.UpsertRelease(new ReleaseRecord
+        {
+            Id = relId, DatLineId = "dl1", Name = "Unwanted Game", Status = "unwanted"
+        });
+        store.EnsureContentIdentity(new ContentIdentityRecord
+        {
+            ContentIdentityKey = cik, DatSha1 = sha1,
+            DatMd5 = null, DatCrc32 = null, CreatedAtUtc = DateTime.UtcNow
+        });
+        store.SaveReleaseContentLink(new ReleaseContentLinkRecord
+        {
+            Id = Guid.NewGuid().ToString("N"), ReleaseId = relId,
+            ContentIdentityKey = cik, CreatedAtUtc = DateTime.UtcNow
+        });
+        store.IngestDerivedArtifact(cik, "", "chd", "Unwanted.chd",
+            RelPath("Unwanted.chd"), content.Length, sha1);
+        WriteArchiveFile("Unwanted.chd", content);
+
+        var vol = new VolumeRecord
+        {
+            Id = volId, Label = "vol-unwanted-svc", PlatformId = "snes", DatLineId = "dl1",
+            Status = "present", PlannedSizeBytes = 10_000_000, ActualSizeBytes = 0,
+            CreatedAt = DateTime.UtcNow, Health = "ok",
+        };
+        catalog.SaveVolume(vol);
+
+        var plan = BuildPlan(vol);
+
+        // Plan must have 0 planned (unwanted filtered at DB level)
+        Assert.Equal(0, plan.PlannedCount);
+        Assert.False(plan.CanExecute);
+
+        // Executing the plan must create 0 VA rows
+        var svc    = new AppendVolumeService(catalog);
+        var result = svc.Execute(plan);
+
+        Assert.Equal(0, result.CopiedCount);
+        var vas = catalog.GetVolumeArtifacts(vol.Id);
+        Assert.Empty(vas);
+    }
 }

@@ -846,7 +846,7 @@ public sealed class DatLineStore
     {
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
-        cmd.CommandText = "UPDATE releases SET status = $status WHERE id = $id";
+        cmd.CommandText = "UPDATE releases SET status = $status WHERE id = $id AND (status != 'unwanted' OR $status != 'present')";
         cmd.Parameters.AddWithValue("$status", status);
         cmd.Parameters.AddWithValue("$id",     releaseId);
         cmd.ExecuteNonQuery();
@@ -1716,6 +1716,12 @@ public sealed class DatLineStore
             JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
             JOIN releases              r   ON r.id = rcl.release_id
             WHERE r.status != 'unwanted'
+              AND NOT EXISTS (
+                SELECT 1 FROM release_content_links rcl2
+                JOIN releases r2 ON r2.id = rcl2.release_id
+                WHERE rcl2.content_identity_key = da.content_identity_key
+                  AND r2.status = 'unwanted'
+              )
             ORDER BY r.name, da.file_name
             """;
 
@@ -1737,6 +1743,27 @@ public sealed class DatLineStore
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Returns the number of derived artifacts where at least one linked release is unwanted.
+    /// Used by AppendVolumePlanner for ReleaseUnwanted diagnostics.
+    /// </summary>
+    public int GetUnwantedArtifactCount()
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT COUNT(DISTINCT da.id)
+            FROM derived_artifacts da
+            WHERE EXISTS (
+                SELECT 1 FROM release_content_links rcl
+                JOIN releases r ON r.id = rcl.release_id
+                WHERE rcl.content_identity_key = da.content_identity_key
+                  AND r.status = 'unwanted'
+            )
+            """;
+        return (int)(long)(cmd.ExecuteScalar() ?? 0L);
     }
 
     // ── Integrity validation ──────────────────────────────────────────────────

@@ -1115,4 +1115,54 @@ public sealed class VolumeVerifyServiceTests : IDisposable
         Assert.Contains(events, e => e.Action == "unwanted-found");
         Assert.Contains(events, e => e.Action == "unwanted-moved");
     }
+
+    // ── 48. VerifyVolume_UnwantedActiveArtifact_IsMovedToUnwanted ────────────
+    //
+    // Regression: a release was previously present (VA row exists), then the user
+    // marks it unwanted. Verify Volume must move the physical file out of the
+    // active area even though a VA row still claims ownership.
+
+    [Fact]
+    public void VerifyVolume_UnwantedActiveArtifact_IsMovedToUnwanted()
+    {
+        var content = new byte[] { 160, 161, 162 };
+        // ProvisionOne creates a VA row; passing "present" then updating to "unwanted"
+        // simulates the user marking the release unwanted after it was on the volume.
+        var (vol, _) = ProvisionOne("vol-reg48", "WasPresent.chd", content, "present");
+        // Now mark the release unwanted (simulates user action)
+        OpenStore().UpdateReleaseStatus(
+            OpenStore().LoadReleasesByDatLine("dl1")[0].Id, "unwanted");
+
+        WriteVolumeFile("vol-reg48", "WasPresent.chd", content);
+
+        var result = RunVerify(vol);
+
+        Assert.Equal(1, result.UnwantedFound);
+        Assert.Equal(1, result.UnwantedMoved);
+        Assert.True(File.Exists(
+            Path.Combine(VolumeRoot("vol-reg48"), "unwanted", "WasPresent.chd")));
+        Assert.False(File.Exists(
+            Path.Combine(VolumeRoot("vol-reg48"), "WasPresent.chd")));
+    }
+
+    // ── 49. VerifyVolume_UnwantedActiveArtifact_RemovesVolumeArtifactRow ─────
+
+    [Fact]
+    public void VerifyVolume_UnwantedActiveArtifact_RemovesVolumeArtifactRow()
+    {
+        var content = new byte[] { 163, 164, 165 };
+        var (vol, _) = ProvisionOne("vol-reg49", "AlsoPresent.chd", content, "present");
+        OpenStore().UpdateReleaseStatus(
+            OpenStore().LoadReleasesByDatLine("dl1")[0].Id, "unwanted");
+
+        WriteVolumeFile("vol-reg49", "AlsoPresent.chd", content);
+
+        var vasBefore = OpenCatalog().GetVolumeArtifacts(vol.Id);
+        Assert.NotEmpty(vasBefore);
+
+        RunVerify(vol);
+
+        var vasAfter = OpenCatalog().GetVolumeArtifacts(vol.Id);
+        Assert.Empty(vasAfter);
+    }
 }

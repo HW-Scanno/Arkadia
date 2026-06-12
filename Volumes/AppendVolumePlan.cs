@@ -43,8 +43,9 @@ public sealed class AppendVolumePlan
     public required int    AlreadyAssignedSkipped { get; init; }
     public required int    ArchiveMissingSkipped  { get; init; }
     public required int    TargetCollisionSkipped { get; init; }
-    public required int    TooLargeSkipped        { get; init; }
-    public required int    InvalidHashSkipped     { get; init; }
+    public required int    TooLargeSkipped         { get; init; }
+    public required int    InvalidHashSkipped      { get; init; }
+    public required int    ReleaseUnwantedSkipped  { get; init; }
     public required IReadOnlyList<AppendEntry>       Entries          { get; init; }
     public required IReadOnlyDictionary<string, int> SkipReasonCounts { get; init; }
     public required bool   CanExecute            { get; init; }
