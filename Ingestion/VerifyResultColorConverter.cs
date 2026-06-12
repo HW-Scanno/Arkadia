@@ -39,6 +39,13 @@ public sealed class VerifyResultColorConverter : IValueConverter
             "unknown-found"           => "#FFB74D",  // amber
             "unknown-moved"           => "#BA68C8",  // purple
 
+            // Volume append actions
+            "append-copy"   => "#64B5F6",  // blue — planned copy
+            "append-skip"   => "#555566",  // dim — skipped
+            "append-copying" => "#64B5F6",  // blue — copy in progress
+            "append-copied"  => "#81C784",  // green — success
+            "append-error"   => "#EF5350",  // red — failure
+
             // Volume fillback actions
             "fillback-moving"                  => "#64B5F6",  // blue — move in progress
             "fillback-copying"                 => "#64B5F6",  // blue — copy in progress

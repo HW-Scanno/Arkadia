@@ -1698,6 +1698,47 @@ public sealed class DatLineStore
         return result;
     }
 
+    /// <summary>
+    /// Returns all non-unwanted derived artifacts in this DAT-line store with the
+    /// file path and hash info needed by AppendVolumePlanner.
+    /// </summary>
+    public List<AppendCandidateInfo> GetAllWantedArtifactInfos()
+    {
+        var result   = new List<AppendCandidateInfo>();
+        var seenDaId = new HashSet<string>(StringComparer.Ordinal);
+
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT da.id, da.content_identity_key, r.name, da.file_name,
+                   da.relative_path, da.derived_size_bytes, da.hashed_derived_sha1
+            FROM derived_artifacts da
+            JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
+            JOIN releases              r   ON r.id = rcl.release_id
+            WHERE r.status != 'unwanted'
+            ORDER BY r.name, da.file_name
+            """;
+
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var daId = r.GetString(0);
+            if (!seenDaId.Add(daId)) continue;
+            result.Add(new AppendCandidateInfo
+            {
+                DerivedArtifactId  = daId,
+                ContentIdentityKey = r.GetString(1),
+                ReleaseName        = r.GetString(2),
+                FileName           = r.GetString(3),
+                RelativePath       = r.GetString(4),
+                SizeBytes          = r.GetInt64(5),
+                ExpectedSha1       = r.IsDBNull(6) ? "" : r.GetString(6),
+            });
+        }
+
+        return result;
+    }
+
     // ── Integrity validation ──────────────────────────────────────────────────
 
     /// <summary>

@@ -4573,216 +4573,22 @@ public partial class MainWindow : Window
             return;
         }
 
-        // ── Find artifacts to append ───────────────────────────────────────
-        var store       = new DatLineStore(entry.DbPath);
-        var assignments = _catalog.GetVolumeArtifacts(entry.Id);
-        if (assignments.Count == 0) return;
+        // ── Build plan ────────────────────────────────────────────────────
+        var store    = new DatLineStore(entry.DbPath);
+        var volume   = _catalog.GetVolumeById(entry.Id);
+        if (volume is null) return;
 
-        var daIds      = assignments.Select(va => va.DerivedArtifactId).ToList();
-        var buildInfos = store.GetArtifactBuildInfos(daIds);
+        var planner = new Volumes.AppendVolumePlanner(_catalog);
+        var plan    = planner.Plan(volume, volumeRoot, appRoot, store);
 
-        var toAppend = buildInfos
-            .Select(info =>
-            {
-                var src = Path.Combine(appRoot,
-                    info.RelativePath.Replace('/', Path.DirectorySeparatorChar));
-                // Flat layout: artifacts written directly into volume root, no release sub-folder.
-                var dst = Path.Combine(volumeRoot, info.FileName);
-                return (Info: info, Src: src, Dst: dst);
-            })
-            .Where(x => File.Exists(x.Src) && !File.Exists(x.Dst))
-            .ToList();
+        // ── Show dialog (plan + execute) ──────────────────────────────────
+        var dlg = new AppendVolumeDialog(plan, _catalog);
+        await dlg.ShowDialog(this);
 
-        if (toAppend.Count == 0)
-        {
-            await new InfoDialog("Nothing to Append",
-                $"No new archive files found to append to volume \"{entry.Label}\".\n\n" +
-                "Ingest new content for this DAT line first.")
-                .ShowDialog(this);
-            return;
-        }
+        var result = dlg.ExecutionResult;
+        if (result is null || result.CopiedCount == 0) return;
 
-        long totalBytes = toAppend.Sum(x => x.Info.SizeBytes);
-
-        // ── Free space check ───────────────────────────────────────────────
-        try
-        {
-            var dstDrive = new DriveInfo(Path.GetPathRoot(volumeRoot)!);
-            if (totalBytes > dstDrive.AvailableFreeSpace)
-            {
-                await new InfoDialog("Insufficient Space",
-                    $"Required: {FormatBytes(totalBytes)}\n" +
-                    $"Available: {FormatBytes(dstDrive.AvailableFreeSpace)}\n\n" +
-                    "Free up space on the volume disk and try again.")
-                    .ShowDialog(this);
-                return;
-            }
-        }
-        catch { /* non-fatal */ }
-
-        // ── Confirm ────────────────────────────────────────────────────────
-        var appendMsg =
-            $"Volume:       {entry.Label}\n" +
-            $"Files:        {toAppend.Count}\n" +
-            $"Size:         {FormatBytes(totalBytes)}\n" +
-            $"Destination:  {volumeRoot}\n\n" +
-            "Files will be copied to the volume, verified, then removed from the local archive.";
-
-        var appendConfirmed = await new ConfirmDialog("Append to Volume", appendMsg)
-            .ShowDialog<bool>(this);
-        if (!appendConfirmed) return;
-
-        // ── Run copy → verify → delete on background thread ───────────────
-        bool logEnabled = _catalog.GetBoolSetting("log_on_copy", true);
-        System.Text.StringBuilder? log = logEnabled ? new System.Text.StringBuilder() : null;
-        var startTime = DateTime.UtcNow;
-        var volSlug   = SafeFileName(entry.Label);
-
-        if (log is not null)
-        {
-            log.AppendLine("Volume Append");
-            log.AppendLine($"Started:     {startTime:o}");
-            log.AppendLine($"Volume:      {entry.Label}");
-            log.AppendLine($"Destination: {volumeRoot}");
-            log.AppendLine($"Files:       {toAppend.Count}");
-            log.AppendLine($"Bytes:       {totalBytes}");
-            log.AppendLine();
-        }
-
-        var appendHeader = $"Append to Volume  —  {entry.Label}  —  {toAppend.Count} file(s)";
-        var progDialog   = new WriteVolumeToDiskDialog(appendHeader, totalBytes, toAppend.Count);
-        var dlgTask      = progDialog.ShowDialog<bool>(this);
-
-        string? abortReason = null;
-        var succeededSrcs   = new List<string>();
-        long copiedBytes = 0, verifiedBytes = 0;
-        int  filesProcessed = 0;
-
-        try
-        {
-            await Task.Run(async () =>
-            {
-                foreach (var (info, src, dst) in toAppend)
-                {
-                    var sizeLabel = FormatBytes(info.SizeBytes);
-
-                    // ── Copy ───────────────────────────────────────────────
-                    Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
-                    log?.AppendLine($"COPY-START  {info.FileName}  ({sizeLabel})");
-                    File.Copy(src, dst, overwrite: false);
-                    copiedBytes += info.SizeBytes;
-                    filesProcessed++;
-                    var elapsed = DateTime.UtcNow - startTime;
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        progDialog.AppendRow("copy", info.FileName, sizeLabel);
-                        progDialog.UpdateStats(copiedBytes, verifiedBytes, filesProcessed, elapsed);
-                    });
-
-                    // ── Verify destination against DB expected hash ────────
-                    log?.AppendLine($"COPY-OK  {info.FileName}");
-
-                    var verifyOk = AppendVerifier.VerifyDestination(
-                        dst, info.SizeBytes, info.ExpectedSha1,
-                        out var failReason, out var verifyLog);
-                    log?.Append(verifyLog);
-
-                    if (!verifyOk)
-                    {
-                        // Remove bad destination so retry finds a clean state
-                        try { File.Delete(dst); }
-                        catch (Exception ex)
-                        {
-                            log?.AppendLine($"DELETE-FAILED-DESTINATION  {dst}  {ex.Message}");
-                        }
-                        abortReason = $"Verify failed — {failReason}";
-                        log?.AppendLine($"APPEND-ABORTED  {abortReason}");
-                        break;
-                    }
-
-                    // Verified — track this source for archive deletion
-                    succeededSrcs.Add(src);
-                    verifiedBytes += info.SizeBytes;
-                    elapsed = DateTime.UtcNow - startTime;
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        progDialog.AppendRow("verify", info.FileName, sizeLabel);
-                        progDialog.UpdateStats(copiedBytes, verifiedBytes, filesProcessed, elapsed);
-                    });
-                }
-            });
-        }
-        catch (Exception ex) { abortReason ??= ex.Message; }
-
-        // ── Delete from archive — only successfully verified sources ───────
-        if (abortReason is null)
-        {
-            log?.AppendLine();
-            log?.AppendLine("Delete from archive:");
-            foreach (var src in succeededSrcs)
-            {
-                try
-                {
-                    File.Delete(src);
-                    log?.AppendLine($"DELETE-OK  {src}");
-                    var dir = Path.GetDirectoryName(src)!;
-                    if (Directory.Exists(dir) &&
-                        !Directory.EnumerateFileSystemEntries(dir).Any())
-                        Directory.Delete(dir);
-                }
-                catch (Exception ex)
-                {
-                    log?.AppendLine($"DELETE-FAIL  {src}  {ex.Message}");
-                }
-            }
-            log?.AppendLine("APPEND-COMPLETE");
-
-            // Realign DA + release state immediately after archive files removed
-            var appendedDaIds = toAppend.Select(x => x.Info.DerivedArtifactId).ToList();
-            store.BatchUpdateDerivedArtifactStatus(appendedDaIds, "present");
-            store.RecalculateReleaseStatusForArtifacts(appendedDaIds);
-        }
-
-        // ── Write log ──────────────────────────────────────────────────────
-        if (log is not null)
-        {
-            var endTime = DateTime.UtcNow;
-            log.AppendLine();
-            log.AppendLine($"Completed:   {endTime:o}");
-            log.AppendLine($"Duration:    {(endTime - startTime).TotalSeconds:F1}s");
-            log.AppendLine($"Result:      {(abortReason is null ? "OK" : "FAILED")}");
-            if (abortReason is not null)
-                log.AppendLine($"Error:       {abortReason}");
-            try
-            {
-                var logDir  = Path.Combine(appRoot, "logs", "volume-append");
-                Directory.CreateDirectory(logDir);
-                var logFile = Path.Combine(logDir,
-                    $"{startTime:yyyyMMdd-HHmmss}-volume-append-{volSlug}.log");
-                File.WriteAllText(logFile, log.ToString());
-            }
-            catch { /* non-fatal */ }
-        }
-
-        if (abortReason is null)
-            progDialog.SetCompleted(succeededSrcs.Count, copiedBytes, volumeRoot,
-                $"Completed — {succeededSrcs.Count} file(s) copied, verified, and removed from archive.");
-        else
-            progDialog.SetFailed(abortReason);
-
-        await dlgTask;
-
-        if (abortReason is not null) return;
-
-        RefreshVolumes();
-        RefreshAnalyticsIfBuilt();
-        RefreshDiskDetailIfSelected();
-        var updatedAppend = _filteredVolumes.FirstOrDefault(v => v.Id == entry.Id);
-        if (updatedAppend is not null)
-        {
-            VolumesList.SelectedItem = updatedAppend;
-            UpdateVolumeDetailPanel(updatedAppend);
-        }
+        RefreshAfterVolumeStorageMutation(entry.Id);
     }
 
     // ── Volume Reabsorb ───────────────────────────────────────────────────────

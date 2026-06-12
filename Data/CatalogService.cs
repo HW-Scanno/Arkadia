@@ -1757,6 +1757,46 @@ public sealed class CatalogService
         return list;
     }
 
+    /// <summary>
+    /// Atomically inserts a volume_artifact row and increments volumes.actual_size_bytes.
+    /// Does nothing if the row already exists (ON CONFLICT DO NOTHING).
+    /// </summary>
+    public void AddVolumeArtifactAndIncrementSize(VolumeArtifactRecord va, long sizeBytes)
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        using var ins = conn.CreateCommand();
+        ins.Transaction = tx;
+        ins.CommandText = """
+            INSERT INTO volume_artifacts(id, volume_id, dat_line_id, derived_artifact_id, content_identity_key, status, added_at_utc)
+            VALUES($id, $volId, $dlid, $daId, $cik, $status, $at)
+            ON CONFLICT(volume_id, derived_artifact_id) DO NOTHING
+            """;
+        ins.Parameters.AddWithValue("$id",     va.Id);
+        ins.Parameters.AddWithValue("$volId",  va.VolumeId);
+        ins.Parameters.AddWithValue("$dlid",   va.DatLineId);
+        ins.Parameters.AddWithValue("$daId",   va.DerivedArtifactId);
+        ins.Parameters.AddWithValue("$cik",    va.ContentIdentityKey);
+        ins.Parameters.AddWithValue("$status", va.Status);
+        ins.Parameters.AddWithValue("$at",     va.AddedAtUtc.ToString("o"));
+        var inserted = ins.ExecuteNonQuery();
+
+        if (inserted > 0)
+        {
+            using var upd = conn.CreateCommand();
+            upd.Transaction = tx;
+            upd.CommandText = """
+                UPDATE volumes SET actual_size_bytes = actual_size_bytes + $bytes WHERE id = $vid
+                """;
+            upd.Parameters.AddWithValue("$bytes", sizeBytes);
+            upd.Parameters.AddWithValue("$vid",   va.VolumeId);
+            upd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+    }
+
     public bool VolumeArtifactExists(string volumeId, string derivedArtifactId)
     {
         using var conn = Open();
