@@ -65,6 +65,8 @@ public partial class IngestionProgressDialog : Window
         if (action == "rebuild-required"         && FilterTransform.IsChecked == true) return true;
         if (action == "stale-artifact-overwritten" && FilterTransform.IsChecked == true) return true;
         if (action == "skip"               && FilterSkip.IsChecked      == true) return true;
+        if (action == "unwanted-skipped"   && FilterSkip.IsChecked      == true) return true;
+        if (action == "unwanted-skip-failed" && FilterFailed.IsChecked  == true) return true;
         // incomplete-skipped is failure-like: show under Failed filter
         if (action == "incomplete-skipped" && FilterFailed.IsChecked    == true) return true;
         if (action.EndsWith("-failed")     && FilterFailed.IsChecked    == true) return true;
@@ -133,6 +135,11 @@ public partial class IngestionProgressDialog : Window
             SumCopied.Text   = result.FilesCopied.ToString("N0");
             SumPresent.Text  = result.ReleasesPresent.ToString("N0");
             SumSkipped.Text  = result.FilesSkipped.ToString("N0");
+            if (result.UnwantedSkipped > 0)
+            {
+                SumUnwanted.Text         = result.UnwantedSkipped.ToString("N0");
+                SumUnwantedRow.IsVisible = true;
+            }
 
             if (result.TransformsFailed > 0 || result.ReleasesIncomplete > 0)
             {

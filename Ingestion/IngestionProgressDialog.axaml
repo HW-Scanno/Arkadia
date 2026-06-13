@@ -203,6 +203,10 @@
                             <TextBlock Grid.Column="0" Text="Files skipped"    FontSize="12" Foreground="#888899"/>
                             <TextBlock Grid.Column="1" x:Name="SumSkipped"     FontSize="12" FontWeight="Medium" Foreground="#FFA726"/>
                         </Grid>
+                        <Grid x:Name="SumUnwantedRow" ColumnDefinitions="*,Auto" IsVisible="False">
+                            <TextBlock Grid.Column="0" Text="Unwanted skipped" FontSize="12" Foreground="#888899"/>
+                            <TextBlock Grid.Column="1" x:Name="SumUnwanted"    FontSize="12" FontWeight="Medium" Foreground="#9E9E9E"/>
+                        </Grid>
                     </StackPanel>
                 </Border>
             </StackPanel>

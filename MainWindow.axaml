@@ -692,6 +692,8 @@
                                 Margin="10,2" VerticalAlignment="Stretch"/>
                         <Button x:Name="SysActIngestFiles" Classes="view-toggle"
                                 Content="Ingest Files"  Click="OnSysIngestFiles"/>
+                        <Button x:Name="SysActVerifyArchive" Classes="view-toggle"
+                                Content="Verify Archive" Click="OnSysVerifyArchive"/>
                         <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
                                 Margin="10,2" VerticalAlignment="Stretch"/>
                         <Button Classes="view-toggle"

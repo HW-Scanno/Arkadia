@@ -127,8 +127,8 @@ public sealed class PurgeAnalyticsTests : IDisposable
         var (_, _, _, _, _, unwantedBefore) = store.GetAllStatusCounts();
         Assert.Equal(1, unwantedBefore);
 
-        // Restore by setting status to missing
-        store.UpdateReleaseStatus("r1", "missing");
+        // Restore via the dedicated restore method (UpdateReleaseStatus is blocked for unwanted)
+        store.RestoreWantedRelease("r1");
 
         var (missing, _, _, _, _, unwantedAfter) = store.GetAllStatusCounts();
         Assert.Equal(0, unwantedAfter);

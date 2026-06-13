@@ -1,0 +1,232 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Arkadia"
+        xmlns:la="clr-namespace:Arkadia.LocalArchive"
+        x:Class="Arkadia.LocalArchive.LocalArchiveVerifyDialog"
+        Title="Arkadia — Verify Local Archive"
+        Width="1020" Height="720"
+        MinWidth="780" MinHeight="520"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Window.Resources>
+        <local:VerifyResultColorConverter x:Key="ActionColor"/>
+    </Window.Resources>
+
+    <Window.Styles>
+        <Style Selector="TextBlock.section-label">
+            <Setter Property="FontSize"      Value="10"/>
+            <Setter Property="FontWeight"    Value="SemiBold"/>
+            <Setter Property="Foreground"    Value="#555566"/>
+            <Setter Property="LetterSpacing" Value="1"/>
+        </Style>
+        <Style Selector="TextBlock.stat-val">
+            <Setter Property="FontSize"   Value="16"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#AAAACC"/>
+        </Style>
+        <Style Selector="TextBlock.col-header">
+            <Setter Property="FontSize"      Value="10"/>
+            <Setter Property="FontWeight"    Value="SemiBold"/>
+            <Setter Property="Foreground"    Value="#555566"/>
+            <Setter Property="LetterSpacing" Value="1"/>
+        </Style>
+        <Style Selector="CheckBox.filter">
+            <Setter Property="FontSize"   Value="11"/>
+            <Setter Property="Foreground" Value="#AAAACC"/>
+            <Setter Property="Padding"    Value="4,0,0,0"/>
+        </Style>
+        <Style Selector="Button.action-btn">
+            <Setter Property="Background"      Value="#7B68EE"/>
+            <Setter Property="Foreground"      Value="#FFFFFF"/>
+            <Setter Property="Padding"         Value="22,7"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="CornerRadius"    Value="6"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+        <Style Selector="Button.close-btn">
+            <Setter Property="Background"      Value="#444455"/>
+            <Setter Property="Foreground"      Value="#CCCCDD"/>
+            <Setter Property="Padding"         Value="18,7"/>
+            <Setter Property="FontSize"        Value="13"/>
+            <Setter Property="CornerRadius"    Value="6"/>
+            <Setter Property="BorderThickness" Value="0"/>
+        </Style>
+    </Window.Styles>
+
+    <!--
+        Row 0 Auto — header (archive dir)
+        Row 1 Auto — stats bar (live)
+        Row 2 Auto — progress bar + phase
+        Row 3 Auto — filter bar
+        Row 4 Auto — column headers
+        Row 5 *    — scrollable progress rows
+        Row 6 Auto — footer (status label + buttons)
+    -->
+    <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto,*,Auto" Margin="28,22,28,18">
+
+        <!-- Row 0: Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,14">
+            <TextBlock Text="VERIFY LOCAL ARCHIVE"
+                       FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                       Foreground="#555566" Margin="0,0,0,3"/>
+            <TextBlock x:Name="ArchiveDirLabel"
+                       FontSize="12" Foreground="#888899"
+                       FontFamily="Consolas,Courier New,monospace"
+                       TextTrimming="CharacterEllipsis"/>
+        </StackPanel>
+
+        <!-- Row 1: Live stats bar -->
+        <Border Grid.Row="1"
+                Background="#1A1A24" CornerRadius="6" Padding="16,11"
+                Margin="0,0,0,6">
+            <Grid ColumnDefinitions="*,*,*,*,*,*,*">
+                <StackPanel Grid.Column="0" Spacing="2">
+                    <TextBlock Classes="section-label" Text="SCANNED"/>
+                    <TextBlock x:Name="StatScanned"   Classes="stat-val"/>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="2">
+                    <TextBlock Classes="section-label" Text="WANTED OK"/>
+                    <TextBlock x:Name="StatWantedOk"  Classes="stat-val" Foreground="#4CAF50"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Spacing="2">
+                    <TextBlock Classes="section-label" Text="UNWANTED"/>
+                    <TextBlock x:Name="StatUnwanted"  Classes="stat-val" Foreground="#EF5350"/>
+                </StackPanel>
+                <StackPanel Grid.Column="3" Spacing="2">
+                    <TextBlock Classes="section-label" Text="UNKNOWN"/>
+                    <TextBlock x:Name="StatUnknown"   Classes="stat-val" Foreground="#FFB74D"/>
+                </StackPanel>
+                <StackPanel Grid.Column="4" Spacing="2">
+                    <TextBlock Classes="section-label" Text="MISMATCH"/>
+                    <TextBlock x:Name="StatMismatch"  Classes="stat-val" Foreground="#FF7043"/>
+                </StackPanel>
+                <StackPanel Grid.Column="5" Spacing="2">
+                    <TextBlock Classes="section-label" Text="REPAIRABLE"/>
+                    <TextBlock x:Name="StatRepairable" Classes="stat-val" Foreground="#7B68EE"/>
+                </StackPanel>
+                <StackPanel Grid.Column="6" Spacing="2">
+                    <TextBlock Classes="section-label" Text="REPAIRED"/>
+                    <TextBlock x:Name="StatRepaired"  Classes="stat-val" Foreground="#BA68C8"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Row 2: Progress bar + phase -->
+        <Border Grid.Row="2"
+                Background="#1A1A24" CornerRadius="4" Padding="12,8"
+                Margin="0,0,0,6">
+            <StackPanel Spacing="6">
+                <TextBlock x:Name="PhaseLabel"
+                           FontSize="11" Foreground="#666677"
+                           TextTrimming="CharacterEllipsis"/>
+                <ProgressBar x:Name="ScanProgress"
+                             IsIndeterminate="True"
+                             Height="3"
+                             Foreground="#7B68EE" Background="#242433"
+                             CornerRadius="2"
+                             Minimum="0" Maximum="100" Value="0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Row 3: Filter bar -->
+        <Border Grid.Row="3"
+                Background="#1A1A24" Padding="12,7" Margin="0,0,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="14">
+                <TextBlock Text="FILTER:" FontSize="10" FontWeight="SemiBold"
+                           LetterSpacing="1" Foreground="#555566"
+                           VerticalAlignment="Center"/>
+                <CheckBox x:Name="FilterWanted"   Classes="filter" Content="Wanted OK"
+                          IsChecked="False" IsCheckedChanged="OnFilterChanged"/>
+                <CheckBox x:Name="FilterUnwanted" Classes="filter" Content="Unwanted"
+                          IsChecked="True"  IsCheckedChanged="OnFilterChanged"/>
+                <CheckBox x:Name="FilterUnknown"  Classes="filter" Content="Unknown"
+                          IsChecked="True"  IsCheckedChanged="OnFilterChanged"/>
+                <CheckBox x:Name="FilterMismatch" Classes="filter" Content="Mismatch"
+                          IsChecked="True"  IsCheckedChanged="OnFilterChanged"/>
+                <CheckBox x:Name="FilterRepair"   Classes="filter" Content="Repair"
+                          IsChecked="True"  IsCheckedChanged="OnFilterChanged"/>
+                <CheckBox x:Name="FilterScan"     Classes="filter" Content="Scan detail"
+                          IsChecked="False" IsCheckedChanged="OnFilterChanged"/>
+                <TextBlock x:Name="RowCountLabel"
+                           FontSize="10" Foreground="#555566"
+                           VerticalAlignment="Center" Margin="8,0,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Row 4: Column headers -->
+        <Border Grid.Row="4"
+                Padding="12,5,12,5"
+                Background="#141420"
+                BorderBrush="#242433" BorderThickness="0,1,0,1">
+            <Grid ColumnDefinitions="130,3*,2*">
+                <TextBlock Grid.Column="0" Classes="col-header" Text="ACTION"/>
+                <TextBlock Grid.Column="1" Classes="col-header" Text="FILE" Margin="8,0,0,0"/>
+                <TextBlock Grid.Column="2" Classes="col-header" Text="DETAIL" Margin="8,0,0,0"/>
+            </Grid>
+        </Border>
+
+        <!-- Row 5: Scrollable live progress rows -->
+        <Border Grid.Row="5" Background="#1A1A24" Margin="0,0,0,8">
+            <ScrollViewer x:Name="RowsScroll"
+                          HorizontalScrollBarVisibility="Disabled"
+                          VerticalScrollBarVisibility="Auto">
+                <ItemsControl x:Name="RowsList" Padding="0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="la:LocalArchiveProgressRow">
+                            <Border Padding="12,3,12,3"
+                                    BorderBrush="#0D0D13" BorderThickness="0,0,0,1">
+                                <Grid ColumnDefinitions="130,3*,2*">
+                                    <TextBlock Grid.Column="0"
+                                               Text="{Binding Action}"
+                                               FontSize="10" FontWeight="SemiBold"
+                                               FontFamily="Consolas,Courier New,monospace"
+                                               Foreground="{Binding Action, Converter={StaticResource ActionColor}}"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding FileName}"
+                                               FontSize="11"
+                                               Foreground="#CCCCDD"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="8,0,0,0"/>
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding Detail}"
+                                               FontSize="10"
+                                               FontFamily="Consolas,Courier New,monospace"
+                                               Foreground="#888899"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"
+                                               Margin="8,0,0,0"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
+
+        <!-- Row 6: Footer -->
+        <Grid Grid.Row="6" ColumnDefinitions="*,Auto,Auto">
+            <TextBlock Grid.Column="0" x:Name="StatusLabel"
+                       FontSize="12" Foreground="#888899"
+                       VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"/>
+            <Button Grid.Column="1" x:Name="RepairButton"
+                    Classes="action-btn"
+                    Content="Repair All"
+                    IsEnabled="False"
+                    Margin="0,0,10,0"
+                    Click="OnRepair"/>
+            <Button Grid.Column="2" x:Name="CloseButton"
+                    Classes="close-btn"
+                    Content="Close"
+                    IsEnabled="False"
+                    Click="OnClose"/>
+        </Grid>
+
+    </Grid>
+</Window>

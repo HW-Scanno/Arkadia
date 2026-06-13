@@ -11,6 +11,7 @@ public sealed class IngestionResult
     public int FilesCopied              { get; set; }
     public int ReleasesPresent          { get; set; }
     public int FilesSkipped             { get; set; }
+    public int UnwantedSkipped          { get; set; }
     public int TransformsFailed         { get; set; }
     public int ReleasesIncomplete       { get; set; }
     public int FilesDeletedFromIncoming { get; set; }

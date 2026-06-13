@@ -57,6 +57,19 @@ public sealed class VerifyResultColorConverter : IValueConverter
             "fillback-error"                   => "#EF5350",  // red — failure
             "usage-refreshed"                  => "#444455",  // dim — neutral event
 
+            // Local archive verify/repair actions
+            "archive-found-file"      => "#444455",  // dim — discovery
+            "archive-hashing"         => "#5C6BC0",  // blue-gray — computing SHA1
+            "archive-wanted-ok"       => "#81C784",  // green — OK
+            "archive-unwanted-found"  => "#EF5350",  // red — unwanted artifact
+            "archive-unknown-found"   => "#FFB74D",  // amber — unknown file
+            "archive-hash-mismatch"   => "#FF7043",  // orange — hash mismatch
+            "archive-collision"       => "#FF7043",  // orange — DB collision
+            "archive-repair-moving"   => "#64B5F6",  // blue — move in progress
+            "archive-repair-moved"    => "#BA68C8",  // purple — moved to skip
+            "archive-repair-skipped"  => "#555566",  // dim — already absent
+            "archive-error"           => "#EF5350",  // red — failure
+
             _             => "#888899",
         };
         return new SolidColorBrush(Color.Parse(hex));

@@ -846,9 +846,29 @@ public sealed class DatLineStore
     {
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
-        cmd.CommandText = "UPDATE releases SET status = $status WHERE id = $id AND (status != 'unwanted' OR $status != 'present')";
+        // Generic lifecycle updates never touch unwanted releases.
+        // Only RestoreWantedRelease may intentionally leave the unwanted state.
+        cmd.CommandText = "UPDATE releases SET status = $status WHERE id = $id AND status != 'unwanted'";
         cmd.Parameters.AddWithValue("$status", status);
         cmd.Parameters.AddWithValue("$id",     releaseId);
+        cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// The only allowed way to remove a release from the unwanted state.
+    /// Sets status → missing and show_in_catalog → 1.
+    /// Must be called by the explicit "Restore Wanted" UI action only.
+    /// </summary>
+    public void RestoreWantedRelease(string releaseId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE releases
+            SET status = 'missing', show_in_catalog = 1
+            WHERE id = $id AND status = 'unwanted'
+            """;
+        cmd.Parameters.AddWithValue("$id", releaseId);
         cmd.ExecuteNonQuery();
     }
 
@@ -1447,7 +1467,8 @@ public sealed class DatLineStore
         {
             using (var cmd = conn.CreateCommand())
             {
-                cmd.CommandText = "SELECT id, name FROM releases";
+                // Only load wanted releases; unwanted are excluded from Build Volume.
+                cmd.CommandText = "SELECT id, name FROM releases WHERE status != 'unwanted'";
                 using var r = cmd.ExecuteReader();
                 while (r.Read())
                     releaseNames[r.GetString(0)] = r.GetString(1);
@@ -1455,6 +1476,7 @@ public sealed class DatLineStore
 
             using (var cmd = conn.CreateCommand())
             {
+                // Exclude artifacts linked to ANY unwanted release (UNWANTED WINS semantics).
                 cmd.CommandText = """
                     SELECT
                         rcl.release_id,
@@ -1464,6 +1486,14 @@ public sealed class DatLineStore
                         da.archive_tier
                     FROM release_content_links rcl
                     JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                    JOIN releases r ON r.id = rcl.release_id
+                    WHERE r.status != 'unwanted'
+                      AND NOT EXISTS (
+                        SELECT 1 FROM release_content_links rcl2
+                        JOIN releases r2 ON r2.id = rcl2.release_id
+                        WHERE rcl2.content_identity_key = da.content_identity_key
+                          AND r2.status = 'unwanted'
+                      )
                     ORDER BY rcl.release_id, da.file_name
                     """;
 
@@ -1764,6 +1794,89 @@ public sealed class DatLineStore
             )
             """;
         return (int)(long)(cmd.ExecuteScalar() ?? 0L);
+    }
+
+    // ── Archive artifact info (for LocalArchiveVerifyService) ────────────────────
+
+    /// <summary>
+    /// Information about a derived artifact in the active archive, including
+    /// whether any linked release is unwanted (UNWANTED WINS semantics).
+    /// </summary>
+    public sealed record ArchiveArtifactInfo(
+        string DerivedArtifactId,
+        string ContentIdentityKey,
+        string FileName,
+        string RelativePath,
+        long   SizeBytes,
+        string ExpectedSha1,
+        bool   IsUnwanted);
+
+    /// <summary>
+    /// Returns all derived artifacts for this DAT-line store, each annotated with
+    /// whether any linked release is unwanted.  Used by LocalArchiveVerifyService.
+    /// </summary>
+    public List<ArchiveArtifactInfo> GetAllArchiveArtifactInfos()
+    {
+        var result   = new List<ArchiveArtifactInfo>();
+        var seenDaId = new HashSet<string>(StringComparer.Ordinal);
+
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT
+                da.id,
+                da.content_identity_key,
+                da.file_name,
+                da.relative_path,
+                da.derived_size_bytes,
+                da.hashed_derived_sha1,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM release_content_links rcl2
+                    JOIN releases r2 ON r2.id = rcl2.release_id
+                    WHERE rcl2.content_identity_key = da.content_identity_key
+                      AND r2.status = 'unwanted'
+                ) THEN 1 ELSE 0 END AS is_unwanted
+            FROM derived_artifacts da
+            ORDER BY da.file_name
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var daId = r.GetString(0);
+            if (!seenDaId.Add(daId)) continue;
+            result.Add(new ArchiveArtifactInfo(
+                DerivedArtifactId  : daId,
+                ContentIdentityKey : r.GetString(1),
+                FileName           : r.GetString(2),
+                RelativePath       : r.GetString(3),
+                SizeBytes          : r.GetInt64(4),
+                ExpectedSha1       : r.IsDBNull(5) ? "" : r.GetString(5),
+                IsUnwanted         : r.GetInt32(6) != 0));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Removes a derived_artifact row and ALL its release_content_links in one transaction.
+    /// Used by LocalArchiveRepair when exclusively-unwanted artifacts are cleaned.
+    /// </summary>
+    public void DeleteDerivedArtifactAndLinks(string derivedArtifactId, string contentIdentityKey)
+    {
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM release_content_links WHERE content_identity_key = $cik";
+            cmd.Parameters.AddWithValue("$cik", contentIdentityKey);
+            cmd.ExecuteNonQuery();
+        }
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "DELETE FROM derived_artifacts WHERE id = $id";
+            cmd.Parameters.AddWithValue("$id", derivedArtifactId);
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
     }
 
     // ── Integrity validation ──────────────────────────────────────────────────

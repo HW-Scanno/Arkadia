@@ -236,6 +236,7 @@ public partial class MainWindow : Window
         SysActVerifyAll.IsEnabled     = datHasStore;
         SysActDeleteDat.IsEnabled     = hasDat;
         SysActIngestFiles.IsEnabled   = datHasStore;
+        SysActVerifyArchive.IsEnabled = datHasStore;
     }
 
     private void BuildTree()
@@ -1078,6 +1079,25 @@ public partial class MainWindow : Window
     {
         if (_selectedDatLine is null) return;
         OnIngestDatLine(_selectedDatLine);
+    }
+
+    private async void OnSysVerifyArchive(object? sender, RoutedEventArgs e)
+    {
+        var dl = _selectedDatLine;
+        if (dl is null || dl.DataStorePath.Length == 0) return;
+        if (dl.CatalogPlatformId is null || dl.CatalogId is null) return;
+
+        var absDbPath = Path.Combine(_dataDir, dl.DataStorePath);
+        if (!File.Exists(absDbPath)) return;
+
+        var appRoot = AppContext.BaseDirectory;
+        var store   = new Data.DatLineStore(absDbPath);
+        var service = new LocalArchive.LocalArchiveVerifyService(appRoot);
+
+        // Dialog opens immediately and drives its own async scan via IProgress<T>.
+        var dlg = new LocalArchive.LocalArchiveVerifyDialog(
+            dl.CatalogPlatformId, dl.CatalogId, store, service);
+        await dlg.ShowDialog(this);
     }
 
     private void OnOpenDatDownloader(object? sender, RoutedEventArgs e) => SetActive(NavProviders);
@@ -5754,8 +5774,7 @@ public partial class MainWindow : Window
                 if (entry.DbPath.Length > 0 && File.Exists(entry.DbPath))
                 {
                     var store = new Data.DatLineStore(entry.DbPath);
-                    store.UpdateReleaseStatus(entry.ReleaseId, "missing");
-                    store.SetShowInCatalog(entry.ReleaseId, true);
+                    store.RestoreWantedRelease(entry.ReleaseId);
                 }
                 RebuildLibraryDatasets();
                 BuildAnalytics();
@@ -8928,7 +8947,7 @@ public partial class MainWindow : Window
         var incomingDir = incomingDirOverride ?? Path.Combine(appRoot, "incoming-roms", platformId);
         var stagingRoot = Path.Combine(appRoot, "staging",        platformId, datLineId);
         var sourceRoot  = Path.Combine(appRoot, "source",         platformId, datLineId);
-        var skipDir     = Path.Combine(appRoot, "incoming-skip");
+        var skipDir     = Path.Combine(appRoot, "incoming-skip", platformId);
 
         Directory.CreateDirectory(incomingDir);
         Directory.CreateDirectory(stagingRoot);
@@ -9225,8 +9244,10 @@ public partial class MainWindow : Window
         var successfullyCopied      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var movedFromIncoming       = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allTargetsSatisfied     = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var allTargetsUnwanted      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var affectedReleaseIds      = new HashSet<string>(StringComparer.Ordinal);
         var transformFailedReleases = new HashSet<string>(StringComparer.Ordinal);
+        var unwantedSkippedReleases = new HashSet<string>(StringComparer.Ordinal);
         // incompleteReleases: releases where staging completeness check failed (e.g. orphan .bin, missing .cue).
         // These must also block archive deletion so the ZIP is preserved for recovery.
         var incompleteReleases      = new HashSet<string>(StringComparer.Ordinal);
@@ -9248,10 +9269,34 @@ public partial class MainWindow : Window
                 continue;
             }
 
+            // UNWANTED WINS: split pending into wanted vs unwanted targets.
+            var wantedPending = pending
+                .Where(d => !releases.TryGetValue(d.ReleaseId, out var r) || r.Status != "unwanted")
+                .ToList();
+
+            // Log per-release unwanted-skipped for any unwanted targets.
+            var seenUnwantedLog = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (releaseId, _) in pending)
+            {
+                if (!seenUnwantedLog.Add(releaseId)) continue;
+                if (!releases.TryGetValue(releaseId, out var rel) || rel.Status != "unwanted") continue;
+                unwantedSkippedReleases.Add(releaseId);
+                var skipOp = new IngestionOperation(srcInfo.Name, "unwanted-skipped", rel.Name);
+                result.Operations.Add(skipOp);
+                progress.Report(new IngestionProgress { NewOperation = skipOp });
+            }
+
+            if (wantedPending.Count == 0)
+            {
+                // All matched targets are unwanted — defer to Phase 8 for incoming-skip move.
+                allTargetsUnwanted.Add(srcPath);
+                continue;
+            }
+
             bool anyFailed           = false;
             bool wasMovedFromIncoming = false;
 
-            foreach (var (releaseId, romName) in pending)
+            foreach (var (releaseId, romName) in wantedPending)
             {
                 var relName    = releases.TryGetValue(releaseId, out var rel) ? rel.Name : releaseId;
                 var safeFolder = SafeFileName(relName);
@@ -9265,7 +9310,7 @@ public partial class MainWindow : Window
                     // Move when this is the sole remaining target and paths share a volume
                     // (same-volume File.Move is an atomic NTFS rename — no byte copy).
                     // Copy otherwise (fan-out to multiple releases, or cross-volume).
-                    StagingHelpers.StageFile(srcPath, destPath, pending.Count, out var stageOp);
+                    StagingHelpers.StageFile(srcPath, destPath, wantedPending.Count, out var stageOp);
 
                     // Size sanity check only for copies (moves are atomic and integrity-guaranteed).
                     if (stageOp != "stage-moved" && new FileInfo(destPath).Length != srcInfo.Length)
@@ -9529,6 +9574,27 @@ public partial class MainWindow : Window
                     progress.Report(new IngestionProgress { NewOperation = op });
                 }
             }
+            else if (allTargetsUnwanted.Contains(srcPath))
+            {
+                // Every matched release is unwanted — move incoming file to incoming-skip\<platform>\.
+                result.UnwantedSkipped++;
+                var destPath = IncomingSkipUniquePath(skipDir, fileName);
+                try
+                {
+                    File.Move(srcPath, destPath, overwrite: false);
+                    var op = new IngestionOperation(fileName, "unwanted-skipped",
+                        $"incoming-skip/{platformId}/{Path.GetFileName(destPath)}");
+                    result.Operations.Add(op);
+                    progress.Report(new IngestionProgress { NewOperation = op });
+                }
+                catch
+                {
+                    var op = new IngestionOperation(fileName, "unwanted-skip-failed",
+                        "could not move to incoming-skip");
+                    result.Operations.Add(op);
+                    progress.Report(new IngestionProgress { NewOperation = op });
+                }
+            }
             else
             {
                 result.FilesSkipped++;
@@ -9536,7 +9602,8 @@ public partial class MainWindow : Window
                 try
                 {
                     File.Move(srcPath, destPath, overwrite: false);
-                    var op = new IngestionOperation(fileName, "skip", $"incoming-skip/{Path.GetFileName(destPath)}");
+                    var op = new IngestionOperation(fileName, "skip",
+                        $"incoming-skip/{platformId}/{Path.GetFileName(destPath)}");
                     result.Operations.Add(op);
                     progress.Report(new IngestionProgress { NewOperation = op });
                 }
