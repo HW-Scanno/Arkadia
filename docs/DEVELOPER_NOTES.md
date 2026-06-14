@@ -8,12 +8,28 @@
 Arkadia.sln
 ├── Arkadia.csproj                  — main application (Avalonia 11 / .NET 8 / Windows)
 │   ├── Data/                       — all database and storage logic
+│   │   ├── DatLineStore.cs         — per-DAT SQLite store (releases, artifacts, status guards)
+│   │   ├── CatalogService.cs       — global catalog: volumes, assignments, DA map
+│   │   ├── VolumePathResolver.cs   — workspace-first then disk-mount volume root resolution
+│   │   └── DiskDiscoveryService.cs — enumerates drives with ARKADIA.DISK.json markers
 │   ├── Library/                    — LibraryEntry, title resolution helpers
 │   ├── Providers/                  — scraper clients and import services
-│   ├── Ingestion/                  — DAT parsing and ingest pipeline
+│   ├── Ingestion/                  — DAT parsing and ingest pipeline, color converters
 │   ├── Themes/                     — theme engine, palette slices
 │   ├── Systems/                    — system/hardware-family management
 │   ├── Volumes/                    — volume lifecycle management
+│   │   ├── VolumeArtifactPathBuilder.cs  — flat path authority (use everywhere)
+│   │   ├── AppendVolumePlanner.cs        — dry-run: candidate selection + SkipReason constants
+│   │   ├── AppendVolumeService.cs        — execution: copy → verify → DB commit
+│   │   ├── VolumeFillbackPlanner.cs      — dry-run: source selection for cross-volume move
+│   │   ├── VolumeFillbackService.cs      — execution: move/copy → verify → delete → DB update
+│   │   └── VolumeVerifyService.cs        — recursive scan, SHA-1 classification, recovery
+│   ├── LocalArchive/               — local archive verify and repair
+│   │   ├── LocalArchiveVerifyService.cs  — filesystem-first scan, redundancy detection, repair
+│   │   ├── LocalArchiveVerifyPlan.cs     — scan result: entries, counts, IsClean
+│   │   ├── LocalArchiveEntry.cs          — per-file classification + AssignedVolumeLabel/VolumeFilePath
+│   │   └── AssignedVolumeInfo.cs         — volume assignment context for redundancy detection
+│   ├── Purge/                      — purge planner/executor, analytics
 │   ├── Disks/                      — disk registration and management
 │   ├── Pending/                    — pending artifact management
 │   ├── Staging/                    — staging area operations
@@ -21,8 +37,11 @@ Arkadia.sln
 │   ├── Controls/                   — shared UI controls
 │   └── Catalog/                    — catalog-level services
 │       └── Ark/                    — ARK backup/restore pipeline (writer, verifier, plan, restore)
-└── Arkadia.Tests.csproj            — xUnit tests (1163 tests, no UI dependency)
-    ├── Data/                       — store, proposal, mapping, metadata tests
+└── Arkadia.Tests.csproj            — xUnit tests (1480 tests, no UI dependency)
+    ├── Data/                       — store, proposal, mapping, metadata, status guard tests
+    ├── Volumes/                    — append, fillback, verify volume, diagnostics tests
+    ├── LocalArchive/               — verify archive, redundancy, repair tests
+    ├── Purge/                      — purge planner, analytics tests
     ├── Providers/                  — scraper parser, import service, candidate tests
     ├── Ark/                        — ARK verifier, plan service, restore service tests
     └── MergeProposalVmTests.cs     — view-model tests for merge dialog
@@ -280,6 +299,50 @@ DAT-derived facts must:
 
 ---
 
+## Volume and Archive Stack
+
+See [ARCHIVE_AND_VOLUME_MODEL.md](ARCHIVE_AND_VOLUME_MODEL.md) for the full model. Key invariants:
+
+- **Flat layout.** Active volume artifacts live at `<volume root>\<filename>`. No release-name subfolders. `VolumeArtifactPathBuilder.GetFlatFullPath()` is the single authority. Use it everywhere.
+- **Filesystem-first.** All verify/repair workflows enumerate physical files first. DB is reconciled against disk.
+- **No silent deletion.** Repair moves files to managed locations; nothing is discarded silently.
+- **DB after verification.** Append creates VA rows only after hash-verified copy. Fillback deletes source only after verified copy.
+
+### UNWANTED semantics
+
+- `UNWANTED` is a curator veto, not a lifecycle state.
+- `DatLineStore.UpdateReleaseStatus()` is SQL-guarded: `AND status != 'unwanted'`. Ingestion cannot reset unwanted to present.
+- `DatLineStore.RestoreWantedRelease()` is the **only** allowed exit from unwanted.
+- UNWANTED WINS: if any release linked to an artifact is unwanted, that artifact is excluded from all automatic flows.
+
+See [UNWANTED_RELEASES.md](UNWANTED_RELEASES.md) for the full invariant table.
+
+### CatalogService — volume-related methods
+
+| Method | Purpose |
+|---|---|
+| `GetAssignedDerivedIdsByDatLine(dlId)` | Fast set for Append candidate exclusion |
+| `GetAssignedDerivedIdsWithVolumesByDatLine(dlId)` | Verbose skip reasons (daId → volume label) |
+| `GetAllAssignmentsForDatLine(dlId)` | Full map for Verify Archive redundancy (daId, volumeId, label, diskId?) workspace-first |
+| `AddVolumeArtifactAndIncrementSize(va, bytes)` | Atomic VA row + size increment after verified copy |
+
+### DatLineStore — key methods added for archive/unwanted
+
+| Method | Purpose |
+|---|---|
+| `GetAllWantedArtifactInfos()` | All non-unwanted DAs (NOT EXISTS subquery) |
+| `GetAllArchiveArtifactInfos()` | All DAs including unwanted (for verify archive) |
+| `GetUnwantedArtifactCount()` | Diagnostic: DAs where any linked release is unwanted |
+| `UpdateReleaseStatus(id, status)` | Guarded: never touches unwanted |
+| `RestoreWantedRelease(id)` | Only allowed exit from unwanted |
+| `DeleteDerivedArtifactAndLinks(daId, cik)` | Repair: remove DA + content link |
+
+### incoming-skip
+
+Centralized suspension zone: `incoming-skip\<platform>\`. Written by ingestion (unwanted skip), Verify Archive repair (unwanted/unknown/mismatch/redundant), and manual quarantine. Never scanned by Append or Build Volume. See [INGESTION_PIPELINE.md](INGESTION_PIPELINE.md).
+
+---
+
 ## Current Cleanup Status
 
 ### Extracted
@@ -295,7 +358,7 @@ DAT-derived facts must:
 - Settings persistence (LoadAllSettings, OnSaveSettings, LoadMappingsSettings)
 - Status display (SetScrapeStatus)
 
-MainWindow.axaml.cs is ~12,800 lines and is the primary cleanup target.
+MainWindow.axaml.cs is ~13,860 lines and is the primary cleanup target.
 
 ---
 
@@ -367,7 +430,7 @@ The Backups sidebar section is the UI entry point for ARK export.
 **Tests:**
 - `ArkadiaFoldersTests.EnsureCreated_CreatesBackupsFolder` — verifies `backups\` is created.
 - `ArkUiHelpersTests` — covers `SuggestedArkFileName` pattern and `BackupsFolder` helper.
-- Current total: **1163 tests**.
+- Current total: **1480 tests**.
 
 ---
 

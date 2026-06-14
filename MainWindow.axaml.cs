@@ -5406,6 +5406,26 @@ public partial class MainWindow : Window
     private void OnLibraryFilterChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
         => ApplyLibraryFilter();
 
+    private async void OnLibraryBulkOperations(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var datLineLabel = LibraryContextDatLine.SelectedItem as string;
+        var datLineId    = _activeDatasetEntries.FirstOrDefault()?.DatLineId;
+        var dbPath       = _activeDatasetEntries.FirstOrDefault()?.DbPath;
+
+        if (string.IsNullOrEmpty(datLineLabel) || string.IsNullOrEmpty(datLineId) ||
+            string.IsNullOrEmpty(dbPath) || !File.Exists(dbPath))
+            return;
+
+        var store = new Data.DatLineStore(dbPath);
+        var dlg   = new Library.LibraryBulkOperationDialog(
+            datLineId, datLineLabel, dbPath, store, AppContext.BaseDirectory, _catalog);
+        await dlg.ShowDialog(this);
+
+        RebuildLibraryDatasets();
+        BuildAnalytics();
+        ApplyLibraryFilter();
+    }
+
     private void OnLibrarySelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
     {
         var entry = LibraryList.SelectedItem as LibraryEntry;

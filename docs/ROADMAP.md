@@ -51,6 +51,19 @@ Requires: abstract `IScraperProvider` interface, provider-specific client implem
 
 ---
 
+## Recently completed (not roadmap)
+
+The following items from previous roadmap drafts are fully implemented and should not appear as planned work:
+
+- Append Volume with diagnostic plan (copy-from-archive, candidate diagnostics, verbose skip reasons)
+- Fillback Volume (cross-volume file movement with verification)
+- Verify Volume (recursive scan, flat layout enforcement, unwanted/unknown/misplaced recovery)
+- Verify Archive (filesystem-first scan, redundant copy detection, repair to incoming-skip)
+- UNWANTED curator veto with SQL guard and ingestion early-skip
+- Purge workflow (planner, executor, analytics)
+
+---
+
 ## Medium-Term
 
 - Export / Build Set: generate a distributable ROM set from verified archive content

@@ -28,13 +28,16 @@ Arkadia is being developed toward a complete personal preservation workflow tool
 ```
 Arkadia.sln
 ├── Arkadia.csproj          — Avalonia 11 / .NET 8 desktop app (Windows)
-│   ├── Data/               — DatLineStore, CatalogService, MediaStore, normalizers
+│   ├── Data/               — DatLineStore, CatalogService, VolumePathResolver, normalizers
 │   ├── Library/            — LibraryEntry, title resolution
 │   ├── Providers/          — scraping provider clients and import services
 │   ├── Ingestion/          — DAT parsing and ingest pipeline
+│   ├── Volumes/            — Append, Fillback, Verify Volume, VolumeArtifactPathBuilder
+│   ├── LocalArchive/       — Verify Archive, redundancy detection, repair
+│   ├── Purge/              — Purge planner/executor, analytics
 │   ├── Themes/             — Theme engine, palette management
 │   └── MainWindow.axaml    — Single-window UI with view switching
-└── Arkadia.Tests.csproj    — xUnit test project (~975 tests)
+└── Arkadia.Tests.csproj    — xUnit test project (1480 tests)
 ```
 
 The application is a single-window app with a left nav bar switching between views: Dashboard, Analytics, Providers, Systems, Operations, Catalog, Settings.
@@ -46,6 +49,19 @@ The application is a single-window app with a left nav bar switching between vie
 At runtime, Arkadia writes all data next to the executable (`AppContext.BaseDirectory`):
 
 ```
+archive/
+  <platform>/
+    <datLineId>/                      — active local archive (flat: artifact files at root)
+
+volumes/
+  <volume label>/                     — workspace volumes (flat: artifact files at root)
+
+incoming/
+  <platform>/                         — files arriving for ingestion
+
+incoming-skip/
+  <platform>/                         — suspended/quarantined files (unwanted, unknown, redundant)
+
 data/
   catalog.db                         — global catalog (systems, DAT lines, settings, mappings)
   media/
@@ -254,23 +270,22 @@ Video previews in the Catalog gallery require LibVLC. Place the `libvlc.dll` and
 ```bash
 git clone https://github.com/your-org/arkadia.git
 cd arkadia
-dotnet build
-dotnet test
-dotnet run --project Arkadia.csproj
+dotnet build Arkadia.sln -c Release
+dotnet test Arkadia.sln -c Release    # 1480 tests — all must pass
+dotnet run --project Arkadia/Arkadia.csproj
 ```
 
 **Requirements:** .NET 8 SDK, Windows 10+.
 
 ---
 
-## Publishing (Portable win-x64)
+## Publishing (Portable win-x64 single file)
 
 ```bash
-dotnet publish Arkadia.csproj -c Release -r win-x64 --self-contained true \
-  -p:PublishSingleFile=false -p:PublishReadyToRun=true -o publish/
+dotnet publish Arkadia/Arkadia.csproj /p:PublishProfile=win-x64-portable
 ```
 
-The `publish/` directory contains the self-contained executable. Copy `libraries/lib-vlc/win-x64/` alongside it for video playback support.
+Output lands in `publish\win-x64\`. Copy `libraries/lib-vlc/win-x64/` alongside the executable for video playback support.
 
 ---
 
@@ -278,11 +293,16 @@ The `publish/` directory contains the self-contained executable. Copy `libraries
 
 | Area | Status |
 |---|---|
-| Multi-volume archive management | Stable |
 | DAT import (No-Intro, Redump, TOSEC, MAME, FBNeo, EggmansWorld) | Stable |
-| SHA1 integrity verification | Stable |
-| Volume plan / build / append / reabsorb | Stable |
-| Repair workflow | Stable |
+| SHA-1 integrity verification | Stable |
+| Local archive management (ingest, verify, repair) | Stable |
+| Verify Archive — filesystem-first scan + classify + repair | Stable |
+| Verify Archive — redundant copy detection (volume re-verify before move) | Stable |
+| Append Volume — fill volume from archive with diagnostics | Stable |
+| Fillback Volume — move content between volumes | Stable |
+| Verify Volume — recursive scan + recovery + flat layout enforcement | Stable |
+| UNWANTED curator veto (SQL-guarded; only RestoreWantedRelease exits) | Stable |
+| Purge workflow (planner, executor, analytics) | Stable |
 | Catalog browse with cover/media gallery | Stable |
 | Manual scrape with review-before-apply | Stable |
 | Offline scraping from registered cache packages | Stable |
@@ -363,6 +383,12 @@ The `publish/` directory contains the self-contained executable. Copy `libraries
 
 - [User Manual](docs/USER_MANUAL.md)
 - [Developer Notes](docs/DEVELOPER_NOTES.md)
+- [Archive and Volume Model](docs/ARCHIVE_AND_VOLUME_MODEL.md) — archive vs volume architecture, incoming-skip, flat layout, data integrity rules
+- [UNWANTED Releases](docs/UNWANTED_RELEASES.md) — curator veto semantics, SQL guard, RestoreWantedRelease
+- [Verify Archive](docs/VERIFY_ARCHIVE.md) — filesystem-first scan, classifications, redundancy detection, repair behaviour
+- [Volume Workflows](docs/VOLUME_WORKFLOWS.md) — Append Volume, Fillback Volume, Verify Volume
+- [Ingestion Pipeline](docs/INGESTION_PIPELINE.md) — ingest phases, unwanted early-skip, incoming-skip
+- [Volume & Archive QA Checklist](docs/QA_CHECKLIST.md) — manual QA steps for volume/archive workflows
 - [Cache & Curation Pipeline](docs/CACHE_CURATION_PIPELINE.md) — provider cache builder, staging, registered cache manager, verify package, offline / bulk scraping, Manage Media workbench, Extra Notes, AMP direction
 - [AMP v1 Specification](docs/SPECS/ARKADIA_MEDIA_PACK_V1_SPEC.md) — Arkadia Media Pack format specification
 - [ARK v0.5 Specification](docs/SPECS/ARKADIA_BACKUP_ARCHIVE_V0_5_SPEC.md) — Arkadia Backup / Archive format specification
