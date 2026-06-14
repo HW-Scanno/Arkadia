@@ -65,10 +65,14 @@ public sealed class VerifyResultColorConverter : IValueConverter
             "archive-unknown-found"   => "#FFB74D",  // amber — unknown file
             "archive-hash-mismatch"   => "#FF7043",  // orange — hash mismatch
             "archive-collision"       => "#FF7043",  // orange — DB collision
-            "archive-repair-moving"   => "#64B5F6",  // blue — move in progress
-            "archive-repair-moved"    => "#BA68C8",  // purple — moved to skip
-            "archive-repair-skipped"  => "#555566",  // dim — already absent
-            "archive-error"           => "#EF5350",  // red — failure
+            "archive-repair-moving"        => "#64B5F6",  // blue — move in progress
+            "archive-repair-moved"         => "#BA68C8",  // purple — moved to skip
+            "archive-repair-skipped"       => "#555566",  // dim — already absent
+            "archive-error"                => "#EF5350",  // red — failure
+            "archive-redundant-copy"       => "#26C6DA",  // cyan — assigned to a reachable volume
+            "archive-volume-unavailable"   => "#EF5350",  // red — assigned volume not reachable
+            "archive-redundant-moved"      => "#BA68C8",  // purple — moved after volume verification
+            "archive-volume-copy-missing"  => "#FF7043",  // orange — volume copy gone/corrupt
 
             _             => "#888899",
         };

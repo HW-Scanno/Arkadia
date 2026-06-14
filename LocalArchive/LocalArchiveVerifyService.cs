@@ -27,11 +27,18 @@ public sealed class LocalArchiveVerifyService
     /// Scans the archive directory for <paramref name="datLineId"/> and classifies
     /// every physical file found. Progress events are dispatched via <paramref name="progress"/>.
     /// </summary>
+    /// <param name="assignedVolumes">
+    /// Optional map of DerivedArtifactId → <see cref="AssignedVolumeInfo"/> built by the caller
+    /// from CatalogService + VolumePathResolver. When provided, wanted artifacts already on a
+    /// reachable volume are classified as <see cref="LocalArchiveClass.RedundantArchiveCopy"/>
+    /// (repairable) or <see cref="LocalArchiveClass.AssignedVolumeUnavailable"/> (warning).
+    /// </param>
     public LocalArchiveVerifyPlan Verify(
-        string                                      platformId,
-        string                                      datLineId,
-        DatLineStore                                store,
-        IProgress<LocalArchiveVerifyProgress>?      progress = null)
+        string                                           platformId,
+        string                                           datLineId,
+        DatLineStore                                     store,
+        IProgress<LocalArchiveVerifyProgress>?           progress        = null,
+        IReadOnlyDictionary<string, AssignedVolumeInfo>? assignedVolumes = null)
     {
         var archiveDir = Path.Combine(_appRoot, "archive", platformId, datLineId);
         var entries    = new List<LocalArchiveEntry>();
@@ -126,19 +133,65 @@ public sealed class LocalArchiveVerifyService
                 }
                 else
                 {
-                    entries.Add(new LocalArchiveEntry
+                    // Check whether this artifact is already on an assigned volume.
+                    if (assignedVolumes is not null &&
+                        assignedVolumes.TryGetValue(da.DerivedArtifactId, out var vi))
                     {
-                        Classification     = LocalArchiveClass.WantedArchiveOk,
-                        FileName           = fileName,
-                        RelativePath       = relPath,
-                        DerivedArtifactId  = da.DerivedArtifactId,
-                        ContentIdentityKey = da.ContentIdentityKey,
-                        ExpectedSha1       = da.ExpectedSha1,
-                        ActualSha1         = actualSha1,
-                        IsRepairable       = false,
-                        Note               = "OK",
-                    });
-                    progress?.Report(new("archive-wanted-ok", fileName, ""));
+                        if (vi.VolumeRootPath is null)
+                        {
+                            // Volume assigned but not reachable anywhere.
+                            entries.Add(new LocalArchiveEntry
+                            {
+                                Classification      = LocalArchiveClass.AssignedVolumeUnavailable,
+                                FileName            = fileName,
+                                RelativePath        = relPath,
+                                DerivedArtifactId   = da.DerivedArtifactId,
+                                ContentIdentityKey  = da.ContentIdentityKey,
+                                ExpectedSha1        = da.ExpectedSha1,
+                                ActualSha1          = actualSha1,
+                                IsRepairable        = false,
+                                Note                = $"Assigned to volume '{vi.VolumeLabel}' which is not currently reachable.",
+                                AssignedVolumeLabel = vi.VolumeLabel,
+                            });
+                            progress?.Report(new("archive-volume-unavailable", fileName, vi.VolumeLabel));
+                        }
+                        else
+                        {
+                            // Volume is reachable — this archive copy is redundant.
+                            var volumeFilePath = Path.Combine(vi.VolumeRootPath, fileName);
+                            entries.Add(new LocalArchiveEntry
+                            {
+                                Classification      = LocalArchiveClass.RedundantArchiveCopy,
+                                FileName            = fileName,
+                                RelativePath        = relPath,
+                                DerivedArtifactId   = da.DerivedArtifactId,
+                                ContentIdentityKey  = da.ContentIdentityKey,
+                                ExpectedSha1        = da.ExpectedSha1,
+                                ActualSha1          = actualSha1,
+                                IsRepairable        = true,
+                                Note                = $"Already on volume '{vi.VolumeLabel}'. Archive copy can be moved to incoming-skip.",
+                                AssignedVolumeLabel = vi.VolumeLabel,
+                                VolumeFilePath      = volumeFilePath,
+                            });
+                            progress?.Report(new("archive-redundant-copy", fileName, vi.VolumeLabel));
+                        }
+                    }
+                    else
+                    {
+                        entries.Add(new LocalArchiveEntry
+                        {
+                            Classification     = LocalArchiveClass.WantedArchiveOk,
+                            FileName           = fileName,
+                            RelativePath       = relPath,
+                            DerivedArtifactId  = da.DerivedArtifactId,
+                            ContentIdentityKey = da.ContentIdentityKey,
+                            ExpectedSha1       = da.ExpectedSha1,
+                            ActualSha1         = actualSha1,
+                            IsRepairable       = false,
+                            Note               = "OK",
+                        });
+                        progress?.Report(new("archive-wanted-ok", fileName, ""));
+                    }
                 }
                 continue;
             }
@@ -229,6 +282,7 @@ public sealed class LocalArchiveVerifyService
 
     /// <summary>
     /// Repairs all repairable entries in the plan:
+    /// - RedundantArchiveCopy: re-verify volume copy, then move archive to incoming-skip. No DB changes.
     /// - UnwantedArchiveArtifact: move to incoming-skip, remove DA+RCL rows.
     /// - UnknownArchiveFile: move to incoming-skip, no DB changes.
     /// - ArchiveHashMismatch: move to incoming-skip, no DB changes.
@@ -253,6 +307,46 @@ public sealed class LocalArchiveVerifyService
             {
                 log.Add($"already-absent  {entry.FileName}");
                 progress?.Report(new("archive-repair-skipped", entry.FileName, "Already absent"));
+                continue;
+            }
+
+            // RedundantArchiveCopy: re-verify volume copy BEFORE moving the archive.
+            if (entry.Classification == LocalArchiveClass.RedundantArchiveCopy)
+            {
+                if (entry.VolumeFilePath is null || !File.Exists(entry.VolumeFilePath))
+                {
+                    log.Add($"volume-copy-missing  {entry.FileName}  — volume file gone, keeping archive");
+                    progress?.Report(new("archive-volume-copy-missing", entry.FileName,
+                        entry.VolumeFilePath ?? "(path unknown)"));
+                    continue;
+                }
+                var volumeSha1 = ComputeSha1(entry.VolumeFilePath);
+                if (!string.Equals(volumeSha1, entry.ExpectedSha1, StringComparison.OrdinalIgnoreCase))
+                {
+                    log.Add($"volume-copy-corrupt  {entry.FileName}  " +
+                        $"expected={entry.ExpectedSha1[..8]}… got={volumeSha1[..8]}… — keeping archive");
+                    progress?.Report(new("archive-volume-copy-missing", entry.FileName,
+                        $"Volume copy corrupt ({volumeSha1[..8]}…)"));
+                    continue;
+                }
+                // Volume copy is verified — safe to move the archive.
+                progress?.Report(new("archive-repair-moving", entry.FileName,
+                    $"→ incoming-skip/{plan.PlatformId}/"));
+                var rdest = GetCollisionSafePath(skipDir, entry.FileName);
+                try
+                {
+                    File.Move(fullPath, rdest, overwrite: false);
+                    log.Add($"redundant-moved  {entry.FileName}  volume-ok  →  {rdest}");
+                    movedCount++;
+                    // No DB changes: DA, VA, and release rows are untouched.
+                    progress?.Report(new("archive-redundant-moved", entry.FileName,
+                        entry.AssignedVolumeLabel ?? ""));
+                }
+                catch (Exception ex)
+                {
+                    log.Add($"move-failed  {entry.FileName}  {ex.Message}");
+                    progress?.Report(new("archive-error", entry.FileName, ex.Message));
+                }
                 continue;
             }
 

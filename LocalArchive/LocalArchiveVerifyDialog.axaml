@@ -82,7 +82,7 @@
         <Border Grid.Row="1"
                 Background="#1A1A24" CornerRadius="6" Padding="16,11"
                 Margin="0,0,0,6">
-            <Grid ColumnDefinitions="*,*,*,*,*,*,*">
+            <Grid ColumnDefinitions="*,*,*,*,*,*,*,*,*">
                 <StackPanel Grid.Column="0" Spacing="2">
                     <TextBlock Classes="section-label" Text="SCANNED"/>
                     <TextBlock x:Name="StatScanned"   Classes="stat-val"/>
@@ -104,10 +104,18 @@
                     <TextBlock x:Name="StatMismatch"  Classes="stat-val" Foreground="#FF7043"/>
                 </StackPanel>
                 <StackPanel Grid.Column="5" Spacing="2">
+                    <TextBlock Classes="section-label" Text="REDUNDANT"/>
+                    <TextBlock x:Name="StatRedundant" Classes="stat-val" Foreground="#26C6DA"/>
+                </StackPanel>
+                <StackPanel Grid.Column="6" Spacing="2">
+                    <TextBlock Classes="section-label" Text="UNAVAILABLE"/>
+                    <TextBlock x:Name="StatUnavailable" Classes="stat-val" Foreground="#EF5350"/>
+                </StackPanel>
+                <StackPanel Grid.Column="7" Spacing="2">
                     <TextBlock Classes="section-label" Text="REPAIRABLE"/>
                     <TextBlock x:Name="StatRepairable" Classes="stat-val" Foreground="#7B68EE"/>
                 </StackPanel>
-                <StackPanel Grid.Column="6" Spacing="2">
+                <StackPanel Grid.Column="8" Spacing="2">
                     <TextBlock Classes="section-label" Text="REPAIRED"/>
                     <TextBlock x:Name="StatRepaired"  Classes="stat-val" Foreground="#BA68C8"/>
                 </StackPanel>
@@ -145,6 +153,10 @@
                 <CheckBox x:Name="FilterUnknown"  Classes="filter" Content="Unknown"
                           IsChecked="True"  IsCheckedChanged="OnFilterChanged"/>
                 <CheckBox x:Name="FilterMismatch" Classes="filter" Content="Mismatch"
+                          IsChecked="True"  IsCheckedChanged="OnFilterChanged"/>
+                <CheckBox x:Name="FilterRedundant"   Classes="filter" Content="Redundant"
+                          IsChecked="True"  IsCheckedChanged="OnFilterChanged"/>
+                <CheckBox x:Name="FilterUnavailable" Classes="filter" Content="Unavailable"
                           IsChecked="True"  IsCheckedChanged="OnFilterChanged"/>
                 <CheckBox x:Name="FilterRepair"   Classes="filter" Content="Repair"
                           IsChecked="True"  IsCheckedChanged="OnFilterChanged"/>

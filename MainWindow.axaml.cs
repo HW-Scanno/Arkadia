@@ -1094,9 +1094,28 @@ public partial class MainWindow : Window
         var store   = new Data.DatLineStore(absDbPath);
         var service = new LocalArchive.LocalArchiveVerifyService(appRoot);
 
+        // Build assigned-volume map for redundancy detection.
+        // GetAllAssignmentsForDatLine returns tuples ordered workspace-first.
+        // We take the first reachable assignment per artifact so callers can
+        // classify RedundantArchiveCopy vs AssignedVolumeUnavailable.
+        var assignments = _catalog.GetAllAssignmentsForDatLine(dl.CatalogId);
+        var mountedDisks = Data.DiskDiscoveryService.DiscoverAll()
+            .Where(d => d.DiskId.Length > 0)
+            .ToDictionary(d => d.DiskId, d => d.Mountpoint, StringComparer.Ordinal);
+
+        var assignedVolumes = new Dictionary<string, LocalArchive.AssignedVolumeInfo>(
+            StringComparer.Ordinal);
+        foreach (var (daId, volumeId, volumeLabel, diskId) in assignments)
+        {
+            // First assignment wins (workspace-ordered by query).
+            if (assignedVolumes.ContainsKey(daId)) continue;
+            var root = Data.VolumePathResolver.Resolve(volumeLabel, diskId, appRoot, mountedDisks);
+            assignedVolumes[daId] = new LocalArchive.AssignedVolumeInfo(volumeId, volumeLabel, root);
+        }
+
         // Dialog opens immediately and drives its own async scan via IProgress<T>.
         var dlg = new LocalArchive.LocalArchiveVerifyDialog(
-            dl.CatalogPlatformId, dl.CatalogId, store, service);
+            dl.CatalogPlatformId, dl.CatalogId, store, service, assignedVolumes);
         await dlg.ShowDialog(this);
     }
 
@@ -2721,26 +2740,10 @@ public partial class MainWindow : Window
     /// <summary>
     /// Resolves the physical root directory for a volume — workspace first, then mounted disk.
     /// Returns null when the volume is not currently accessible.
+    /// Delegates to <see cref="Data.VolumePathResolver.Resolve"/> for consistent resolution logic.
     /// </summary>
-    private string? ResolveVolumeRoot(Volumes.VolumeEntry entry, string appRoot)
-    {
-        var wsRoot = Path.Combine(appRoot, "volumes", SafeFileName(entry.Label));
-        if (Directory.Exists(wsRoot)) return wsRoot;
-
-        if (entry.DiskId is not null)
-        {
-            var runtimeDisks = Data.DiskDiscoveryService.DiscoverAll()
-                .Where(d => d.DiskId.Length > 0)
-                .ToDictionary(d => d.DiskId, StringComparer.Ordinal);
-            if (runtimeDisks.TryGetValue(entry.DiskId, out var rt))
-            {
-                var diskRoot = Path.Combine(rt.Mountpoint, SafeFileName(entry.Label));
-                if (Directory.Exists(diskRoot)) return diskRoot;
-            }
-        }
-
-        return null;
-    }
+    private static string? ResolveVolumeRoot(Volumes.VolumeEntry entry, string appRoot)
+        => Data.VolumePathResolver.Resolve(entry.Label, entry.DiskId, appRoot);
 
     private async void OnVerifyVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {

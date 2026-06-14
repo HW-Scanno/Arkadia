@@ -3,8 +3,8 @@
         xmlns:local="clr-namespace:Arkadia"
         x:Class="Arkadia.AppendVolumeDialog"
         Title="Arkadia - Append Volume"
-        Width="960" Height="660"
-        MinWidth="720" MinHeight="480"
+        Width="960" Height="700"
+        MinWidth="720" MinHeight="500"
         CanResize="True"
         WindowStartupLocation="CenterOwner"
         Background="#0F0F14"
@@ -33,7 +33,7 @@
             <Setter Property="Foreground"   Value="#555566"/>
             <Setter Property="LetterSpacing" Value="0.8"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
-            <Setter Property="Width"        Value="200"/>
+            <Setter Property="Width"        Value="190"/>
         </Style>
         <Style Selector="TextBlock.stat-value">
             <Setter Property="FontSize"   Value="11"/>
@@ -83,6 +83,10 @@
             <Setter Property="CornerRadius"    Value="6"/>
             <Setter Property="BorderThickness" Value="0"/>
         </Style>
+        <Style Selector="RadioButton">
+            <Setter Property="Foreground" Value="#AAAACC"/>
+            <Setter Property="FontSize"   Value="11"/>
+        </Style>
     </Window.Styles>
 
     <Grid RowDefinitions="*" Margin="24,20,24,18">
@@ -111,9 +115,14 @@
                     Margin="0,0,0,8"
                     IsVisible="False">
                 <Grid ColumnDefinitions="*,*,*">
+                    <!-- Column 0: Candidate pipeline -->
                     <StackPanel Grid.Column="0" Spacing="5">
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Classes="stat-label" Text="TOTAL ARCHIVE CANDIDATES"/>
+                            <TextBlock Classes="stat-label" Text="TOTAL DB ARTIFACTS"/>
+                            <TextBlock x:Name="StatTotalDa"  Classes="stat-value"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Classes="stat-label" Text="WANTED CANDIDATES"/>
                             <TextBlock x:Name="StatTotal"    Classes="stat-value"/>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Spacing="8">
@@ -125,21 +134,12 @@
                             <TextBlock x:Name="StatSkipped"  Classes="stat-value"/>
                         </StackPanel>
                     </StackPanel>
+                    <!-- Column 1: Skip breakdown -->
                     <StackPanel Grid.Column="1" Spacing="5">
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Classes="stat-label" Text="TARGET FREE SPACE"/>
-                            <TextBlock x:Name="StatFree"     Classes="stat-value"/>
+                            <TextBlock Classes="stat-label" Text="RELEASE UNWANTED"/>
+                            <TextBlock x:Name="StatUnwanted"  Classes="stat-value"/>
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Classes="stat-label" Text="BYTES TO COPY"/>
-                            <TextBlock x:Name="StatBytes"    Classes="stat-value"/>
-                        </StackPanel>
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Classes="stat-label" Text="REMAINING AFTER"/>
-                            <TextBlock x:Name="StatRemaining" Classes="stat-value"/>
-                        </StackPanel>
-                    </StackPanel>
-                    <StackPanel Grid.Column="2" Spacing="5">
                         <StackPanel Orientation="Horizontal" Spacing="8">
                             <TextBlock Classes="stat-label" Text="ALREADY ASSIGNED"/>
                             <TextBlock x:Name="StatAssigned"  Classes="stat-value"/>
@@ -152,33 +152,61 @@
                             <TextBlock Classes="stat-label" Text="TARGET COLLISION"/>
                             <TextBlock x:Name="StatCollision" Classes="stat-value"/>
                         </StackPanel>
+                    </StackPanel>
+                    <!-- Column 2: Space and archive diagnostics -->
+                    <StackPanel Grid.Column="2" Spacing="5">
                         <StackPanel Orientation="Horizontal" Spacing="8">
-                            <TextBlock Classes="stat-label" Text="RELEASE UNWANTED"/>
-                            <TextBlock x:Name="StatUnwanted"  Classes="stat-value"/>
+                            <TextBlock Classes="stat-label" Text="TARGET FREE SPACE"/>
+                            <TextBlock x:Name="StatFree"         Classes="stat-value"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Classes="stat-label" Text="BYTES TO COPY"/>
+                            <TextBlock x:Name="StatBytes"        Classes="stat-value"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Classes="stat-label" Text="ARCHIVE PHYSICAL FILES"/>
+                            <TextBlock x:Name="StatArchiveFiles" Classes="stat-value"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <TextBlock Classes="stat-label" Text="ARCHIVE KNOWN WANTED"/>
+                            <TextBlock x:Name="StatArchiveKnown" Classes="stat-value"/>
                         </StackPanel>
                     </StackPanel>
                 </Grid>
             </Border>
 
-            <!-- Row 2: Table column headers -->
+            <!-- Row 2: Filter bar + column headers -->
             <Border Grid.Row="2"
                     Padding="12,6,12,6"
                     Background="#141420"
                     BorderBrush="#242433" BorderThickness="0,1,0,1">
-                <Grid ColumnDefinitions="100,90,*,80,2*">
-                    <TextBlock Grid.Column="0" Classes="col-header" Text="ACTION"/>
-                    <TextBlock Grid.Column="1" Classes="col-header" Text="RELEASE" Margin="8,0,0,0"/>
-                    <TextBlock Grid.Column="2" Classes="col-header" Text="FILE"    Margin="8,0,0,0"/>
-                    <TextBlock Grid.Column="3" Classes="col-header" Text="SIZE"    HorizontalAlignment="Right"/>
-                    <TextBlock Grid.Column="4" Classes="col-header" Text="REASON"  Margin="8,0,0,0"/>
+                <Grid ColumnDefinitions="*,Auto">
+                    <!-- Column headers -->
+                    <Grid Grid.Column="0" ColumnDefinitions="100,90,*,80,2*">
+                        <TextBlock Grid.Column="0" Classes="col-header" Text="ACTION"/>
+                        <TextBlock Grid.Column="1" Classes="col-header" Text="RELEASE" Margin="8,0,0,0"/>
+                        <TextBlock Grid.Column="2" Classes="col-header" Text="FILE"    Margin="8,0,0,0"/>
+                        <TextBlock Grid.Column="3" Classes="col-header" Text="SIZE"    HorizontalAlignment="Right"/>
+                        <TextBlock Grid.Column="4" Classes="col-header" Text="REASON / PATH"  Margin="8,0,0,0"/>
+                    </Grid>
+                    <!-- Filter toggles -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+                        <TextBlock Text="SHOW:" FontSize="10" FontWeight="SemiBold"
+                                   Foreground="#555566" LetterSpacing="1"
+                                   VerticalAlignment="Center"/>
+                        <RadioButton x:Name="FilterAll"     Content="All"     GroupName="PlanFilter" IsChecked="True" Click="OnFilterChanged"/>
+                        <RadioButton x:Name="FilterPlanned" Content="Planned" GroupName="PlanFilter" Click="OnFilterChanged"/>
+                        <RadioButton x:Name="FilterSkipped" Content="Skipped" GroupName="PlanFilter" Click="OnFilterChanged"/>
+                    </StackPanel>
                 </Grid>
             </Border>
 
-            <!-- Row 3: Plan rows -->
-            <Border Grid.Row="3"
+            <!-- Row 3: (unused — merged filter+headers into Row 2) -->
+
+            <!-- Row 4: Plan rows (*) -->
+            <Border Grid.Row="4"
                     Background="#1A1A24"
-                    Margin="0,0,0,0"
-                    MaxHeight="200">
+                    Margin="0,0,0,0">
                 <ScrollViewer x:Name="PlanRowsScroll"
                               HorizontalScrollBarVisibility="Disabled"
                               VerticalScrollBarVisibility="Auto">
@@ -215,6 +243,7 @@
                                                    Text="{Binding Reason}"
                                                    Classes="cell"
                                                    FontSize="10"
+                                                   FontFamily="Consolas,Courier New,monospace"
                                                    Foreground="#777788"
                                                    Margin="8,0,0,0"/>
                                     </Grid>
@@ -225,9 +254,9 @@
                 </ScrollViewer>
             </Border>
 
-            <!-- Row 4: Skip summary (shown when skips present) -->
+            <!-- Row 5: Skip summary -->
             <Border x:Name="SkipSummaryPanel"
-                    Grid.Row="4"
+                    Grid.Row="5"
                     Background="#1A1420" CornerRadius="4" Padding="12,8"
                     Margin="0,4,0,0"
                     IsVisible="False">
@@ -237,8 +266,8 @@
                            TextWrapping="Wrap"/>
             </Border>
 
-            <!-- Row 5: Plan hint -->
-            <TextBlock Grid.Row="5"
+            <!-- Row 6: Plan hint -->
+            <TextBlock Grid.Row="6"
                        x:Name="PlanHint"
                        FontSize="11"
                        Foreground="#555566"
@@ -246,8 +275,8 @@
                        Margin="0,8,0,8"
                        Text="Building plan…"/>
 
-            <!-- Row 6: Buttons -->
-            <StackPanel Grid.Row="6"
+            <!-- Row 7: Buttons -->
+            <StackPanel Grid.Row="7"
                         Orientation="Horizontal"
                         HorizontalAlignment="Right"
                         Spacing="8">

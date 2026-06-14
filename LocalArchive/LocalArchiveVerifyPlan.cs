@@ -28,19 +28,22 @@ public sealed class LocalArchiveVerifyPlan
 
     // ── Counts — all derived from physical files found on disk ───────────────
 
-    public int FilesScanned        => Entries.Count;
-    public int WantedOk            => Entries.Count(e => e.Classification == LocalArchiveClass.WantedArchiveOk);
-    public int UnwantedArtifacts   => Entries.Count(e => e.Classification == LocalArchiveClass.UnwantedArchiveArtifact);
-    public int UnknownFiles        => Entries.Count(e => e.Classification == LocalArchiveClass.UnknownArchiveFile);
-    public int HashMismatches      => Entries.Count(e => e.Classification == LocalArchiveClass.ArchiveHashMismatch);
-    public int DuplicateCollisions => Entries.Count(e => e.Classification == LocalArchiveClass.ArchiveDuplicateCollision);
-    public int RepairableCount     => Entries.Count(e => e.IsRepairable);
+    public int FilesScanned           => Entries.Count;
+    public int WantedOk              => Entries.Count(e => e.Classification == LocalArchiveClass.WantedArchiveOk);
+    public int UnwantedArtifacts     => Entries.Count(e => e.Classification == LocalArchiveClass.UnwantedArchiveArtifact);
+    public int UnknownFiles          => Entries.Count(e => e.Classification == LocalArchiveClass.UnknownArchiveFile);
+    public int HashMismatches        => Entries.Count(e => e.Classification == LocalArchiveClass.ArchiveHashMismatch);
+    public int DuplicateCollisions   => Entries.Count(e => e.Classification == LocalArchiveClass.ArchiveDuplicateCollision);
+    public int RedundantCopies       => Entries.Count(e => e.Classification == LocalArchiveClass.RedundantArchiveCopy);
+    public int VolumeUnavailableWarnings => Entries.Count(e => e.Classification == LocalArchiveClass.AssignedVolumeUnavailable);
+    public int RepairableCount       => Entries.Count(e => e.IsRepairable);
 
     public bool IsClean =>
-        UnwantedArtifacts   == 0 &&
-        UnknownFiles        == 0 &&
-        HashMismatches      == 0 &&
-        DuplicateCollisions == 0;
+        UnwantedArtifacts        == 0 &&
+        UnknownFiles             == 0 &&
+        HashMismatches           == 0 &&
+        DuplicateCollisions      == 0 &&
+        VolumeUnavailableWarnings == 0;
 }
 
 /// <summary>Result of executing a repair pass on the plan.</summary>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,10 +17,14 @@ namespace Arkadia;
 public sealed class AppendPlanRow
 {
     public string Action    { get; set; } = "";
+    /// <summary>Raw action key for filter ("append-copy" or "append-skip").</summary>
+    public string ActionKey { get; set; } = "";
     public string Release   { get; set; } = "";
     public string FileName  { get; set; } = "";
     public string SizeLabel { get; set; } = "";
     public string Reason    { get; set; } = "";
+    public string SourcePath { get; set; } = "";
+    public string TargetPath { get; set; } = "";
 }
 
 public sealed class AppendProgressRow
@@ -39,8 +44,9 @@ public partial class AppendVolumeDialog : Window
     private readonly CatalogService                            _catalog;
     private          bool                                      _executing;
 
-    private readonly ObservableCollection<AppendPlanRow>     _planRows     = [];
-    private readonly ObservableCollection<AppendProgressRow> _progressRows = [];
+    private readonly List<AppendPlanRow>                      _allPlanRows  = [];
+    private readonly ObservableCollection<AppendPlanRow>      _planRows     = [];
+    private readonly ObservableCollection<AppendProgressRow>  _progressRows = [];
 
     private const int MaxProgressRows = 500;
 
@@ -78,31 +84,38 @@ public partial class AppendVolumeDialog : Window
             $"Free {FormatBytes(plan.TargetFreeBytes)}";
 
         // Stats panel
-        StatTotal.Text     = plan.TotalCandidates.ToString("N0");
-        StatPlanned.Text   = $"{plan.PlannedCount:N0} file(s)";
-        StatSkipped.Text   = plan.SkippedCount.ToString("N0");
-        StatFree.Text      = FormatBytes(plan.TargetFreeBytes);
-        StatBytes.Text     = FormatBytes(plan.PlannedBytes);
-        StatRemaining.Text = FormatBytes(plan.RemainingTargetFreeBytes);
-        StatAssigned.Text  = plan.AlreadyAssignedSkipped.ToString("N0");
-        StatMissing.Text   = plan.ArchiveMissingSkipped.ToString("N0");
-        StatCollision.Text = plan.TargetCollisionSkipped.ToString("N0");
-        StatUnwanted.Text  = plan.ReleaseUnwantedSkipped.ToString("N0");
+        StatTotalDa.Text      = plan.TotalDerivedArtifactsForDatLine.ToString("N0");
+        StatTotal.Text        = plan.TotalCandidates.ToString("N0");
+        StatPlanned.Text      = $"{plan.PlannedCount:N0} file(s)";
+        StatSkipped.Text      = plan.SkippedCount.ToString("N0");
+        StatUnwanted.Text     = plan.ReleaseUnwantedSkipped.ToString("N0");
+        StatAssigned.Text     = plan.AlreadyAssignedSkipped.ToString("N0");
+        StatMissing.Text      = plan.ArchiveMissingSkipped.ToString("N0");
+        StatCollision.Text    = plan.TargetCollisionSkipped.ToString("N0");
+        StatFree.Text         = FormatBytes(plan.TargetFreeBytes);
+        StatBytes.Text        = FormatBytes(plan.PlannedBytes);
+        StatArchiveFiles.Text = plan.ActiveArchivePhysicalFileCount.ToString("N0");
+        StatArchiveKnown.Text = plan.ActiveArchiveKnownWantedFileCount.ToString("N0");
         PlanStatsPanel.IsVisible = true;
 
-        // Plan rows (show only planned entries to keep list short; skips visible via summary)
-        _planRows.Clear();
+        // Build all rows
+        _allPlanRows.Clear();
         foreach (var entry in plan.Entries)
         {
-            _planRows.Add(new AppendPlanRow
+            bool isCopy = entry.Action == AppendEntryAction.Copy;
+            _allPlanRows.Add(new AppendPlanRow
             {
-                Action    = entry.Action == AppendEntryAction.Copy ? "append-copy" : "append-skip",
-                Release   = TruncateRelease(entry.ReleaseName),
-                FileName  = entry.FileName,
-                SizeLabel = entry.SizeBytes > 0 ? FormatBytes(entry.SizeBytes) : "",
-                Reason    = entry.Reason,
+                Action     = isCopy ? "append-copy" : "append-skip",
+                ActionKey  = isCopy ? "append-copy" : "append-skip",
+                Release    = TruncateRelease(entry.ReleaseName),
+                FileName   = entry.FileName,
+                SizeLabel  = entry.SizeBytes > 0 ? FormatBytes(entry.SizeBytes) : "",
+                Reason     = entry.Reason,
+                SourcePath = entry.ArchivePath,
+                TargetPath = entry.TargetPath,
             });
         }
+        ApplyFilter();
 
         // Skip summary
         if (plan.SkipReasonCounts.Count > 0)
@@ -111,7 +124,7 @@ public partial class AppendVolumeDialog : Window
                 .OrderByDescending(kv => kv.Value)
                 .Select(kv => $"{kv.Key}: {kv.Value}")
                 .ToList();
-            SkipSummaryText.Text      = "Skipped — " + string.Join("  |  ", lines);
+            SkipSummaryText.Text       = "Skipped — " + string.Join("  |  ", lines);
             SkipSummaryPanel.IsVisible = true;
         }
         else
@@ -126,43 +139,33 @@ public partial class AppendVolumeDialog : Window
                             $"({FormatBytes(plan.PlannedBytes)}).";
             ExecuteButton.IsEnabled = true;
         }
-        else if (plan.PlannedCount == 0 && plan.TotalCandidates > 0)
-        {
-            PlanHint.Text = BuildDiagnosticHint(plan);
-            ExecuteButton.IsEnabled = false;
-        }
         else
         {
-            PlanHint.Text           = "No append candidates found for this DAT line.";
+            PlanHint.Text = plan.DominantReasonHint.Length > 0
+                ? plan.DominantReasonHint
+                : "No append candidates found for this DAT line.";
             ExecuteButton.IsEnabled = false;
         }
     }
 
-    private static string BuildDiagnosticHint(AppendVolumePlan plan)
+    // ── Filter ────────────────────────────────────────────────────────────────
+
+    private void OnFilterChanged(object? sender, RoutedEventArgs e) => ApplyFilter();
+
+    private void ApplyFilter()
     {
-        if (plan.TotalCandidates == 0 && plan.ReleaseUnwantedSkipped > 0
-            && plan.AlreadyAssignedSkipped == 0 && plan.ArchiveMissingSkipped == 0)
-            return $"No append candidates found. All {plan.ReleaseUnwantedSkipped} archive artifact(s) belong to releases marked unwanted.";
+        bool showAll     = FilterAll.IsChecked     == true;
+        bool showPlanned = FilterPlanned.IsChecked == true;
+        bool showSkipped = FilterSkipped.IsChecked == true;
 
-        if (plan.AlreadyAssignedSkipped > 0 && plan.AlreadyAssignedSkipped == plan.TotalCandidates)
-            return "No append candidates found. All archive artifacts are already assigned to active volumes.";
-
-        if (plan.ArchiveMissingSkipped > 0 && plan.ArchiveMissingSkipped == plan.TotalCandidates)
-            return "No append candidates found. Archive artifact files are missing from the local archive.";
-
-        if (plan.TooLargeSkipped > 0 && plan.SkippedCount == plan.TooLargeSkipped)
-            return "No append candidates found. Target volume has free space, but no remaining candidate fits within the remaining capacity.";
-
-        if (plan.TargetCollisionSkipped > 0)
-            return $"No append candidates found. {plan.TargetCollisionSkipped} target path collision(s) detected.";
-
-        if (plan.SkipReasonCounts.Count > 0)
+        _planRows.Clear();
+        foreach (var row in _allPlanRows)
         {
-            var dominant = plan.SkipReasonCounts.OrderByDescending(kv => kv.Value).First();
-            return $"No append candidates found. Dominant skip reason: {dominant.Key} ({dominant.Value}).";
+            bool include = showAll
+                || (showPlanned && row.ActionKey == "append-copy")
+                || (showSkipped && row.ActionKey == "append-skip");
+            if (include) _planRows.Add(row);
         }
-
-        return "No append candidates found.";
     }
 
     // ── Execute ───────────────────────────────────────────────────────────────

@@ -397,6 +397,215 @@ public sealed class LocalArchiveVerifyServiceTests : IDisposable
         Assert.Equal(2, plan.AbsentFromArchiveCount);
         Assert.True(plan.IsClean, "Absent DB artifacts must not affect IsClean");
     }
+
+    // ── Helpers for redundancy tests ──────────────────────────────────────────
+
+    private string CreateVolumeDir(string label)
+    {
+        var dir = Path.Combine(_tmp, "volumes", label);
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    private static IReadOnlyDictionary<string, AssignedVolumeInfo> SingleAssignment(
+        string daId, string volId, string label, string? rootPath)
+        => new Dictionary<string, AssignedVolumeInfo>(StringComparer.Ordinal)
+            { [daId] = new AssignedVolumeInfo(volId, label, rootPath) };
+
+    // ── 18. RedundantArchiveCopy when volume is reachable and hash matches ────
+
+    [Fact]
+    public void VerifyArchive_RedundantCopyDetected_WhenAssignedVolumeReachableAndHashMatches()
+    {
+        var content   = System.Text.Encoding.UTF8.GetBytes("redundant-content");
+        var (_, daId, sha1) = ProvisionArtifact("present", "Redundant.chd", content);
+        WriteArchiveFile("Redundant.chd", content);
+
+        var volumeDir = CreateVolumeDir("TestVol");
+        File.WriteAllBytes(Path.Combine(volumeDir, "Redundant.chd"), content);
+
+        var plan = MakeService().Verify(PlatformId, DatLineId, OpenStore(),
+            assignedVolumes: SingleAssignment(daId, "vol-1", "TestVol", volumeDir));
+
+        Assert.Equal(1, plan.RedundantCopies);
+        Assert.Equal(0, plan.VolumeUnavailableWarnings);
+        var entry = plan.Entries.Single(e => e.DerivedArtifactId == daId);
+        Assert.Equal(LocalArchiveClass.RedundantArchiveCopy, entry.Classification);
+        Assert.True(entry.IsRepairable);
+        Assert.Equal("TestVol", entry.AssignedVolumeLabel);
+        Assert.NotNull(entry.VolumeFilePath);
+    }
+
+    // ── 19. AssignedVolumeUnavailable when volume root is null ───────────────
+
+    [Fact]
+    public void VerifyArchive_AssignedVolumeUnavailable_WhenVolumeRootIsNull()
+    {
+        var content = System.Text.Encoding.UTF8.GetBytes("unavailable-volume-content");
+        var (_, daId, _) = ProvisionArtifact("present", "NoVol.chd", content);
+        WriteArchiveFile("NoVol.chd", content);
+
+        var plan = MakeService().Verify(PlatformId, DatLineId, OpenStore(),
+            assignedVolumes: SingleAssignment(daId, "vol-gone", "MissingVol", null));
+
+        Assert.Equal(0, plan.RedundantCopies);
+        Assert.Equal(1, plan.VolumeUnavailableWarnings);
+        var entry = plan.Entries.Single(e => e.DerivedArtifactId == daId);
+        Assert.Equal(LocalArchiveClass.AssignedVolumeUnavailable, entry.Classification);
+        Assert.False(entry.IsRepairable);
+        Assert.Equal("MissingVol", entry.AssignedVolumeLabel);
+        Assert.False(plan.IsClean);
+    }
+
+    // ── 20. WantedArchiveOk when no assignedVolumes map is passed ────────────
+
+    [Fact]
+    public void VerifyArchive_WantedArchiveOk_WhenNoAssignedVolumesProvided()
+    {
+        var content = System.Text.Encoding.UTF8.GetBytes("no-map-content");
+        var (_, daId, _) = ProvisionArtifact("present", "NoMap.chd", content);
+        WriteArchiveFile("NoMap.chd", content);
+
+        // No assignedVolumes passed → falls through to WantedArchiveOk.
+        var plan = MakeService().Verify(PlatformId, DatLineId, OpenStore());
+
+        Assert.Equal(1, plan.WantedOk);
+        Assert.Equal(0, plan.RedundantCopies);
+        var entry = plan.Entries.Single(e => e.DerivedArtifactId == daId);
+        Assert.Equal(LocalArchiveClass.WantedArchiveOk, entry.Classification);
+    }
+
+    // ── 21. Repair: redundant archive moved to incoming-skip after re-verify ──
+
+    [Fact]
+    public void VerifyArchive_RepairRedundant_MovesArchiveAfterVerifyingVolumeCopy()
+    {
+        var content   = System.Text.Encoding.UTF8.GetBytes("move-after-verify");
+        var (_, daId, _) = ProvisionArtifact("present", "MovedAfterVerify.chd", content);
+        var archivePath  = Path.Combine(ArchiveDir, "MovedAfterVerify.chd");
+        WriteArchiveFile("MovedAfterVerify.chd", content);
+
+        var volumeDir  = CreateVolumeDir("RepairVol");
+        var volFile    = Path.Combine(volumeDir, "MovedAfterVerify.chd");
+        File.WriteAllBytes(volFile, content);
+
+        var av   = SingleAssignment(daId, "vol-r", "RepairVol", volumeDir);
+        var plan = MakeService().Verify(PlatformId, DatLineId, OpenStore(), assignedVolumes: av);
+        Assert.Equal(1, plan.RedundantCopies);
+
+        var result = MakeService().Repair(plan, OpenStore());
+
+        Assert.True(result.Success);
+        Assert.Equal(1, result.MovedToSkip);
+        Assert.False(File.Exists(archivePath), "Archive should have moved to incoming-skip");
+        Assert.True(File.Exists(Path.Combine(SkipDir, "MovedAfterVerify.chd")),
+            "Should be in incoming-skip/<platform>/");
+        Assert.True(File.Exists(volFile), "Volume copy must remain untouched");
+    }
+
+    // ── 22. Repair: archive kept when volume copy is missing ─────────────────
+
+    [Fact]
+    public void VerifyArchive_RepairRedundant_DoesNotMoveIfVolumeCopyMissing()
+    {
+        var content   = System.Text.Encoding.UTF8.GetBytes("vol-missing-content");
+        var (_, daId, _) = ProvisionArtifact("present", "VolMissing.chd", content);
+        var archivePath  = Path.Combine(ArchiveDir, "VolMissing.chd");
+        WriteArchiveFile("VolMissing.chd", content);
+
+        var volumeDir = CreateVolumeDir("VolMissingVol");
+        // Volume copy intentionally NOT written.
+
+        var av   = SingleAssignment(daId, "vol-m", "VolMissingVol", volumeDir);
+        var plan = MakeService().Verify(PlatformId, DatLineId, OpenStore(), assignedVolumes: av);
+        Assert.Equal(1, plan.RedundantCopies);
+
+        var progressActions = new List<string>();
+        var progress = new DelegateProgress<LocalArchiveVerifyProgress>(p =>
+            progressActions.Add(p.Action));
+
+        var result = MakeService().Repair(plan, OpenStore(), progress);
+
+        Assert.True(result.Success);
+        Assert.Equal(0, result.MovedToSkip);
+        Assert.True(File.Exists(archivePath), "Archive must remain when volume copy is missing");
+        Assert.Contains("archive-volume-copy-missing", progressActions);
+    }
+
+    // ── 23. Repair: archive kept when volume copy is corrupt ─────────────────
+
+    [Fact]
+    public void VerifyArchive_RepairRedundant_DoesNotMoveIfVolumeCopyCorrupt()
+    {
+        var content   = System.Text.Encoding.UTF8.GetBytes("corrupt-vol-content");
+        var corrupted = System.Text.Encoding.UTF8.GetBytes("CORRUPT");
+        var (_, daId, _) = ProvisionArtifact("present", "VolCorrupt.chd", content);
+        var archivePath  = Path.Combine(ArchiveDir, "VolCorrupt.chd");
+        WriteArchiveFile("VolCorrupt.chd", content);
+
+        var volumeDir = CreateVolumeDir("CorruptVol");
+        File.WriteAllBytes(Path.Combine(volumeDir, "VolCorrupt.chd"), corrupted);
+
+        var av   = SingleAssignment(daId, "vol-c", "CorruptVol", volumeDir);
+        var plan = MakeService().Verify(PlatformId, DatLineId, OpenStore(), assignedVolumes: av);
+
+        var progressActions = new List<string>();
+        var progress = new DelegateProgress<LocalArchiveVerifyProgress>(p =>
+            progressActions.Add(p.Action));
+
+        var result = MakeService().Repair(plan, OpenStore(), progress);
+
+        Assert.True(result.Success);
+        Assert.Equal(0, result.MovedToSkip);
+        Assert.True(File.Exists(archivePath), "Archive must remain when volume copy is corrupt");
+        Assert.Contains("archive-volume-copy-missing", progressActions);
+    }
+
+    // ── 24. Repair: DB rows are NOT modified for redundant copies ────────────
+
+    [Fact]
+    public void VerifyArchive_RepairRedundant_DoesNotModifyDbRows()
+    {
+        var content  = System.Text.Encoding.UTF8.GetBytes("keep-db-rows");
+        var (relId, daId, _) = ProvisionArtifact("present", "KeepDb.chd", content);
+        WriteArchiveFile("KeepDb.chd", content);
+
+        var volumeDir = CreateVolumeDir("DbSafeVol");
+        File.WriteAllBytes(Path.Combine(volumeDir, "KeepDb.chd"), content);
+
+        var av   = SingleAssignment(daId, "vol-db", "DbSafeVol", volumeDir);
+        var plan = MakeService().Verify(PlatformId, DatLineId, OpenStore(), assignedVolumes: av);
+        MakeService().Repair(plan, OpenStore());
+
+        // DA row must remain.
+        var infos = OpenStore().GetAllArchiveArtifactInfos();
+        Assert.Contains(infos, a => a.DerivedArtifactId == daId);
+
+        // Release row must remain with original status.
+        var rels = OpenStore().LoadReleasesByDatLine(DatLineId);
+        Assert.Contains(rels, r => r.Id == relId && r.Status == "present");
+
+        // Removed count must be zero.
+        Assert.Equal(0, plan.Entries
+            .Where(e => e.Classification == LocalArchiveClass.RedundantArchiveCopy)
+            .Count(e => !e.IsRepairable));
+    }
+
+    // ── 25. IsClean false when VolumeUnavailableWarnings > 0 ─────────────────
+
+    [Fact]
+    public void VerifyArchive_IsClean_FalseWhenVolumeUnavailableWarnings()
+    {
+        var content = System.Text.Encoding.UTF8.GetBytes("unavailable-for-clean");
+        var (_, daId, _) = ProvisionArtifact("present", "Unavail.chd", content);
+        WriteArchiveFile("Unavail.chd", content);
+
+        var plan = MakeService().Verify(PlatformId, DatLineId, OpenStore(),
+            assignedVolumes: SingleAssignment(daId, "vol-na", "NoVol", null));
+
+        Assert.Equal(1, plan.VolumeUnavailableWarnings);
+        Assert.False(plan.IsClean, "IsClean must be false when a volume is unavailable");
+    }
 }
 
 // ── Test helper: synchronous IProgress<T> ────────────────────────────────────

@@ -26,6 +26,7 @@ public partial class LocalArchiveVerifyDialog : Window
     private readonly string                    _datLineId;
     private readonly DatLineStore              _store;
     private readonly LocalArchiveVerifyService _service;
+    private readonly IReadOnlyDictionary<string, AssignedVolumeInfo>? _assignedVolumes;
 
     private LocalArchiveVerifyPlan? _plan;
     private bool                    _isRunning = true;
@@ -36,22 +37,25 @@ public partial class LocalArchiveVerifyDialog : Window
     private const int MaxRows = 2000;
 
     // Live counters updated as progress events arrive.
-    private int _scanned, _wantedOk, _unwanted, _unknown, _mismatch, _repairable, _repaired;
+    private int _scanned, _wantedOk, _unwanted, _unknown, _mismatch,
+                _redundant, _unavailable, _repairable, _repaired;
 
 #pragma warning disable CS8618
     public LocalArchiveVerifyDialog() { InitializeComponent(); }
 #pragma warning restore CS8618
 
     public LocalArchiveVerifyDialog(
-        string                    platformId,
-        string                    datLineId,
-        DatLineStore              store,
-        LocalArchiveVerifyService service)
+        string                                           platformId,
+        string                                           datLineId,
+        DatLineStore                                     store,
+        LocalArchiveVerifyService                        service,
+        IReadOnlyDictionary<string, AssignedVolumeInfo>? assignedVolumes = null)
     {
-        _platformId = platformId;
-        _datLineId  = datLineId;
-        _store      = store;
-        _service    = service;
+        _platformId      = platformId;
+        _datLineId       = datLineId;
+        _store           = store;
+        _service         = service;
+        _assignedVolumes = assignedVolumes;
 
         InitializeComponent();
         RowsList.ItemsSource  = _filteredRows;
@@ -74,15 +78,17 @@ public partial class LocalArchiveVerifyDialog : Window
         var progress = new Progress<LocalArchiveVerifyProgress>(OnScanProgress);
 
         _plan = await Task.Run(() =>
-            _service.Verify(_platformId, _datLineId, _store, progress));
+            _service.Verify(_platformId, _datLineId, _store, progress, _assignedVolumes));
 
         // Final stats from the completed plan.
-        _scanned    = _plan.FilesScanned;
-        _wantedOk   = _plan.WantedOk;
-        _unwanted   = _plan.UnwantedArtifacts;
-        _unknown    = _plan.UnknownFiles;
-        _mismatch   = _plan.HashMismatches;
-        _repairable = _plan.RepairableCount;
+        _scanned     = _plan.FilesScanned;
+        _wantedOk    = _plan.WantedOk;
+        _unwanted    = _plan.UnwantedArtifacts;
+        _unknown     = _plan.UnknownFiles;
+        _mismatch    = _plan.HashMismatches;
+        _redundant   = _plan.RedundantCopies;
+        _unavailable = _plan.VolumeUnavailableWarnings;
+        _repairable  = _plan.RepairableCount;
         UpdateStatLabels();
 
         ScanProgress.IsIndeterminate = false;
@@ -110,15 +116,17 @@ public partial class LocalArchiveVerifyDialog : Window
         // Running on the UI thread (Progress<T> marshals back).
         switch (p.Action)
         {
-            case "archive-wanted-ok":      _wantedOk++;   _scanned++; break;
-            case "archive-unwanted-found": _unwanted++;   _scanned++; break;
-            case "archive-unknown-found":  _unknown++;    _scanned++; break;
-            case "archive-hash-mismatch":  _mismatch++;   _scanned++; break;
-            case "archive-collision":                      _scanned++; break;
+            case "archive-wanted-ok":         _wantedOk++;     _scanned++; break;
+            case "archive-unwanted-found":    _unwanted++;     _scanned++; break;
+            case "archive-unknown-found":     _unknown++;      _scanned++; break;
+            case "archive-hash-mismatch":     _mismatch++;     _scanned++; break;
+            case "archive-collision":                          _scanned++; break;
+            case "archive-redundant-copy":    _redundant++;    _scanned++; break;
+            case "archive-volume-unavailable": _unavailable++; _scanned++; break;
         }
 
-        // Repairable = unwanted + unknown + mismatch
-        _repairable = _unwanted + _unknown + _mismatch;
+        // Repairable = unwanted + unknown + mismatch + redundant (unavailable is not repairable)
+        _repairable = _unwanted + _unknown + _mismatch + _redundant;
 
         UpdateStatLabels();
         AppendProgressRow(p.Action, p.FileName, p.Detail);
@@ -183,9 +191,12 @@ public partial class LocalArchiveVerifyDialog : Window
         if (FilterUnknown.IsChecked  == true && a == "archive-unknown-found")  return true;
         if (FilterMismatch.IsChecked == true && a == "archive-hash-mismatch")  return true;
         if (FilterMismatch.IsChecked == true && a == "archive-collision")       return true;
+        if (FilterRedundant.IsChecked    == true && a == "archive-redundant-copy")     return true;
+        if (FilterUnavailable.IsChecked  == true && a == "archive-volume-unavailable") return true;
         if (FilterRepair.IsChecked   == true &&
-            (a == "archive-repair-moving" || a == "archive-repair-moved" ||
-             a == "archive-repair-skipped" || a == "archive-error"))
+            (a == "archive-repair-moving"       || a == "archive-repair-moved" ||
+             a == "archive-repair-skipped"      || a == "archive-error"        ||
+             a == "archive-redundant-moved"     || a == "archive-volume-copy-missing"))
             return true;
         return false;
     }
@@ -211,13 +222,15 @@ public partial class LocalArchiveVerifyDialog : Window
 
     private void UpdateStatLabels()
     {
-        StatScanned.Text    = _scanned.ToString("N0");
-        StatWantedOk.Text   = _wantedOk.ToString("N0");
-        StatUnwanted.Text   = _unwanted.ToString("N0");
-        StatUnknown.Text    = _unknown.ToString("N0");
-        StatMismatch.Text   = _mismatch.ToString("N0");
-        StatRepairable.Text = _repairable.ToString("N0");
-        StatRepaired.Text   = _repaired.ToString("N0");
+        StatScanned.Text      = _scanned.ToString("N0");
+        StatWantedOk.Text     = _wantedOk.ToString("N0");
+        StatUnwanted.Text     = _unwanted.ToString("N0");
+        StatUnknown.Text      = _unknown.ToString("N0");
+        StatMismatch.Text     = _mismatch.ToString("N0");
+        StatRedundant.Text    = _redundant.ToString("N0");
+        StatUnavailable.Text  = _unavailable.ToString("N0");
+        StatRepairable.Text   = _repairable.ToString("N0");
+        StatRepaired.Text     = _repaired.ToString("N0");
     }
 
     private void UpdateRowCount()

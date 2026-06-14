@@ -1730,6 +1730,60 @@ public sealed class CatalogService
         return set;
     }
 
+    /// <summary>
+    /// Returns all derived_artifact_ids assigned for the given dat_line_id, mapped to their
+    /// volume label. Artifacts assigned to a deleted volume map to "(stale assignment)".
+    /// </summary>
+    public Dictionary<string, string> GetAssignedDerivedIdsWithVolumesByDatLine(string datLineId)
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT va.derived_artifact_id, v.label
+            FROM volume_artifacts va
+            LEFT JOIN volumes v ON v.id = va.volume_id
+            WHERE va.dat_line_id = $dlid
+            """;
+        cmd.Parameters.AddWithValue("$dlid", datLineId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            result.TryAdd(r.GetString(0), r.IsDBNull(1) ? "(stale assignment)" : r.GetString(1));
+        return result;
+    }
+
+    /// <summary>
+    /// Returns all current volume assignments for this DAT line, including the disk_id needed
+    /// for full path resolution (workspace or mounted disk).
+    /// Multiple rows per daId are possible when the same artifact is on more than one volume.
+    /// Workspace locations are ordered first so callers can prefer them when building a
+    /// resolved lookup via <see cref="VolumePathResolver.Resolve"/>.
+    /// </summary>
+    public List<(string DaId, string VolumeId, string VolumeLabel, string? DiskId)>
+        GetAllAssignmentsForDatLine(string datLineId)
+    {
+        var result = new List<(string, string, string, string?)>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT va.derived_artifact_id, v.id, v.label, vl.disk_id
+            FROM volume_artifacts va
+            JOIN volumes v ON v.id = va.volume_id
+            LEFT JOIN volume_locations vl ON vl.volume_id = v.id AND vl.is_current = 1
+            WHERE va.dat_line_id = $dlid
+            ORDER BY CASE vl.location_type WHEN 'workspace' THEN 0 ELSE 1 END, v.label
+            """;
+        cmd.Parameters.AddWithValue("$dlid", datLineId);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            result.Add((
+                r.GetString(0),
+                r.GetString(1),
+                r.GetString(2),
+                r.IsDBNull(3) ? null : r.GetString(3)));
+        return result;
+    }
+
     public List<VolumeArtifactRecord> GetVolumeArtifacts(string volumeId)
     {
         var list = new List<VolumeArtifactRecord>();

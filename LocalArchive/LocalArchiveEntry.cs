@@ -26,6 +26,19 @@ public enum LocalArchiveClass
     /// NOT emitted by the primary physical scan; available via AbsentFromArchiveCount.
     /// </summary>
     ArchiveMissingFile,
+
+    /// <summary>
+    /// Physical file exists, matches a wanted DB artifact, and is already verified on an
+    /// assigned reachable volume. The archive copy is redundant and can be moved to
+    /// incoming-skip without loss.
+    /// </summary>
+    RedundantArchiveCopy,
+
+    /// <summary>
+    /// Physical file exists and is assigned to a volume, but the volume cannot be resolved
+    /// (not in workspace and not on any mounted disk). Requires manual attention.
+    /// </summary>
+    AssignedVolumeUnavailable,
 }
 
 /// <summary>
@@ -47,4 +60,8 @@ public sealed class LocalArchiveEntry
     public string            ActualSha1         { get; init; } = "";
     public bool              IsRepairable       { get; init; }
     public string            Note               { get; init; } = "";
+    /// <summary>Label of the volume this artifact is assigned to (set for Redundant/Unavailable).</summary>
+    public string?           AssignedVolumeLabel { get; init; }
+    /// <summary>Expected path of the file within the volume root (set for RedundantArchiveCopy).</summary>
+    public string?           VolumeFilePath      { get; init; }
 }
