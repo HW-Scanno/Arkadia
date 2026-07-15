@@ -244,10 +244,16 @@ public partial class AppendVolumeDialog : Window
             CopiedBytesLabel.Text   = FormatBytes(result.BytesCopied);
             VerifiedBytesLabel.Text = FormatBytes(result.BytesCopied);
 
-            if (result.ErrorCount == 0)
+            if (result.ErrorCount == 0 && result.SourceDeleteFailedCount == 0)
             {
-                PhaseLabel.Text       = $"Done — {result.CopiedCount} file(s) copied and verified.";
+                PhaseLabel.Text       = $"Done — {result.CopiedCount} file(s) transferred. Archive sources removed.";
                 PhaseLabel.Foreground = new SolidColorBrush(Color.Parse("#81C784"));
+            }
+            else if (result.ErrorCount == 0)
+            {
+                PhaseLabel.Text       = $"Done — {result.CopiedCount} file(s) transferred. " +
+                                        $"{result.SourceDeleteFailedCount} archive source(s) could not be deleted — run Verify Archive.";
+                PhaseLabel.Foreground = new SolidColorBrush(Color.Parse("#FFB74D"));
             }
             else
             {

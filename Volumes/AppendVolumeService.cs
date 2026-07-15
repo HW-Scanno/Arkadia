@@ -8,11 +8,9 @@ namespace Arkadia.Volumes;
 /// <summary>
 /// Execution service for the Append Volume operation.
 ///
-/// Copies each planned archive artifact to the volume, verifies the SHA1,
-/// then — only on success — creates the volume_artifact DB row and increments
-/// the volume's actual_size_bytes.
-///
-/// Does NOT delete the local archive source: the archive remains authoritative.
+/// For each planned entry: copies the archive artifact to the volume, verifies the SHA1,
+/// commits the volume_artifact DB row, then deletes the local archive source.
+/// The source is only deleted after the target is verified and the DB row is committed.
 /// </summary>
 public sealed class AppendVolumeService
 {
@@ -24,10 +22,12 @@ public sealed class AppendVolumeService
         AppendVolumePlan                 plan,
         IProgress<AppendVolumeProgress>? progress = null)
     {
-        int  copiedCount = 0;
-        long bytesCopied = 0;
-        int  errorCount  = 0;
-        var  logLines    = new List<string>();
+        int  copiedCount             = 0;
+        long bytesCopied             = 0;
+        int  errorCount              = 0;
+        int  sourcesDeletedCount     = 0;
+        int  sourceDeleteFailedCount = 0;
+        var  logLines                = new List<string>();
 
         foreach (var entry in plan.Entries)
         {
@@ -77,7 +77,19 @@ public sealed class AppendVolumeService
                 Status             = "present_in_final",
                 AddedAtUtc         = DateTime.UtcNow,
             };
-            _catalog.AddVolumeArtifactAndIncrementSize(va, entry.SizeBytes);
+
+            try
+            {
+                _catalog.AddVolumeArtifactAndIncrementSize(va, entry.SizeBytes);
+            }
+            catch (Exception ex)
+            {
+                logLines.Add($"APPEND-DB-FAIL  {entry.FileName}  {ex.Message}");
+                errorCount++;
+                progress?.Report(new AppendVolumeProgress("append-error", entry.FileName,
+                    ex.Message));
+                continue;
+            }
 
             copiedCount++;
             bytesCopied += entry.SizeBytes;
@@ -85,14 +97,33 @@ public sealed class AppendVolumeService
 
             progress?.Report(new AppendVolumeProgress("append-copied", entry.FileName,
                 FormatBytes(entry.SizeBytes)));
+
+            // Delete archive source — safe: target verified, DB row committed
+            try
+            {
+                File.Delete(entry.ArchivePath);
+                sourcesDeletedCount++;
+                logLines.Add($"APPEND-SOURCE-DELETED  {entry.FileName}");
+                progress?.Report(new AppendVolumeProgress("append-source-deleted", entry.FileName,
+                    entry.ArchivePath));
+            }
+            catch (Exception ex)
+            {
+                sourceDeleteFailedCount++;
+                logLines.Add($"APPEND-SOURCE-DELETE-FAILED  {entry.FileName}  {ex.Message}");
+                progress?.Report(new AppendVolumeProgress("append-source-delete-failed", entry.FileName,
+                    ex.Message));
+            }
         }
 
         return new AppendVolumeResult
         {
-            CopiedCount = copiedCount,
-            BytesCopied = bytesCopied,
-            ErrorCount  = errorCount,
-            LogLines    = logLines,
+            CopiedCount             = copiedCount,
+            BytesCopied             = bytesCopied,
+            ErrorCount              = errorCount,
+            SourcesDeletedCount     = sourcesDeletedCount,
+            SourceDeleteFailedCount = sourceDeleteFailedCount,
+            LogLines                = logLines,
         };
     }
 

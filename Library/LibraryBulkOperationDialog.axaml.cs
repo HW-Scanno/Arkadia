@@ -23,6 +23,13 @@ public partial class LibraryBulkOperationDialog : Window
     private enum Step { Input, Preview, Running, Result }
     private Step _step = Step.Input;
 
+#pragma warning disable CS8618
+    public LibraryBulkOperationDialog()
+    {
+        InitializeComponent();
+    }
+#pragma warning restore CS8618
+
     public LibraryBulkOperationDialog(
         string          datLineId,
         string          datLineLabel,
@@ -30,14 +37,13 @@ public partial class LibraryBulkOperationDialog : Window
         DatLineStore    store,
         string          appRoot,
         CatalogService  catalog)
+        : this()
     {
         _datLineId    = datLineId;
         _datLineLabel = datLineLabel;
         _dbPath       = dbPath;
         _planner      = new LibraryBulkOperationPlanner(store);
         _service      = new LibraryBulkOperationService(appRoot, catalog);
-
-        InitializeComponent();
 
         HeaderSubtitle.Text = datLineLabel;
         SetStep(Step.Input);

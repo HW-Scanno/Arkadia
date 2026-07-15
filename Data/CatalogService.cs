@@ -332,11 +332,11 @@ public sealed class CatalogService
                 INSERT INTO transforms(transform_id, name, tool_id, command_template, output_extension, is_enabled, transform_type, processor_type, output_kind, archive_tier) VALUES
                     ('no_compression',           'No Compression (File)',       null,          '',                                                        '',     1, 'file_strategy',   'file_oriented',   'file',   'A'),
                     ('no_compression_folder',    'No Compression (Folder)',     null,          '',                                                        '',     1, 'folder_strategy', 'folder_oriented', 'folder', 'A'),
-                    ('chd_cd_compression',       'CHD CD Compression',          'chdman',      'createcd -i "{input}" -o "{output}"',                    '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
-                    ('chd_dvd_compression',      'CHD DVD Compression',         'chdman',      'createdvd -i "{input}" -o "{output}"',                   '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
-                    ('chd_gd_compression',       'CHD GD Compression',          'chdman',      'createcd -i "{input}" -o "{output}"',                    '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
-                    ('chd_psp_compression',      'CHD Compression (PSP)',        'chdman',      'createdvd -hs 2048 -c zstd -i "{input}" -o "{output}"', '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
-                    ('chd_dreamcast_compression','CHD Compression (Dreamcast)',  'chdman',      'createcd -c zstd -i "{input}" -o "{output}"',            '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('chd_cd_compression',       'CHD CD/GD Compression',                     'chdman',      'createcd -i "{input}" -o "{output}"',                    '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('chd_dvd_compression',      'CHD DVD Compression',                       'chdman',      'createdvd -i "{input}" -o "{output}"',                   '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('chd_gd_compression',       'CHD GD Compression (legacy/manual)',        'chdman',      'createcd -i "{input}" -o "{output}"',                    '.chd', 0, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('chd_psp_compression',      'CHD Compression (PSP)',                     'chdman',      'createdvd -hs 2048 -c zstd -i "{input}" -o "{output}"', '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('chd_dreamcast_compression','CHD Dreamcast Compression (legacy/manual)', 'chdman',      'createcd -c zstd -i "{input}" -o "{output}"',            '.chd', 0, 'file_strategy',   'file_oriented',   'file',   'B'),
                     ('zip_compression',          'ZIP Compression (Folder)',     '7zip',        'a -tzip "{output}" * -w"{input}"',                       '.zip', 1, 'folder_strategy', 'folder_oriented', 'file',   'A'),
                     ('zip_file_compression',     'ZIP Compression (File)',       '7zip',        'a -tzip "{output}" "{input}"',                           '.zip', 1, 'file_strategy',   'file_oriented',   'file',   'A'),
                     ('rvz_compression',          'RVZ Compression',             'dolphintool',  'convert -f rvz -c zstd -l 5 -i "{input}" -o "{output}"','.rvz', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
@@ -344,6 +344,25 @@ public sealed class CatalogService
                 """;
             txSeed.ExecuteNonQuery();
         }
+
+        // ── Migrate CHD CD/GD display names on existing catalogs ─────────────
+        // "CHD CD Compression" (chd_cd_compression) is clarified for GD-ROM/Dreamcast
+        // releases; chd_gd_compression / chd_dreamcast_compression are superseded
+        // duplicate-command rows, kept only so already-saved extension mappings
+        // still resolve. Guarded by old name so a user's own rename via Manage
+        // Transforms is never overwritten. transform_id (the persisted identity
+        // and the only key ReleaseShapeTransformPlanner/extension mappings use)
+        // is unchanged.
+        using var txRename = conn.CreateCommand();
+        txRename.CommandText = """
+            UPDATE transforms SET name = 'CHD CD/GD Compression'
+                WHERE transform_id = 'chd_cd_compression' AND name = 'CHD CD Compression';
+            UPDATE transforms SET name = 'CHD GD Compression (legacy/manual)', is_enabled = 0
+                WHERE transform_id = 'chd_gd_compression' AND name = 'CHD GD Compression';
+            UPDATE transforms SET name = 'CHD Dreamcast Compression (legacy/manual)', is_enabled = 0
+                WHERE transform_id = 'chd_dreamcast_compression' AND name = 'CHD Compression (Dreamcast)';
+            """;
+        txRename.ExecuteNonQuery();
 
         // ── Seed default settings if missing ─────────────────────────────────
         using var settingSeed = conn.CreateCommand();

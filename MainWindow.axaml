@@ -300,6 +300,9 @@
         <Style Selector="ListBox#ArkBackupsList ListBoxItem:selected:pointerover /template/ ContentPresenter">
             <Setter Property="Background" Value="#232347"/>
         </Style>
+        <Style Selector="TextBlock#DetailName:pointerover">
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+        </Style>
 
     </Window.Styles>
 
@@ -923,12 +926,14 @@
 
                                 <TextBlock Classes="widget-title" Text="DETAILS"/>
 
-                                <!-- Name — full width, wraps -->
+                                <!-- Name — full width, wraps; click to copy -->
                                 <TextBlock x:Name="DetailName"
                                            FontSize="15" FontWeight="SemiBold"
                                            Foreground="{DynamicResource ArkTextPrimary}"
                                            TextWrapping="Wrap"
-                                           Margin="0,0,0,18"/>
+                                           Margin="0,0,0,18"
+                                           Cursor="Hand"
+                                           PointerPressed="OnDetailNamePressed"/>
 
                                 <Border Classes="card-divider" Margin="0,0,0,12"/>
 

@@ -118,6 +118,52 @@ public sealed class ReleaseShapeTransformPlannerTests
         Assert.Equal(ReleaseShapeTransformPlanner.ChdCdTransformId, plan.TransformId);
     }
 
+    // ── Dreamcast / GD-ROM (.cue + .bin) — CHD CD/GD Compression display rename ─
+
+    [Fact]
+    public void DatConfig_DreamcastCueBin_PerReleaseShape_IsValid()
+    {
+        // Redump-style Dreamcast GD-ROM releases are .cue + one-or-more .bin
+        // track files — the same shape as a CD release. "Per release shape"
+        // must classify them as valid CueBin releases, not Unsupported.
+        var shape = ReleaseShapeTransformPlanner.ClassifyRelease(
+            Files("Sonic Adventure (USA).cue", "Sonic Adventure (Track 1).bin", "Sonic Adventure (Track 2).bin"));
+        Assert.Equal(ReleaseTransformShape.CueBin, shape);
+    }
+
+    [Fact]
+    public void DatConfig_DreamcastCueBin_MapsToChdCdGdCompression()
+    {
+        // Internal identity is chd_cd_compression regardless of the display
+        // label ("CHD CD/GD Compression") shown for it in the UI.
+        var plan = ReleaseShapeTransformPlanner.PlanRelease(
+            "r1", Files("game.cue", "game (Track 1).bin", "game (Track 2).bin"));
+        Assert.Equal(ReleaseTransformShape.CueBin, plan.Shape);
+        Assert.Equal(ReleaseShapeTransformPlanner.ChdCdTransformId, plan.TransformId);
+        Assert.Equal("chd_cd_compression", plan.TransformId);
+    }
+
+    [Fact]
+    public void DatConfig_DreamcastCueBin_BinFilesAreDependenciesNotDiscarded()
+    {
+        var plan = ReleaseShapeTransformPlanner.PlanRelease(
+            "r1", Files("game.cue", "game (Track 1).bin", "game (Track 2).bin"));
+        Assert.Equal("game.cue", plan.MainInputFile);
+        Assert.Contains("game (Track 1).bin", plan.DependencyFiles);
+        Assert.Contains("game (Track 2).bin", plan.DependencyFiles);
+        Assert.Equal(2, plan.DependencyFiles.Count);
+    }
+
+    [Fact]
+    public void DatConfig_DvdIso_DoesNotMapToChdCdGdCompression()
+    {
+        // Single .iso releases (DVD-style) must keep using the DVD transform,
+        // never the CD/GD one — the two families must never collide.
+        var plan = ReleaseShapeTransformPlanner.PlanRelease("r1", Files("game.iso"));
+        Assert.Equal(ReleaseShapeTransformPlanner.ChdDvdTransformId, plan.TransformId);
+        Assert.NotEqual(ReleaseShapeTransformPlanner.ChdCdTransformId, plan.TransformId);
+    }
+
     [Fact]
     public void CueBinRelease_BinIsDependency_NotMainInput()
     {

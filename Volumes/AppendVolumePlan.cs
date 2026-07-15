@@ -145,8 +145,10 @@ public sealed record AppendVolumeProgress(string Action, string FileName, string
 
 public sealed class AppendVolumeResult
 {
-    public int                   CopiedCount { get; set; }
-    public long                  BytesCopied { get; set; }
-    public int                   ErrorCount  { get; set; }
-    public IReadOnlyList<string> LogLines    { get; init; } = [];
+    public int                   CopiedCount             { get; set; }
+    public long                  BytesCopied             { get; set; }
+    public int                   ErrorCount              { get; set; }
+    public int                   SourcesDeletedCount     { get; set; }
+    public int                   SourceDeleteFailedCount { get; set; }
+    public IReadOnlyList<string> LogLines                { get; init; } = [];
 }

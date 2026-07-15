@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using Arkadia.Data;
+using Arkadia.LocalArchive;
 using Arkadia.Volumes;
 using Xunit;
 
@@ -136,15 +137,15 @@ public sealed class AppendVolumeServiceTests : IDisposable
         Assert.True(catalog.VolumeArtifactExists(vol.Id, daId));
     }
 
-    // ── 13. DoesNotDeleteLocalArchiveSource ───────────────────────────────────
+    // ── 13. CopyVerifyCommitDeletesArchiveSource ──────────────────────────────
 
     [Fact]
-    public void AppendExecution_DoesNotDeleteLocalArchiveSource()
+    public void AppendExecution_CopyVerifyCommitDeletesArchiveSource()
     {
-        var content = new byte[] { 1, 2, 3 };
-        var (vol, _, _) = ProvisionArtifact("vol-nodelete", "Archive.chd", content);
-        var volRoot     = VolumeRoot(vol.Label);
-        var archiveSrc  = ArchivePath("Archive.chd");
+        var content    = new byte[] { 1, 2, 3 };
+        var (vol, _, _) = ProvisionArtifact("vol-delete", "Archive.chd", content);
+        var volRoot    = VolumeRoot(vol.Label);
+        var archiveSrc = ArchivePath("Archive.chd");
 
         Assert.True(File.Exists(archiveSrc), "archive file must exist before execution");
 
@@ -152,8 +153,302 @@ public sealed class AppendVolumeServiceTests : IDisposable
         var result = new AppendVolumeService(OpenCatalog()).Execute(plan);
 
         Assert.Equal(0, result.ErrorCount);
-        // Archive source must still exist after append
-        Assert.True(File.Exists(archiveSrc), "archive source must NOT be deleted after append");
+        Assert.Equal(1, result.CopiedCount);
+        Assert.Equal(1, result.SourcesDeletedCount);
+        Assert.Equal(0, result.SourceDeleteFailedCount);
+        Assert.False(File.Exists(archiveSrc), "archive source must be deleted after successful append");
+        Assert.True(File.Exists(Path.Combine(volRoot, "Archive.chd")), "volume copy must exist");
+    }
+
+    // ── 16. DoesNotDeleteArchiveSourceWhenCopyFails ───────────────────────────
+
+    [Fact]
+    public void AppendExecution_DoesNotDeleteArchiveSourceWhenCopyFails()
+    {
+        var content    = new byte[] { 1, 2, 3 };
+        var (vol, _, _) = ProvisionArtifact("vol-copyfail", "CopyFail.chd", content);
+        var volRoot    = VolumeRoot(vol.Label);
+        var archiveSrc = ArchivePath("CopyFail.chd");
+
+        var plan = BuildPlan(vol, volRoot);
+        Assert.True(plan.CanExecute, "plan must be executable");
+
+        // Remove volume root so File.Copy fails with DirectoryNotFoundException
+        Directory.Delete(volRoot, recursive: false);
+
+        var result = new AppendVolumeService(OpenCatalog()).Execute(plan);
+
+        Assert.Equal(1, result.ErrorCount);
+        Assert.Equal(0, result.CopiedCount);
+        Assert.Equal(0, result.SourcesDeletedCount);
+        Assert.True(File.Exists(archiveSrc), "archive source must not be deleted when copy fails");
+    }
+
+    // ── 17. DoesNotDeleteArchiveSourceIfVerifyFails ───────────────────────────
+
+    [Fact]
+    public void AppendExecution_DoesNotDeleteArchiveSourceIfVerifyFails()
+    {
+        var content    = new byte[] { 10, 20, 30 };
+        var (vol, _, _) = ProvisionArtifact("vol-verifyfail", "VerifyFail.chd", content);
+        var volRoot    = VolumeRoot(vol.Label);
+        var archiveSrc = ArchivePath("VerifyFail.chd");
+
+        // Tamper with the archive file so its SHA1 no longer matches the DB
+        File.WriteAllBytes(archiveSrc, new byte[] { 0xFF });
+
+        // The planner still plans it (hash in DB is non-null); size mismatch triggers verify fail
+        var plan = BuildPlan(vol, volRoot);
+        Assert.True(plan.CanExecute, "plan must be executable");
+
+        var result = new AppendVolumeService(OpenCatalog()).Execute(plan);
+
+        Assert.Equal(1, result.ErrorCount);
+        Assert.Equal(0, result.CopiedCount);
+        Assert.Equal(0, result.SourcesDeletedCount);
+        Assert.True(File.Exists(archiveSrc), "archive source must not be deleted when verify fails");
+    }
+
+    // ── 18. OnlyDeletesSourceOfSuccessfulEntries ─────────────────────────────
+
+    [Fact]
+    public void AppendExecution_OnlyDeletesSourceOfSuccessfulEntries()
+    {
+        // Plan with two entries: A succeeds fully, B's copy fails because the
+        // target slot is already occupied. Source of A must be deleted; B's must not.
+        var contentA = new byte[] { 1, 2, 3 };
+        var contentB = new byte[] { 4, 5, 6 };
+
+        var (vol, _, _) = ProvisionArtifact("vol-multi", "ArtA.chd", contentA);
+        var volRoot = VolumeRoot(vol.Label);
+        var srcA    = ArchivePath("ArtA.chd");
+
+        // Provision artifact B into the same DatLineStore/DatLine
+        var sha1B  = Sha1Hex(contentB);
+        var cikB   = $"sha1:{sha1B}";
+        var relIdB = Guid.NewGuid().ToString("N");
+        var store  = OpenStore();
+        store.UpsertRelease(new ReleaseRecord
+            { Id = relIdB, DatLineId = "dl1", Name = "Release B", Status = "present" });
+        store.EnsureContentIdentity(new ContentIdentityRecord
+            { ContentIdentityKey = cikB, DatSha1 = sha1B, DatMd5 = null,
+              DatCrc32 = null, CreatedAtUtc = DateTime.UtcNow });
+        store.SaveReleaseContentLink(new ReleaseContentLinkRecord
+            { Id = Guid.NewGuid().ToString("N"), ReleaseId = relIdB,
+              ContentIdentityKey = cikB, CreatedAtUtc = DateTime.UtcNow });
+        store.IngestDerivedArtifact(cikB, "", "chd", "ArtB.chd",
+            "archive/snes/dl1/ArtB.chd", contentB.Length, sha1B);
+        WriteArchiveFile("ArtB.chd", contentB);
+        var srcB = ArchivePath("ArtB.chd");
+
+        var plan = BuildPlan(vol, volRoot);
+        Assert.Equal(2, plan.PlannedCount);
+
+        // Pre-create ArtB.chd in the volume root so File.Copy (overwrite:false) fails for B
+        File.WriteAllBytes(Path.Combine(volRoot, "ArtB.chd"), new byte[] { 0xFF });
+
+        var result = new AppendVolumeService(OpenCatalog()).Execute(plan);
+
+        Assert.Equal(1, result.CopiedCount);
+        Assert.Equal(1, result.ErrorCount);
+        Assert.Equal(1, result.SourcesDeletedCount);
+        Assert.Equal(0, result.SourceDeleteFailedCount);
+        Assert.False(File.Exists(srcA), "A's source must be deleted after successful transfer");
+        Assert.True(File.Exists(srcB), "B's source must be preserved because copy failed");
+    }
+
+    // ── 19. LeavesVolumeAssignmentIfSourceDeleteFails ─────────────────────────
+
+    [Fact]
+    public void AppendExecution_LeavesVolumeAssignmentIfSourceDeleteFails()
+    {
+        var content         = new byte[] { 7, 8, 9 };
+        var (vol, daId, _)  = ProvisionArtifact("vol-delfail", "DelFail.chd", content);
+        var volRoot         = VolumeRoot(vol.Label);
+        var archiveSrc      = ArchivePath("DelFail.chd");
+
+        var plan = BuildPlan(vol, volRoot);
+        Assert.True(plan.CanExecute, "plan must be executable");
+
+        // Make archive source read-only so File.Delete throws UnauthorizedAccessException
+        File.SetAttributes(archiveSrc, FileAttributes.ReadOnly);
+        try
+        {
+            var catalog = OpenCatalog();
+            var result  = new AppendVolumeService(catalog).Execute(plan);
+
+            Assert.Equal(0, result.ErrorCount);
+            Assert.Equal(1, result.CopiedCount);
+            Assert.Equal(0, result.SourcesDeletedCount);
+            Assert.Equal(1, result.SourceDeleteFailedCount);
+
+            // VA row must still exist despite source delete failure
+            Assert.True(catalog.VolumeArtifactExists(vol.Id, daId));
+
+            // Volume copy must exist
+            Assert.True(File.Exists(Path.Combine(volRoot, "DelFail.chd")));
+        }
+        finally
+        {
+            File.SetAttributes(archiveSrc, FileAttributes.Normal);
+        }
+    }
+
+    // ── 20. ReportsSourceDeleteFailure ───────────────────────────────────────
+
+    [Fact]
+    public void AppendExecution_ReportsSourceDeleteFailure()
+    {
+        var content    = new byte[] { 11, 22, 33 };
+        var (vol, _, _) = ProvisionArtifact("vol-delfail2", "DelFail2.chd", content);
+        var volRoot    = VolumeRoot(vol.Label);
+        var archiveSrc = ArchivePath("DelFail2.chd");
+
+        var plan = BuildPlan(vol, volRoot);
+        Assert.True(plan.CanExecute, "plan must be executable");
+
+        File.SetAttributes(archiveSrc, FileAttributes.ReadOnly);
+        try
+        {
+            var captured = new List<AppendVolumeProgress>();
+            var result   = new AppendVolumeService(OpenCatalog()).Execute(
+                plan,
+                new SyncProgress<AppendVolumeProgress>(captured.Add));
+
+            Assert.Equal(1, result.SourceDeleteFailedCount);
+            Assert.Contains(captured, p =>
+                p.Action   == "append-source-delete-failed" &&
+                p.FileName == "DelFail2.chd");
+        }
+        finally
+        {
+            File.SetAttributes(archiveSrc, FileAttributes.Normal);
+        }
+    }
+
+    // ── 21. DeletesOnlyAfterVolumeArtifactRowCreated ──────────────────────────
+
+    [Fact]
+    public void AppendExecution_DeletesOnlyAfterVolumeArtifactRowCreated()
+    {
+        var content        = new byte[] { 1, 2, 3, 4, 5 };
+        var (vol, daId, _)  = ProvisionArtifact("vol-order", "Order.chd", content);
+        var volRoot        = VolumeRoot(vol.Label);
+        var archiveSrc     = ArchivePath("Order.chd");
+
+        var plan    = BuildPlan(vol, volRoot);
+        var catalog = OpenCatalog();
+        var result  = new AppendVolumeService(catalog).Execute(plan);
+
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal(1, result.CopiedCount);
+
+        // VA row must exist after successful run
+        Assert.True(catalog.VolumeArtifactExists(vol.Id, daId), "VA row must exist");
+
+        // Archive source must be gone (deleted after VA row committed)
+        Assert.False(File.Exists(archiveSrc), "source must be deleted after VA row is created");
+    }
+
+    // ── 22. DerivedArtifactRowRemainsAfterSourceDelete ────────────────────────
+
+    [Fact]
+    public void AppendExecution_DerivedArtifactRowRemainsAfterSourceDelete()
+    {
+        var content        = new byte[] { 99, 88 };
+        var (vol, daId, _)  = ProvisionArtifact("vol-darow", "DaRow.chd", content);
+        var volRoot        = VolumeRoot(vol.Label);
+        var archiveSrc     = ArchivePath("DaRow.chd");
+
+        var plan   = BuildPlan(vol, volRoot);
+        var result = new AppendVolumeService(OpenCatalog()).Execute(plan);
+
+        Assert.Equal(0, result.ErrorCount);
+        Assert.Equal(1, result.SourcesDeletedCount);
+        Assert.False(File.Exists(archiveSrc), "source must be deleted");
+
+        // DA row in DatLineStore must still exist — only the archive file was deleted
+        var artifacts = OpenStore().GetAllArchiveArtifactInfos();
+        Assert.Contains(artifacts, a => a.DerivedArtifactId == daId);
+    }
+
+    // ── 23. AppendPlan_DoesNotPlanAlreadyAssignedArtifactAfterSourceDelete ────
+
+    [Fact]
+    public void AppendPlan_DoesNotPlanAlreadyAssignedArtifactAfterSourceDelete()
+    {
+        var content        = new byte[] { 55, 66, 77 };
+        var (vol, _, _)    = ProvisionArtifact("vol-replan", "Replan.chd", content);
+        var volRoot        = VolumeRoot(vol.Label);
+        var archiveSrc     = ArchivePath("Replan.chd");
+
+        // First Append — source is deleted, VA row created
+        var plan1   = BuildPlan(vol, volRoot);
+        var result1 = new AppendVolumeService(OpenCatalog()).Execute(plan1);
+        Assert.Equal(1, result1.CopiedCount);
+        Assert.Equal(1, result1.SourcesDeletedCount);
+        Assert.False(File.Exists(archiveSrc));
+
+        // Re-plan on the same volume — artifact is now assigned, must be skipped
+        var plan2 = BuildPlan(vol, volRoot);
+        Assert.Equal(0, plan2.PlannedCount);
+        Assert.Equal(1, plan2.AlreadyAssignedSkipped);
+    }
+
+    // ── 24. VerifyArchive_DoesNotReportDeletedAssignedArchiveSourceAsMissing ──
+
+    [Fact]
+    public void VerifyArchive_DoesNotReportDeletedAssignedArchiveSourceAsMissing()
+    {
+        var content    = new byte[] { 3, 6, 9 };
+        var (vol, _, _) = ProvisionArtifact("vol-absent", "Absent.chd", content);
+        var volRoot    = VolumeRoot(vol.Label);
+        var archiveSrc = ArchivePath("Absent.chd");
+
+        // Run Append — source deleted
+        var plan   = BuildPlan(vol, volRoot);
+        var result = new AppendVolumeService(OpenCatalog()).Execute(plan);
+        Assert.Equal(1, result.CopiedCount);
+        Assert.Equal(1, result.SourcesDeletedCount);
+        Assert.False(File.Exists(archiveSrc), "source must be deleted by Append");
+
+        // Verify Archive — the absent source must not surface as a scan entry;
+        // it must only appear in AbsentFromArchiveCount
+        var verifyPlan = new LocalArchiveVerifyService(_tmp).Verify("snes", "dl1", OpenStore());
+        Assert.Empty(verifyPlan.Entries);
+        Assert.Equal(1, verifyPlan.AbsentFromArchiveCount);
+    }
+
+    // ── 25. VerifyArchive_RedundantCopyOnlyWhenArchiveFileStillExists ─────────
+
+    [Fact]
+    public void VerifyArchive_RedundantCopyOnlyWhenArchiveFileStillExists()
+    {
+        var content    = new byte[] { 2, 4, 8 };
+        var (vol, daId, _) = ProvisionArtifact("vol-redund", "Redund.chd", content);
+        var volRoot    = VolumeRoot(vol.Label);
+        var archiveSrc = ArchivePath("Redund.chd");
+
+        Directory.CreateDirectory(volRoot);
+
+        // Build assignment dict: artifact is on a reachable volume
+        var av = new Dictionary<string, AssignedVolumeInfo>
+        {
+            [daId] = new AssignedVolumeInfo(vol.Id, vol.Label, volRoot),
+        };
+
+        // Scenario A: archive file still present → RedundantArchiveCopy
+        Assert.True(File.Exists(archiveSrc));
+        var svc   = new LocalArchiveVerifyService(_tmp);
+        var planA = svc.Verify("snes", "dl1", OpenStore(), assignedVolumes: av);
+        Assert.Equal(1, planA.RedundantCopies);
+        Assert.Equal(0, planA.AbsentFromArchiveCount);
+
+        // Scenario B: archive source deleted (as Append would do) → no RedundantArchiveCopy
+        File.Delete(archiveSrc);
+        var planB = svc.Verify("snes", "dl1", OpenStore(), assignedVolumes: av);
+        Assert.Equal(0, planB.RedundantCopies);
+        Assert.Equal(1, planB.AbsentFromArchiveCount);
     }
 
     // ── 14. RefreshesVolumeUsageAfterSuccess ──────────────────────────────────
@@ -176,7 +471,7 @@ public sealed class AppendVolumeServiceTests : IDisposable
         Assert.Equal(content.Length, after.ActualSizeBytes);
     }
 
-    // ── 15. DoesNotCreateVolumeArtifactForUnwanted ────────────────────────────
+    // ── 15. DoesNotCreateVolumeArtifactForUnwanted ───────────────────────────
 
     [Fact]
     public void AppendExecution_DoesNotCreateVolumeArtifactForUnwanted()
@@ -231,4 +526,11 @@ public sealed class AppendVolumeServiceTests : IDisposable
         var vas = catalog.GetVolumeArtifacts(vol.Id);
         Assert.Empty(vas);
     }
+}
+
+// ── Test helper: synchronous IProgress<T> ────────────────────────────────────
+
+internal sealed class SyncProgress<T>(Action<T> action) : IProgress<T>
+{
+    public void Report(T value) => action(value);
 }

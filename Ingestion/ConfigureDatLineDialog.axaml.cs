@@ -58,13 +58,24 @@ public partial class ConfigureDatLineDialog : Window
     private void PopulateContent()
     {
         var allTransforms = _catalog.LoadTransforms();
-        _fileXforms   = allTransforms.Where(t => t.IsFileStrategy).ToList();
-        _folderXforms = allTransforms.Where(t => t.IsFolderStrategy).ToList();
 
         var existingMappings = _d.CatalogId is not null
             ? _catalog.LoadExtensionMappings(_d.CatalogId)
             : new List<ExtensionTransformMapping>();
         var mappingLookup = existingMappings.ToDictionary(m => m.FileExtension, StringComparer.OrdinalIgnoreCase);
+
+        // Disabled transforms (e.g. superseded legacy CHD variants) are hidden from
+        // new manual selections, but stay available here if this DAT line already
+        // has a saved mapping pointing at them — otherwise the selection would
+        // silently resolve to "Discard" for a config nobody asked to change.
+        var referencedTransformIds = existingMappings
+            .Select(m => m.TransformId)
+            .Where(id => id.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+        bool IsSelectable(TransformRecord t) => t.IsEnabled || referencedTransformIds.Contains(t.Id);
+
+        _fileXforms   = allTransforms.Where(t => t.IsFileStrategy   && IsSelectable(t)).ToList();
+        _folderXforms = allTransforms.Where(t => t.IsFolderStrategy && IsSelectable(t)).ToList();
 
         // Compute extension counts from the data store
         var extCounts = new List<(string Ext, int Count)>();
@@ -574,7 +585,7 @@ public partial class ConfigureDatLineDialog : Window
                 if (_shapeAnalysis.SingleIsoCount > 0)
                     AddModelRow(_modelInfoPanel, ".iso releases",     $"{_shapeAnalysis.SingleIsoCount:N0} → CHD DVD Compression", textBrush, dimBrush);
                 if (_shapeAnalysis.CueBinCount > 0)
-                    AddModelRow(_modelInfoPanel, ".cue+.bin releases", $"{_shapeAnalysis.CueBinCount:N0} → CHD CD Compression",   textBrush, dimBrush);
+                    AddModelRow(_modelInfoPanel, ".cue+.bin releases", $"{_shapeAnalysis.CueBinCount:N0} → CHD CD/GD Compression",   textBrush, dimBrush);
             }
         }
 
@@ -608,7 +619,7 @@ public partial class ConfigureDatLineDialog : Window
                 happenText =
                     "Each release will be inspected as a unit.\n" +
                     "Single .iso releases will use CHD DVD Compression.\n" +
-                    ".cue + .bin releases will use CHD CD Compression.\n" +
+                    ".cue/.bin or .gdi-style releases will use CHD CD/GD Compression.\n" +
                     ".bin files are required dependencies, not discarded.";
             }
             else if (_shapeAnalysis is { UnsupportedCount: > 0 })

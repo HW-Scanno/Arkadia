@@ -998,7 +998,7 @@ public partial class MainWindow : Window
             });
             panel.Children.Add(new TextBlock
             {
-                Text       = ".iso → CHD DVD Compression   ·   .cue+.bin → CHD CD Compression",
+                Text       = ".iso → CHD DVD Compression   ·   .cue+.bin → CHD CD/GD Compression",
                 FontSize   = 11,
                 Foreground = dim,
             });
@@ -5433,6 +5433,12 @@ public partial class MainWindow : Window
         UpdateDetailPanel(entry);
     }
 
+    private void OnDetailNamePressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
+    {
+        if (e.GetCurrentPoint(null).Properties.IsLeftButtonPressed)
+            CopyAndToast(DetailName.Text ?? "");
+    }
+
     private void ApplyLibraryFilter()
     {
         var search = LibrarySearchBox.Text?.Trim() ?? string.Empty;
@@ -9644,9 +9650,10 @@ public partial class MainWindow : Window
         result.ReleasesIncomplete  = incompleteReleases.Count;
 
         // ── Phase 9: Per-archive cleanup ──────────────────────────────────────
-        // Each archive is deleted only when every release it contributed to succeeded.
-        // Archives linked to any incomplete or failed release are preserved individually,
-        // so one bad ZIP does not block cleanup of unrelated successful archives.
+        // Cleanup depends on extraction success only. Every archive in ExtractedArchiveInfos
+        // was extracted successfully, so the container has served its purpose and is deleted.
+        // Child-file outcomes (unwanted, already-present, incomplete, transform failure) do
+        // not affect whether the original container is removed.
         if (result.ExtractedArchiveInfos.Count > 0)
         {
             progress.Report(new IngestionProgress { PhaseText = "Cleaning up extracted archives…" });
@@ -10031,8 +10038,8 @@ public partial class MainWindow : Window
 
     // ── Release-shape dispatch processor ─────────────────────────────────────
     // Dispatches per release based on its detected shape:
-    //   single .iso  → CHD DVD Compression (chd_dvd_compression)
-    //   .cue + .bin  → CHD CD Compression  (chd_cd_compression)
+    //   single .iso  → CHD DVD Compression    (chd_dvd_compression)
+    //   .cue + .bin  → CHD CD/GD Compression  (chd_cd_compression)
     // One derived artifact per release; .bin files are dependencies, not transform inputs.
     // Provenance: content_identity_key = "release:{releaseId}", source_artifact_id = "".
 
