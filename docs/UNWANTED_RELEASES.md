@@ -48,10 +48,12 @@ This applies in:
 
 ### Ingestion
 
-1. **Early unwanted detection (Phase B):** When an incoming file matches only unwanted releases, it is moved to `incoming-skip\<platform>\` without any transform or promotion.
-2. **Fan-out (Phase C onwards):** Incoming files matched to both wanted and unwanted releases process only the wanted targets. Unwanted targets are logged as `unwanted-skipped`. The source file is not moved to incoming-skip as long as at least one wanted target is being processed.
-3. **All-unwanted Phase 8:** If all matched targets for a source file are unwanted, the source file is moved to `incoming-skip\<platform>\` at Phase 8.
+1. **Early unwanted classification (Phase 6):** When an incoming file matches an unwanted release, that target is logged as `unwanted-classified` and is **not staged**. If *every* match is unwanted, the file is deferred to Phase 8 (no transform, no staging, no assembly into `source`).
+2. **Fan-out:** Incoming files matched to both wanted and unwanted releases process only the wanted targets. Unwanted targets are logged as `unwanted-classified`. The source file is not moved to incoming-skip as long as at least one wanted target is being processed.
+3. **All-unwanted physical move (Phase 8):** If all matched targets for a source file are unwanted, the file is physically moved to `incoming-skip\<platform>\` and logged as `unwanted-moved` (or `unwanted-move-failed` on error); the `UnwantedSkipped` counter is incremented once per file moved.
 4. **`UpdateReleaseStatus("present")` is guarded:** Ingestion cannot reset an unwanted release to present.
+
+> **Two distinct actions, not a duplicate.** `unwanted-classified` (Phase 6, match-time) and `unwanted-moved` (Phase 8, physical move) are logged separately. `Unwanted skipped` is its own summary counter, distinct from the generic `Files skipped`.
 
 ### Append Volume
 
@@ -84,8 +86,8 @@ This applies in:
 | Only `RestoreWantedRelease()` leaves unwanted | `UpdateReleaseStatus` SQL guard |
 | Ingestion cannot promote unwanted to present | `UpdateReleaseStatus` SQL guard |
 | Artifact with any unwanted link is excluded from wanted queries | `GetAllWantedArtifactInfos` NOT EXISTS subquery |
-| Ingestion unwanted targets get `unwanted-skipped` log entry | MainWindow Phase B/C |
-| Ingestion all-unwanted source moves to incoming-skip | MainWindow Phase 8 |
+| Ingestion unwanted targets get `unwanted-classified` log entry | MainWindow Phase 6 fan-out |
+| Ingestion all-unwanted source moves to incoming-skip (`unwanted-moved`) | MainWindow Phase 8 |
 | Volume unwanted files moved to `unwanted\` subfolder, VA row removed | `VolumeVerifyService` |
 | Archive unwanted files moved to `incoming-skip`, DA row removed | `LocalArchiveVerifyService.Repair` |
 

@@ -1,4 +1,5 @@
 using System.IO;
+using Arkadia.Data;
 
 namespace Arkadia.Volumes;
 
@@ -20,4 +21,14 @@ public static class VolumeArtifactPathBuilder
     /// </summary>
     public static string GetFlatFullPath(string volumeRoot, string artifactFileName)
         => Path.Combine(volumeRoot, artifactFileName);
+
+    /// <summary>
+    /// Returns the flat destination path for a Build Volume move.
+    /// Build must place the artifact directly at the volume root — the release
+    /// name is deliberately NOT used as a subfolder. This is the single
+    /// production authority for Build's target path; call it from Build so the
+    /// flat-layout rule is exercised by the same code the app runs.
+    /// </summary>
+    public static string GetBuildDestinationPath(string volumeRoot, ArtifactBuildInfo info)
+        => GetFlatFullPath(volumeRoot, info.FileName);
 }

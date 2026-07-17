@@ -182,33 +182,16 @@
                            Foreground="#888899" Margin="0,0,0,10"/>
 
                 <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,10">
-                    <StackPanel Spacing="6">
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="Files scanned"    FontSize="12" Foreground="#888899"/>
-                            <TextBlock Grid.Column="1" x:Name="SumScanned"     FontSize="12" FontWeight="Medium" Foreground="#888899"/>
-                        </Grid>
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="Files matched"    FontSize="12" Foreground="#888899"/>
-                            <TextBlock Grid.Column="1" x:Name="SumMatched"     FontSize="12" FontWeight="Medium" Foreground="#F0F0F0"/>
-                        </Grid>
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="Files copied"     FontSize="12" Foreground="#888899"/>
-                            <TextBlock Grid.Column="1" x:Name="SumCopied"      FontSize="12" FontWeight="Medium" Foreground="#4CAF50"/>
-                        </Grid>
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="Releases present" FontSize="12" Foreground="#888899"/>
-                            <TextBlock Grid.Column="1" x:Name="SumPresent"     FontSize="12" FontWeight="SemiBold" Foreground="#7B68EE"/>
-                        </Grid>
-                        <Grid ColumnDefinitions="*,Auto">
-                            <TextBlock Grid.Column="0" Text="Files skipped"    FontSize="12" Foreground="#888899"/>
-                            <TextBlock Grid.Column="1" x:Name="SumSkipped"     FontSize="12" FontWeight="Medium" Foreground="#FFA726"/>
-                        </Grid>
-                        <Grid x:Name="SumUnwantedRow" ColumnDefinitions="*,Auto" IsVisible="False">
-                            <TextBlock Grid.Column="0" Text="Unwanted skipped" FontSize="12" Foreground="#888899"/>
-                            <TextBlock Grid.Column="1" x:Name="SumUnwanted"    FontSize="12" FontWeight="Medium" Foreground="#9E9E9E"/>
-                        </Grid>
-                    </StackPanel>
+                    <!-- Rows are populated in code-behind from IngestionSummary.CoreCounters
+                         so the dialog and the final log always show the same counter set. -->
+                    <StackPanel x:Name="SummaryCountersPanel" Spacing="6"/>
                 </Border>
+
+                <TextBlock x:Name="SumNote"
+                           IsVisible="False"
+                           FontSize="12" Foreground="#9E9E9E"
+                           TextWrapping="Wrap"
+                           Margin="0,0,0,10"/>
             </StackPanel>
 
             <StackPanel x:Name="FailedPanel" IsVisible="False" Spacing="0">

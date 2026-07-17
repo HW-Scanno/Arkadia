@@ -3961,8 +3961,9 @@ public partial class MainWindow : Window
         {
             var src = Path.Combine(appRoot,
                 info.RelativePath.Replace('/', Path.DirectorySeparatorChar));
-            var dst = Path.Combine(volumeFolder,
-                SafeFileName(info.ReleaseName), info.FileName);
+            // Volume layout is always FLAT: <volume root>\<artifact filename>.
+            // Never a <release name> subfolder. Single production authority.
+            var dst = Volumes.VolumeArtifactPathBuilder.GetBuildDestinationPath(volumeFolder, info);
 
             bool srcExists = File.Exists(src);
             bool dstExists = File.Exists(dst);
@@ -8954,7 +8955,8 @@ public partial class MainWindow : Window
             RefreshPending();
         }
 
-        if (ingestResult.Error is null && (ingestResult.FilesCopied > 0 || ingestResult.FilesSkipped > 0 || ingestResult.ReleasesPresent > 0))
+        // Includes all-unwanted runs (UnwantedSkipped > 0) — those still changed incoming-skip.
+        if (Ingestion.IngestionSummary.ShouldRefreshAfterIngest(ingestResult))
         {
             RefreshStaging();
         }
@@ -8982,6 +8984,27 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(stagingRoot);
         Directory.CreateDirectory(sourceRoot);
         Directory.CreateDirectory(skipDir);
+
+        // ── Stale unwanted cleanup ────────────────────────────────────────────
+        // Relocate leftover staging/source work files that belong to releases now
+        // marked unwanted (partial staging then vetoed, or failed-transform/delete
+        // residue then vetoed). Conservative: only folders that map exclusively to
+        // unwanted releases are touched; files are moved to incoming-skip, never
+        // deleted. Runs before scan so it applies even on an empty-incoming re-run.
+        {
+            var cleanupReleases = new DatLineStore(absDbPath).LoadReleases()
+                .Select(r => (r.Name, r.Status))
+                .ToList();
+            var cleanup = Ingestion.StaleUnwantedCleanup.Run(
+                stagingRoot, sourceRoot, skipDir, cleanupReleases);
+            result.StaleStagingMoved += cleanup.StaleStagingMoved;
+            result.StaleSourceMoved  += cleanup.StaleSourceMoved;
+            foreach (var op in cleanup.Operations)
+            {
+                result.Operations.Add(op);
+                progress.Report(new IngestionProgress { NewOperation = op });
+            }
+        }
 
         // ── Pre-Ingest: Extract archives ──────────────────────────────────────
         if (fileHandling == "archives_pre_extraction")
@@ -9310,7 +9333,9 @@ public partial class MainWindow : Window
                 if (!seenUnwantedLog.Add(releaseId)) continue;
                 if (!releases.TryGetValue(releaseId, out var rel) || rel.Status != "unwanted") continue;
                 unwantedSkippedReleases.Add(releaseId);
-                var skipOp = new IngestionOperation(srcInfo.Name, "unwanted-skipped", rel.Name);
+                // Phase 6 classification only — the physical move to incoming-skip
+                // (and the UnwantedSkipped count) happens once in Phase 8 as "unwanted-moved".
+                var skipOp = new IngestionOperation(srcInfo.Name, "unwanted-classified", rel.Name);
                 result.Operations.Add(skipOp);
                 progress.Report(new IngestionProgress { NewOperation = skipOp });
             }
@@ -9476,15 +9501,18 @@ public partial class MainWindow : Window
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
                 sourceOk = false;
-                var failOp = new IngestionOperation(release.Name, "source-promoted-failed", ex.Message);
+                var failOp = new IngestionOperation(release.Name, "release-input-assembly-failed", ex.Message);
                 result.Operations.Add(failOp);
                 progress.Report(new IngestionProgress { NewOperation = failOp });
             }
 
             if (!sourceOk) continue;
 
+            // staging → source is assembling a complete release input for transform,
+            // not a durable promotion. Surfaced as "release-input-assembled".
+            result.ReleaseInputsAssembled++;
             var archOp = new IngestionOperation(
-                release.Name, "source-promoted",
+                release.Name, "release-input-assembled",
                 $"source/{platformId}/{datLineId}/{safeFolder}");
             result.Operations.Add(archOp);
             progress.Report(new IngestionProgress { NewOperation = archOp });
@@ -9611,14 +9639,14 @@ public partial class MainWindow : Window
                 try
                 {
                     File.Move(srcPath, destPath, overwrite: false);
-                    var op = new IngestionOperation(fileName, "unwanted-skipped",
+                    var op = new IngestionOperation(fileName, "unwanted-moved",
                         $"incoming-skip/{platformId}/{Path.GetFileName(destPath)}");
                     result.Operations.Add(op);
                     progress.Report(new IngestionProgress { NewOperation = op });
                 }
                 catch
                 {
-                    var op = new IngestionOperation(fileName, "unwanted-skip-failed",
+                    var op = new IngestionOperation(fileName, "unwanted-move-failed",
                         "could not move to incoming-skip");
                     result.Operations.Add(op);
                     progress.Report(new IngestionProgress { NewOperation = op });
@@ -9904,6 +9932,7 @@ public partial class MainWindow : Window
                     hashedDerivedMd5:   hashedDerivedMd5,
                     hashedDerivedCrc32: hashedDerivedCrc32,
                     archiveTier:        effectiveXform.ArchiveTier);
+                result.DerivedArtifactsCreated++;
 
                 // ── 7. Link release → content identity ────────────────────
                 store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord
@@ -10007,6 +10036,7 @@ public partial class MainWindow : Window
                 hashedDerivedMd5:   hashedDerivedMd5,
                 hashedDerivedCrc32: hashedDerivedCrc32,
                 archiveTier:        folderXform.ArchiveTier);
+            result.DerivedArtifactsCreated++;
 
             // ── 7. Link release → release-level content identity ──────────────
             store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord
@@ -10120,6 +10150,7 @@ public partial class MainWindow : Window
                     releaseStatus, existingArtifacts, destPath);
                 if (check.IsSatisfied)
                 {
+                    result.AlreadyPresent++;
                     var alreadyOp = new IngestionOperation(destName, "already-present", relPath);
                     result.Operations.Add(alreadyOp);
                     progress.Report(new IngestionProgress { NewOperation = alreadyOp });
@@ -10216,6 +10247,7 @@ public partial class MainWindow : Window
                 hashedDerivedMd5:   hashedDerivedMd5,
                 hashedDerivedCrc32: hashedDerivedCrc32,
                 archiveTier:        xform.ArchiveTier);
+            result.DerivedArtifactsCreated++;
 
             // ── 7. Link release → release-level content identity ──────────────
             store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord
@@ -10358,6 +10390,7 @@ public partial class MainWindow : Window
                 hashedDerivedMd5:   null,
                 hashedDerivedCrc32: null,
                 archiveTier:        folderXform.ArchiveTier);
+            result.DerivedArtifactsCreated++;
 
             // ── 8. Link release → release-level content identity ──────────────
             store.SaveReleaseContentLink(new Data.ReleaseContentLinkRecord
@@ -10393,31 +10426,13 @@ public partial class MainWindow : Window
             CopyFolderRecursive(dir, Path.Combine(dest, Path.GetFileName(dir)));
     }
 
+    // Single source of truth lives in Ingestion.IngestionPaths so stale-cleanup
+    // derives identical folder names / collision-safe destinations.
     private static string SafeFileName(string name)
-    {
-        var invalid = Path.GetInvalidFileNameChars();
-        var sb = new System.Text.StringBuilder();
-        foreach (var c in name)
-            sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
-        var sanitized = sb.ToString().Trim('_', ' ');
-        return sanitized.Length > 0 ? sanitized : "release";
-    }
+        => Ingestion.IngestionPaths.SafeFolderName(name);
 
     private static string IncomingSkipUniquePath(string dir, string fileName)
-    {
-        var dest = Path.Combine(dir, fileName);
-        if (!File.Exists(dest)) return dest;
-
-        var nameWithoutExt = Path.GetFileNameWithoutExtension(fileName);
-        var ext            = Path.GetExtension(fileName);
-        int counter        = 1;
-        while (true)
-        {
-            dest = Path.Combine(dir, $"{nameWithoutExt} ({counter}){ext}");
-            if (!File.Exists(dest)) return dest;
-            counter++;
-        }
-    }
+        => Ingestion.IngestionPaths.CollisionSafePath(dir, fileName);
 
     /// <summary>
     /// Attempts to move <paramref name="srcPath"/> into <paramref name="quarantineDir"/>.
@@ -10670,44 +10685,8 @@ public partial class MainWindow : Window
             var safe = SafeFileName(datLineId);
             var path = Path.Combine(logsDir, $"{ts}-ingest-{safe}.log");
 
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine("ARKADIA INGESTION LOG");
-            sb.AppendLine($"Date:         {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
-            sb.AppendLine($"DAT Line ID:  {datLineId}");
-            sb.AppendLine();
-            sb.AppendLine("── COUNTS ─────────────────────────────────────────────────────────────────");
-            sb.AppendLine($"  Files scanned:          {result.FilesScanned}");
-            sb.AppendLine($"  Files matched:          {result.FilesMatched}");
-            sb.AppendLine($"  Files copied:           {result.FilesCopied}");
-            sb.AppendLine($"  Releases present:       {result.ReleasesPresent}");
-            sb.AppendLine($"  Releases incomplete:    {result.ReleasesIncomplete}");
-            sb.AppendLine($"  Files skipped:          {result.FilesSkipped}");
-            sb.AppendLine($"  Transforms failed:      {result.TransformsFailed}");
-            sb.AppendLine($"  Archives deleted:       {result.FilesDeletedFromIncoming}");
-            sb.AppendLine();
-
-            if (result.TransformsFailed > 0 || result.ReleasesIncomplete > 0)
-            {
-                sb.AppendLine("── FAILURES ───────────────────────────────────────────────────────────────");
-                foreach (var op in result.Operations)
-                {
-                    if (op.Action == "transform-failed"    ||
-                        op.Action == "transform-config-error" ||
-                        op.Action == "incomplete-skipped")
-                        sb.AppendLine($"  {op.Object,-50} | {op.Action,-22} | {op.Destination}");
-                }
-                sb.AppendLine();
-            }
-
-            sb.AppendLine("── OPERATIONS ─────────────────────────────────────────────────────────────");
-            foreach (var op in result.Operations)
-                sb.AppendLine($"  {op.Object,-50} | {op.Action,-22} | {op.Destination}");
-            sb.AppendLine();
-            sb.AppendLine($"RESULT: {result.StatusText}");
-            if (result.Error is not null)
-                sb.AppendLine($"  ERROR: {result.Error}");
-
-            File.WriteAllText(path, sb.ToString());
+            var body = Ingestion.IngestionLogFormatter.Build(datLineId, result, DateTime.UtcNow);
+            File.WriteAllText(path, body);
         }
         catch { /* log failure is non-fatal */ }
     }

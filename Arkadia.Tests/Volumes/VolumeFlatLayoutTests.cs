@@ -181,4 +181,70 @@ public sealed class VolumeFlatLayoutTests
         Assert.DoesNotContain(releaseName, dirPart);
         Assert.Equal(root, dirPart, ignoreCase: true);
     }
+
+    // ── Build Volume production-path tests ────────────────────────────────────
+    //
+    // These call the SAME production authority that BuildVolumeCore uses
+    // (VolumeArtifactPathBuilder.GetBuildDestinationPath) — NOT a test-local
+    // reimplementation. They fail against the old
+    // Path.Combine(volumeFolder, SafeFileName(ReleaseName), FileName) logic
+    // because that produced a release-name subfolder segment.
+
+    // ── Test 10: BuildDestination_IsFlat_NoReleaseSubfolder ──────────────────
+
+    [Fact]
+    public void BuildDestination_IsFlat_NoReleaseSubfolder()
+    {
+        var root = @"D:\volumes\ARKADIA-PS2-0003";
+        var info = Info("Some (Japan) (Rev 2)", "game_disc1.chd");
+
+        var dst = VolumeArtifactPathBuilder.GetBuildDestinationPath(root, info);
+
+        // Parent directory must be the volume root itself — a single segment.
+        Assert.Equal(root, Path.GetDirectoryName(dst), ignoreCase: true);
+        Assert.Equal("game_disc1.chd", Path.GetFileName(dst));
+        Assert.Equal("game_disc1.chd", Path.GetRelativePath(root, dst));
+    }
+
+    // ── Test 11: BuildDestination_DoesNotIncludeReleaseName ──────────────────
+
+    [Fact]
+    public void BuildDestination_DoesNotIncludeReleaseName()
+    {
+        var root        = @"E:\vol";
+        var releaseName = "007 - Agent Under Fire (Europe) (En,Fr,De,Es,It)";
+        var info        = Info(releaseName, "007 - Agent Under Fire (Europe) (En,Fr,De,Es,It).chd");
+
+        var dst = VolumeArtifactPathBuilder.GetBuildDestinationPath(root, info);
+
+        // The release name must NOT appear as a directory segment.
+        Assert.Equal(root, Path.GetDirectoryName(dst)!, ignoreCase: true);
+        Assert.Equal(info.FileName, Path.GetRelativePath(root, dst));
+    }
+
+    // ── Test 12: BuildDestination_Dreamcast_CueBinChd_IsFlat ─────────────────
+    // Exact scenario from the reported bug: Sega Dreamcast .cue+.bin → CHD.
+
+    [Fact]
+    public void BuildDestination_Dreamcast_CueBinChd_IsFlat()
+    {
+        var root        = @"L:\volumes\ARKADIA-DREAMCAST-0001";
+        var releaseName = "Sonic Adventure (USA)";
+        var fileName    = "Sonic Adventure (USA).chd";
+        var info        = Info(releaseName, fileName);
+
+        var dst = VolumeArtifactPathBuilder.GetBuildDestinationPath(root, info);
+
+        // Expected flat path — artifact directly at the volume root.
+        var expected  = Path.Combine(root, "Sonic Adventure (USA).chd");
+        // Forbidden release-folder path from the old broken logic.
+        var forbidden = Path.Combine(root, "Sonic Adventure (USA)", "Sonic Adventure (USA).chd");
+
+        Assert.Equal(expected, dst);
+        Assert.NotEqual(forbidden, dst);
+
+        // No release-name directory segment: exactly one segment from root to file.
+        Assert.Equal(root, Path.GetDirectoryName(dst)!, ignoreCase: true);
+        Assert.Equal(fileName, Path.GetRelativePath(root, dst));
+    }
 }

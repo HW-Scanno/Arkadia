@@ -326,28 +326,29 @@ public sealed class IngestionUnwantedContractTests : IDisposable
         Assert.Equal("unwanted", ReadStatus(relId));
     }
 
-    // ── 21. Unwanted completed from staging: operation log has unwanted-skipped ─
+    // ── 21. Unwanted completed from staging: classification vs physical move ──
 
     [Fact]
-    public void Ingestion_UnwantedCompletedFromStaging_LogsUnwantedSkipped()
+    public void Ingestion_UnwantedCompletedFromStaging_LogsClassifiedThenMoved()
     {
         // When a file's only matching release is unwanted, Phase 6 adds an
-        // "unwanted-skipped" operation to IngestionResult and Phase 8 increments
-        // UnwantedSkipped. Verify the model correctly records this.
+        // "unwanted-classified" operation (match, no staging) and Phase 8 adds an
+        // "unwanted-moved" operation while incrementing UnwantedSkipped.
         var result = new IngestionResult();
 
-        // Simulate Phase 6: unwanted release encountered for incoming file.
+        // Phase 6: unwanted release matched for incoming file (destination = release name).
         var releaseName = "Unwanted Multi-Disc";
-        var skipOp = new IngestionOperation("disc2.iso", "unwanted-skipped", releaseName);
-        result.Operations.Add(skipOp);
+        result.Operations.Add(new IngestionOperation("disc2.iso", "unwanted-classified", releaseName));
 
-        // Phase 8: file routed to allTargetsUnwanted → increment counter.
+        // Phase 8: file physically moved to incoming-skip → increment counter.
+        result.Operations.Add(new IngestionOperation("disc2.iso", "unwanted-moved", "incoming-skip/ps2/disc2.iso"));
         result.UnwantedSkipped++;
 
         Assert.Equal(1, result.UnwantedSkipped);
-        Assert.Single(result.Operations);
-        Assert.Equal("unwanted-skipped", result.Operations[0].Action);
-        Assert.Equal("disc2.iso",         result.Operations[0].Object);
-        Assert.Equal(releaseName,          result.Operations[0].Destination);
+        Assert.Equal(2, result.Operations.Count);
+        Assert.Equal("unwanted-classified", result.Operations[0].Action);
+        Assert.Equal("unwanted-moved",      result.Operations[1].Action);
+        Assert.Equal("disc2.iso",           result.Operations[0].Object);
+        Assert.Equal(releaseName,           result.Operations[0].Destination);
     }
 }
