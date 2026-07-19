@@ -40,4 +40,27 @@ public static class ArchiveArtifactPathBuilder
         var rel = GetRelativePath(platformId, datLineId, form, safeReleaseName, fileName);
         return Path.Combine(appRoot, rel.Replace('/', Path.DirectorySeparatorChar));
     }
+
+    /// <summary>
+    /// Relative path of the release-folder ROOT for a MultiFileReleaseFolder DAT line —
+    /// <c>archive/&lt;platform&gt;/&lt;datLine&gt;/&lt;safeReleaseName&gt;</c>. The derived
+    /// artifact IS this folder; its inner files keep their original names underneath it.
+    /// Forward slashes, matching how <c>derived_artifacts.relative_path</c> is persisted.
+    /// </summary>
+    public static string GetReleaseFolderRoot(
+        string platformId,
+        string datLineId,
+        string safeReleaseName)
+        => $"archive/{platformId}/{datLineId}/{safeReleaseName}";
+
+    /// <summary>OS-separated full path of the release-folder root. See <see cref="GetReleaseFolderRoot"/>.</summary>
+    public static string GetReleaseFolderRootFullPath(
+        string appRoot,
+        string platformId,
+        string datLineId,
+        string safeReleaseName)
+    {
+        var rel = GetReleaseFolderRoot(platformId, datLineId, safeReleaseName);
+        return Path.Combine(appRoot, rel.Replace('/', Path.DirectorySeparatorChar));
+    }
 }

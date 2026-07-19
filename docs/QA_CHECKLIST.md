@@ -190,6 +190,20 @@ _Last revised: 2026-06-14. Companion to [ARCHIVE_AND_VOLUME_MODEL.md](ARCHIVE_AN
 | 11b.9 | Attempt ingest of a line with `collision_unresolved` (or a restored exclusion re-introducing a collision) | Ingestion **blocked before any file mutation**; `archive-validation-blocked` op + clear "Open DAT configuration…" error; incoming files untouched |
 | 11b.10 | Attempt ingest of a legacy DAT line never validated under the policy | Ingestion **allowed for now** (no stored fingerprint → unknown) |
 | 11b.11 | Force two releases to the same archive target of **different** content (guard test) | Runtime guard emits `archive-collision`; the existing archive file is **not** overwritten; source/staging preserved |
+| 11b.12 | Click **Verify DAT** (button between Configure DAT and Update DAT) with a mix of clean/collision/legacy lines | Report shows scanned/valid-full-set/valid-with-exclusions/collision/unknown counts + problematic lines; guidance points to Configure DAT. **No files moved/deleted; no release marked unwanted**; validation state/fingerprints persisted on `dat_lines` |
+| 11b.13 | Verify DAT vs Verify Archive/Volume | Verify DAT changes only `dat_lines` policy metadata (no archive/volume filesystem access); Verify Archive/Verify Volume perform the physical file checks |
+
+---
+
+## §11c Systems coverage (wanted-based)
+
+| # | Action | Expected | Failure notes |
+|---|---|---|---|
+| 11c.1 | Open a system with some unwanted releases | **Wanted Coverage** = present wanted / total wanted; **Unwanted** row shows `count · share%` over all releases; unwanted excluded from the coverage denominator |
+| 11c.2 | Mark a present release unwanted, then re-open the system | Wanted denominator drops by one; coverage recomputed over wanted only; unwanted share increases |
+| 11c.3 | Open a system whose releases are **all** unwanted | Wanted Coverage = **N/A** (not `0%`); Wanted = 0; Unwanted share = `100%` |
+| 11c.4 | Open a system with `lost`/MIA-like releases | `lost` counted as **wanted** and surfaced separately; not folded into unwanted or coverage |
+| 11c.5 | Open a system with hidden-but-wanted releases | Hidden releases (not unwanted) remain in the wanted denominator — only `status = 'unwanted'` is excluded |
 
 ---
 

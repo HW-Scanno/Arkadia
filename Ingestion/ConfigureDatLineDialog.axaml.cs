@@ -829,7 +829,17 @@ public partial class ConfigureDatLineDialog : Window
                 }
             }
 
-            coordinator.TryCommit(_d.CatalogId, session, PersistConfig);   // persists config + validation
+            var outcome = coordinator.TryCommit(_d.CatalogId, session, PersistConfig);   // persists config + validation
+            if (outcome == Archive.ArchiveConfigSaveOutcome.NeedsReview)
+            {
+                // An unresolved collision remains (should not happen once review returned
+                // resolved) — never report success or persist a partial config. Keep the
+                // dialog open so the operator can resolve it via Configure DAT.
+                await new InfoDialog("Archive output validation",
+                    "This DAT line still has an unresolved archive-output collision and was not saved. " +
+                    "Resolve the collision (Exclude A/B) before saving.").ShowDialog(this);
+                return;
+            }
         }
         else
         {

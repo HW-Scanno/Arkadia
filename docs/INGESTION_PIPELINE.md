@@ -268,6 +268,17 @@ A block sets `result.Error`, emits `archive-validation-blocked`, and returns imm
 
 Independently, every archive writer consults `ArchiveWriteCollisionGuard` immediately before writing: if the target exists and belongs to a **different `content_identity_key`** (or is unclaimed), it emits `archive-collision` and refuses to overwrite — the safety net if a collision ever slips past the config/gate layers.
 
+### Verify DAT (batch policy validation)
+
+**Verify DAT** (the operator button between *Configure DAT* and *Update DAT*, backed by `Archive.ArchiveOutputBatchValidator`) validates the archive-output **policy metadata** for every DAT line at once. It is **not** a filesystem check:
+
+- It is **read-only over releases** — it never moves or deletes files and never marks releases unwanted.
+- For each DAT line it resolves the form, analyzes collisions, and **persists** `archive_output_form` / `validation_state` / structural + exclusion fingerprints on `dat_lines`.
+- It reports counts and the list of problematic lines (`collision_unresolved`, `stale`, `unknown`/error). Missing/unknown strategy is **reported, not defaulted**.
+- Problematic lines are resolved through **Configure DAT** (which runs the interactive collision review — Exclude A/B or Abort).
+
+This is distinct from **Verify Archive** (physical local-archive filesystem verification) and **Verify Volume** (physical volume filesystem verification) — only those two perform file I/O.
+
 ---
 
 ## Known limitations (future work)

@@ -142,6 +142,28 @@ A **Hardware Family** groups related DAT lines under one catalog context (e.g., 
 
 Deleting a hardware family is blocked while any DAT lines exist under it.
 
+### Verify DAT vs Verify Archive vs Verify Volume
+
+Three distinct "verify" actions operate at different layers — do not confuse them:
+
+| Action | Layer | What it checks | Touches files? |
+|---|---|---|---|
+| **Verify DAT** | Policy / configuration metadata | Batch-validates every DAT line's **archive output policy** (form resolution + collision analysis), persisting `archive_output_form` / `validation_state` / fingerprints on `dat_lines`. | **No.** Read-only over releases; never moves/deletes files and never marks releases unwanted. |
+| **Verify Archive** | Physical local archive filesystem | Filesystem-first scan of `archive/…`, SHA-1 classification, redundancy detection, and repair (moves to `incoming-skip`). | Yes (moves, never silent delete). |
+| **Verify Volume** | Physical volume filesystem | Recursive scan of a volume, SHA-1 classification, recovery moves, flat-layout enforcement, stale-assignment reconciliation. | Yes (moves, never silent delete). |
+
+Verify DAT reports problematic DAT lines (`collision_unresolved`, `stale`, `unknown`/error); resolve them through **Configure DAT** (which runs the collision review — Exclude A/B or Abort). Verify DAT is the button between Configure DAT and Update DAT.
+
+### Systems coverage (wanted-based)
+
+Systems coverage answers *"of the releases I want to keep, how complete is this system?"*, so it excludes the UNWANTED curator veto from its denominator:
+
+- **Wanted Coverage** = present wanted releases / total wanted releases
+- **Wanted** = all releases except `status = 'unwanted'`
+- **Unwanted Share** = unwanted releases / total releases (reported separately as a curation ratio)
+
+`lost` / MIA-like releases remain **wanted** and are surfaced separately (not folded into coverage or unwanted). A system whose releases are **all** unwanted shows Wanted Coverage as **N/A** (not a misleading `0%`), with Unwanted Share `100%`.
+
 ### Catalog
 
 The **Catalog** view is the primary browsing interface. It shows all releases across a selected system and DAT line, with filtering, search, and a detail panel showing:
@@ -299,6 +321,7 @@ Output lands in `publish\win-x64\`. Copy `libraries/lib-vlc/win-x64/` alongside 
 | Uniform per-DAT-line archive output form (SingleFileFlat / MultiFileReleaseFolder) | Stable |
 | Release-name-based archive naming + `ArchiveArtifactPathBuilder` write authority | Stable |
 | Archive collision review (Exclude A/B / Abort) + non-interactive ingestion gate + runtime no-overwrite guard | Stable |
+| Verify DAT — batch archive-output policy validation (metadata only; no file I/O) | Stable |
 | Verify Archive — filesystem-first scan + classify + repair | Stable |
 | Verify Archive — redundant copy detection (volume re-verify before move) | Stable |
 | Append Volume — fill volume from archive with diagnostics | Stable |

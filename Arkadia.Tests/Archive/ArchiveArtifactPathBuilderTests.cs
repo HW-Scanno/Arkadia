@@ -167,6 +167,35 @@ public sealed class ArchiveArtifactPathBuilderTests
         Assert.True(ArchiveWriteCollisionGuard.IsBlocking(decision));
     }
 
+    // ── 12b: release-folder root helper (No Compression Folder writer) ───────────
+
+    [Fact]
+    public void ArchiveArtifactPathBuilder_GetReleaseFolderRoot_ReturnsFolderRootPath()
+    {
+        var rel = ArchiveArtifactPathBuilder.GetReleaseFolderRoot("psx", "redump", "Some Game");
+        Assert.Equal("archive/psx/redump/Some Game", rel);
+    }
+
+    [Fact]
+    public void ArchiveArtifactPathBuilder_GetReleaseFolderRoot_IsParentOfInnerFilePaths()
+    {
+        // The folder root must equal the directory portion the builder produces for the
+        // inner files of the same MultiFileReleaseFolder release — same produced paths.
+        var root  = ArchiveArtifactPathBuilder.GetReleaseFolderRoot("psx", "redump", "Some Game");
+        var inner = ArchiveArtifactPathBuilder.GetRelativePath(
+            "psx", "redump", ArchiveDatLineOutputForm.MultiFileReleaseFolder, "Some Game", "disc.bin");
+        Assert.Equal(root + "/disc.bin", inner);
+    }
+
+    [Fact]
+    public void ArchiveArtifactPathBuilder_GetReleaseFolderRootFullPath_JoinsAppRoot()
+    {
+        var full = ArchiveArtifactPathBuilder.GetReleaseFolderRootFullPath(@"C:\app", "psx", "redump", "Some Game");
+        Assert.Equal(
+            Path.Combine(@"C:\app", "archive/psx/redump/Some Game".Replace('/', Path.DirectorySeparatorChar)),
+            full);
+    }
+
     // ── 13: builder is the single authority (no manual construction) ─────────────
 
     [Fact]

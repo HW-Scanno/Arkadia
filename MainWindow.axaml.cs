@@ -9054,8 +9054,9 @@ public partial class MainWindow : Window
             if (!string.IsNullOrEmpty(storedFp))   // legacy/unvalidated lines are allowed as-is
             {
                 var gateConfig   = BuildArchiveGateConfig(datLineId, platformId, absDbPath);
+                var gateStore    = new DatLineStore(absDbPath);
                 var gateReleases = Archive.ArchiveOutputConfigFactory.BuildReleaseInputs(
-                    new DatLineStore(absDbPath).LoadReleases(), new DatLineStore(absDbPath).LoadAllReleaseFiles());
+                    gateStore.LoadReleases(), gateStore.LoadAllReleaseFiles());
                 var gate = Archive.ArchiveIngestionGateEvaluator.Evaluate(
                     gateConfig, gateReleases, storedFp, gateEnabled: true);
 
@@ -10560,7 +10561,7 @@ public partial class MainWindow : Window
             var existingRel = store.GetDerivedByContentKey(ck)?.RelativePath;
             var relPath  = existingRel is { Length: > 0 } er
                 ? er
-                : $"archive/{platformId}/{datLineId}/{safeFolder}";
+                : Archive.ArchiveArtifactPathBuilder.GetReleaseFolderRoot(platformId, datLineId, safeFolder);
             var destPath = Path.Combine(appRoot, relPath.Replace('/', Path.DirectorySeparatorChar));
             Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
 

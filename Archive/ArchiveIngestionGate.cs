@@ -4,16 +4,20 @@ namespace Arkadia.Archive;
 public sealed record ArchiveIngestionGateResult(bool Allow, string Reason);
 
 /// <summary>
-/// Pure, non-interactive gate a future ingestion run will consult. It is NOT wired
-/// into <c>RunIngestionWork</c> in this phase — enforcement is deferred until the
-/// archive writer naming change and the runtime no-overwrite guard land (otherwise
-/// we would validate against a future policy the writers don't yet follow).
+/// Pure, non-interactive gate consulted at the start of ingestion. It is LIVE and
+/// enforced (M1f): <c>RunIngestionWork</c> evaluates it — via
+/// <see cref="ArchiveIngestionGateEvaluator"/>, which re-validates the current config +
+/// release set against the stored structural fingerprint — BEFORE any filesystem
+/// mutation (stale cleanup, extraction, staging, source promotion, archive writes,
+/// incoming moves, transforms). A block leaves incoming files and release statuses
+/// untouched. This class maps a persisted/effective state string to the allow/block
+/// decision; the evaluator supplies that state from the live re-validation.
 ///
 /// Rules when the gate is ENABLED:
-///   null / "" / "unknown" (legacy)                 → Allow  (do not hard-block legacy yet)
+///   null / "" / "unknown" (legacy)                 → Allow  (legacy lines are not hard-blocked)
 ///   "valid_full_set" / "valid_with_exclusions"     → Allow
 ///   "collision_unresolved" / "stale"               → Block
-/// When the gate is DISABLED (current default), everything is allowed.
+/// When the gate is DISABLED, everything is allowed.
 /// </summary>
 public static class ArchiveIngestionGate
 {

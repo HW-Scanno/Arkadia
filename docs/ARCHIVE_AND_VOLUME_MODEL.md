@@ -123,7 +123,7 @@ A DAT line has **one uniform archive output form**. There is **no per-release fa
 **Naming rules:**
 - SingleFileFlat artifact names are **release-name-based** (`SafeReleaseName + ext`), never source/main-input-based. CHD is `Sonic Adventure (USA).chd`, not `disc.chd`.
 - MultiFileReleaseFolder preserves **original inner filenames** inside the release folder; the folder name isolates common names like `track01.bin`.
-- `Archive/ArchiveArtifactPathBuilder` (`Arkadia.Archive`) is the **single write-path authority** — writers never hand-roll archive paths. Reads always go through `derived_artifacts.relative_path`.
+- `Archive/ArchiveArtifactPathBuilder` (`Arkadia.Archive`) is the **single write-path authority** — writers never hand-roll archive paths (use `GetRelativePath(...)` for files, `GetReleaseFolderRoot(...)` for the MultiFileReleaseFolder release root). Reads always go through `derived_artifacts.relative_path`.
 
 **The DAT is authoritative.** Arkadia validates *ambiguity* (two releases that would produce the same archive artifact name); it does **not** reinterpret multi-disc structure or override the DAT's release modelling.
 
@@ -132,6 +132,8 @@ A DAT line has **one uniform archive output form**. There is **no per-release fa
 **Idempotency for existing artifacts:** the new naming applies to **new** writes only. If a derived artifact already exists for a release (any stored `relative_path`, including a legacy `disc.chd`), the writer keeps writing to that stored path — existing artifacts are never orphaned or re-transformed under a different name.
 
 **Defense-in-depth:** the runtime `ArchiveWriteCollisionGuard` (keyed on `content_identity_key`) refuses to overwrite/reuse a target that belongs to a different content identity, emitting `archive-collision` — independent of, and in addition to, the config-time validation.
+
+**Verify DAT ≠ Verify Archive/Volume.** **Verify DAT** validates this **policy metadata** across all DAT lines (form + collision state + fingerprints persisted on `dat_lines`); it is read-only over releases and touches no files. **Verify Archive** and **Verify Volume** verify the physical filesystem (`archive\…` and volume roots respectively). See [INGESTION_PIPELINE.md → Verify DAT](INGESTION_PIPELINE.md#verify-dat-batch-policy-validation).
 
 ---
 
