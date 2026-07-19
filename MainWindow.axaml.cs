@@ -331,11 +331,14 @@ public partial class MainWindow : Window
         {
             Text              = p.WantedCoverage,
             FontSize          = 11,
-            Foreground        = new SolidColorBrush(Color.Parse("#6B68EE")),
+            Foreground        = new SolidColorBrush(Color.Parse(
+                                    Systems.SystemsCoverageColorPolicy.HexFor(p.WantedCoveragePercent))),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Margin            = new Avalonia.Thickness(8, 0, 0, 0),
         };
-        ToolTip.SetTip(coverageBlock, "Wanted coverage (excludes unwanted)");
+        ToolTip.SetTip(coverageBlock, p.WantedCoveragePercent is null
+            ? "Wanted coverage: N/A — no wanted releases"
+            : $"Wanted coverage: {p.WantedCoverage} (excludes unwanted)");
 
         var datCountBlock = new TextBlock
         {
@@ -698,14 +701,17 @@ public partial class MainWindow : Window
         statsGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
         statsGrid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
 
-        void AddStat(string label, string value, bool isAccent = false)
+        void AddStat(string label, string value, bool isAccent = false, string? hexColor = null)
         {
             var row = statsGrid.RowDefinitions.Count;
             statsGrid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            var fg = hexColor is not null ? new SolidColorBrush(Color.Parse(hexColor))
+                   : isAccent             ? accent
+                   :                        text;
             var k = new TextBlock { Text = label, FontSize = 12, Foreground = dim,
                                     Margin = new Avalonia.Thickness(0, 3) };
             var v = new TextBlock { Text = value, FontSize = 12,
-                                    Foreground   = isAccent ? accent : text,
+                                    Foreground   = fg,
                                     FontWeight   = FontWeight.Medium,
                                     HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
                                     Margin = new Avalonia.Thickness(0, 3) };
@@ -722,7 +728,8 @@ public partial class MainWindow : Window
         AddStat("Missing",   $"{p.Missing:N0}");
         if (p.Lost > 0)     AddStat("Lost",     $"{p.Lost:N0}");
         if (p.Unwanted > 0) AddStat("Unwanted", $"{p.Unwanted:N0}  ·  {p.UnwantedShare}");
-        AddStat("Wanted Coverage", p.WantedCoverage, isAccent: true);
+        AddStat("Wanted Coverage", p.WantedCoverage,
+                hexColor: Systems.SystemsCoverageColorPolicy.HexFor(p.WantedCoveragePercent));
 
         panel.Children.Add(statsGrid);
     }
@@ -2437,16 +2444,20 @@ public partial class MainWindow : Window
         // Segmented bar + volume list
         DiskVolumeList.Children.Clear();
         var volumes = _catalog.GetVolumesByDisk(entry.Id);
-        BuildDiskSegmentBar(entry, volumes);
 
-        // Only list volumes that have actual data — matches what appears in the bar.
+        // Only volumes with actual data appear in the bar and legend. Colours are assigned
+        // by INDEX into this single list, so the bar segment and its legend swatch share the
+        // exact same colour (and no two volumes collide, unlike the old hash-based mapping).
         var trackedVolumes  = volumes.Where(v => v.ActualSizeBytes > 0).ToList();
+        BuildDiskSegmentBar(entry, trackedVolumes);
+
         long trackedBytes   = trackedVolumes.Sum(v => v.ActualSizeBytes);
         long untrackedBytes = Math.Max(0L, entry.UsedBytes - trackedBytes);
 
-        foreach (var v in trackedVolumes)
+        for (int vi = 0; vi < trackedVolumes.Count; vi++)
         {
-            var volColor = GetVolumeColor(v.Id);
+            var v = trackedVolumes[vi];
+            var volColor = Color.Parse(Disks.DiskVolumeColorPalette.HexForIndex(vi));
             DiskVolumeList.Children.Add(new Grid
             {
                 ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("Auto,*,Auto"),
@@ -2537,78 +2548,45 @@ public partial class MainWindow : Window
         DiskDetailContent.IsVisible = true;
     }
 
-    private void BuildDiskSegmentBar(DiskEntry disk, List<Data.VolumeRecord> volumes)
+    private void BuildDiskSegmentBar(DiskEntry disk, List<Data.VolumeRecord> trackedVolumes)
     {
-        // Replace the bar Border content with a horizontal stack of segments
+        // Replace the bar Border content with a horizontal stack of segments.
         DiskSegmentBar.Child = null;
         if (disk.DeclaredCapacityBytes <= 0)
             return;
 
         var panel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal };
         const double BarWidth = 460.0; // detail panel is 500 - 40 margin
+        const double MinSegPx = 2.0;   // keeps a real (non-free) segment visible; never applied to free
 
-        long trackedBytes = 0;
-        foreach (var v in volumes)
+        // Proportional weights (own size / capacity) from the single authority — each volume
+        // is coloured by its index, matching the legend exactly. Free space is the trailing
+        // segment and can be a true sliver without shrinking the last volume.
+        var segments = Disks.DiskVolumeUsageSegments.Build(
+            disk.DeclaredCapacityBytes,
+            disk.UsedBytes,
+            trackedVolumes.Select(v => v.ActualSizeBytes).ToList());
+
+        foreach (var seg in segments)
         {
-            if (v.ActualSizeBytes <= 0) continue;
-            trackedBytes += v.ActualSizeBytes;
-            var ratio = Math.Clamp((double)v.ActualSizeBytes / disk.DeclaredCapacityBytes, 0, 1);
-            var segW  = Math.Max(2, ratio * BarWidth);
+            var color = seg.Kind switch
+            {
+                Disks.DiskUsageSegmentKind.Volume    => Color.Parse(Disks.DiskVolumeColorPalette.HexForIndex(seg.VolumeIndex)),
+                Disks.DiskUsageSegmentKind.Untracked => Color.Parse("#3A3A52"),
+                _                                     => Color.Parse("#1E1E2E"), // Free — dim/neutral
+            };
+            var width = seg.Weight * BarWidth;
+            if (seg.Kind != Disks.DiskUsageSegmentKind.Free)
+                width = Math.Max(MinSegPx, width);   // free stays a true sliver; volumes stay proportional
             panel.Children.Add(new Border
             {
-                Width      = segW,
+                Width      = width,
                 Height     = 17,
-                Background = new SolidColorBrush(GetVolumeColor(v.Id)),
+                Background = new SolidColorBrush(color),
             });
         }
-
-        // Untracked used space (filesystem overhead, non-volume files, etc.)
-        long untrackedBytes = Math.Max(0L, disk.UsedBytes - trackedBytes);
-        if (untrackedBytes > 0)
-        {
-            var untrackedRatio = Math.Clamp((double)untrackedBytes / disk.DeclaredCapacityBytes, 0, 1);
-            var untrackedW     = Math.Max(2, untrackedRatio * BarWidth);
-            panel.Children.Add(new Border
-            {
-                Width      = untrackedW,
-                Height     = 17,
-                Background = new SolidColorBrush(Color.Parse("#3A3A52")),
-            });
-        }
-
-        // Free space segment — based on disk.UsedBytes so it always fills the remainder exactly
-        var usedRatio = Math.Clamp((double)disk.UsedBytes / disk.DeclaredCapacityBytes, 0, 1);
-        var freeW     = Math.Max(0, (1 - usedRatio) * BarWidth);
-        if (freeW > 0)
-            panel.Children.Add(new Border
-            {
-                Width      = freeW,
-                Height     = 17,
-                Background = new SolidColorBrush(Color.Parse("#1E1E2E")),
-            });
 
         DiskSegmentBar.Child = panel;
-    }
-
-    private static readonly string[] VolumeColorPalette =
-    [
-        "#42A5F5", "#AB47BC", "#26A69A", "#5C6BC0", "#3949AB",
-        "#8D6E63", "#78909C", "#7E57C2", "#EC407A", "#0288D1",
-    ];
-
-    /// <summary>
-    /// Returns a stable color for a volume based on its ID using FNV-1a hashing.
-    /// Same ID always maps to the same palette entry across refreshes.
-    /// </summary>
-    private static Color GetVolumeColor(string volumeId)
-    {
-        unchecked
-        {
-            uint h = 2166136261u;
-            foreach (var c in volumeId)
-                h = (h ^ c) * 16777619u;
-            return Color.Parse(VolumeColorPalette[h % (uint)VolumeColorPalette.Length]);
-        }
     }
 
     /// <summary>
@@ -9147,6 +9125,86 @@ public partial class MainWindow : Window
             .Where(r => r.Status != "outdated")
             .ToDictionary(r => r.Id, StringComparer.Ordinal);
 
+        // ── Release satisfaction (durable-copy) infrastructure ─────────────────
+        // A 'present' release whose derived artifact lives in the local archive OR on a
+        // reachable assigned volume is already satisfied; its incoming constituent files
+        // (e.g. a lone .cue for an already-built CHD) are redundant and must not create
+        // staging clutter. Volume assignments are resolved once here and reused by the
+        // stale-cue cleanup below and by the Phase 4b satisfaction guard.
+        var assignmentsByDa = new Dictionary<string, List<(string Label, string? DiskId)>>(StringComparer.Ordinal);
+        foreach (var (daId, _, label, diskId) in _catalog.GetAllAssignmentsForDatLine(datLineId))
+        {
+            if (!assignmentsByDa.TryGetValue(daId, out var lst)) assignmentsByDa[daId] = lst = new();
+            lst.Add((label, diskId));
+        }
+        IReadOnlyDictionary<string, string>? mountedDisks = null;
+        if (assignmentsByDa.Count > 0)   // only pay for a disk scan when volumes are actually assigned
+            mountedDisks = Data.DiskDiscoveryService.DiscoverAll()
+                .Where(d => d.DiskId.Length > 0)
+                .ToDictionary(d => d.DiskId, d => d.Mountpoint, StringComparer.Ordinal);
+
+        var volumeRootCache = new Dictionary<string, string?>(StringComparer.Ordinal);
+        Ingestion.VolumeProbeResult ProbeVolume(Ingestion.VolumeAssignmentRef v)
+        {
+            var cacheKey = $"{v.VolumeLabel} {v.DiskId}";
+            if (!volumeRootCache.TryGetValue(cacheKey, out var root))
+                volumeRootCache[cacheKey] = root =
+                    Data.VolumePathResolver.Resolve(v.VolumeLabel, v.DiskId, appRoot, mountedDisks);
+            if (root is null) return Ingestion.VolumeProbeResult.Unreachable;
+            var flat = Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, v.FileName);
+            return File.Exists(flat) ? Ingestion.VolumeProbeResult.FilePresent
+                                     : Ingestion.VolumeProbeResult.FileMissing;
+        }
+
+        var releaseSatCache = new Dictionary<string, Ingestion.ReleaseSatisfaction>(StringComparer.Ordinal);
+        Ingestion.ReleaseSatisfaction ReleaseSat(string releaseId)
+        {
+            if (releaseSatCache.TryGetValue(releaseId, out var cached)) return cached;
+            var status = releases.TryGetValue(releaseId, out var r) ? r.Status : "";
+            var arts = store.GetDerivedArtifactsByReleaseId(releaseId)
+                .Select(a => new Ingestion.ArtifactAvailability(
+                    a.RelativePath,
+                    assignmentsByDa.TryGetValue(a.Id, out var vs)
+                        ? vs.Select(v => new Ingestion.VolumeAssignmentRef(v.Label, v.DiskId, a.FileName)).ToList()
+                        : (IReadOnlyList<Ingestion.VolumeAssignmentRef>)Array.Empty<Ingestion.VolumeAssignmentRef>()))
+                .ToList();
+            var sat = Ingestion.RedundantIncomingPolicy.Locate(
+                status, arts,
+                rel =>
+                {
+                    var full = Path.Combine(appRoot, rel.Replace('/', Path.DirectorySeparatorChar));
+                    return File.Exists(full) || Directory.Exists(full);
+                },
+                ProbeVolume);
+            releaseSatCache[releaseId] = sat;
+            return sat;
+        }
+
+        // ── Stale cue-only staging cleanup ─────────────────────────────────────
+        // Remove leftover cue-only staging folders (from earlier runs) whose release is
+        // already satisfied by a durable copy — conservatively (all mapping releases must
+        // be satisfied; files are moved to incoming-skip, never deleted).
+        {
+            var releasesByFolder = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var r in allReleasesList)
+            {
+                var sf = SafeFileName(r.Name);
+                if (!releasesByFolder.TryGetValue(sf, out var lst)) releasesByFolder[sf] = lst = new();
+                lst.Add(r.Id);
+            }
+            bool FolderSatisfied(string safeFolder) =>
+                releasesByFolder.TryGetValue(safeFolder, out var ids) && ids.Count > 0 &&
+                ids.All(id => ReleaseSat(id) is Ingestion.ReleaseSatisfaction.LocalArchive
+                                             or Ingestion.ReleaseSatisfaction.ReachableVolume);
+
+            var cueCleanup = Ingestion.StaleCueOnlyStagingCleanup.Run(stagingRoot, skipDir, FolderSatisfied);
+            foreach (var op in cueCleanup.Operations)
+            {
+                result.Operations.Add(op);
+                progress.Report(new IngestionProgress { NewOperation = op });
+            }
+        }
+
         // Per-archive cleanup tracking (Phase 9).
         // successfulReleaseIds: pre-seeded with releases already present before this run
         // (covers re-ingest / allTargetsSatisfied cases), then extended in Phase 7.
@@ -9299,13 +9357,31 @@ public partial class MainWindow : Window
         }
 
         var satisfiedTargets = new HashSet<string>(StringComparer.Ordinal);
+        // Targets whose release is assigned to a volume that is currently unavailable: the
+        // incoming file must not stage (no cue-only clutter) but also must not be deleted
+        // (DB is not trusted as filesystem reality) — Phase 8 quarantines it to incoming-skip.
+        var assignedUnavailableTargets = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var destinations in copyPlan.Values)
         {
             foreach (var (releaseId, romName) in destinations)
             {
                 var key        = $"{releaseId}|{romName}";
-                if (satisfiedTargets.Contains(key)) continue;
+                if (satisfiedTargets.Contains(key) || assignedUnavailableTargets.Contains(key)) continue;
+
+                // Release already satisfied by a durable copy (local archive OR reachable
+                // volume) → incoming file is redundant; do not stage (Phase 8 → duplicate-deleted).
+                // Assigned-but-unavailable volume → do not stage either, but quarantine (Phase 8).
+                switch (ReleaseSat(releaseId))
+                {
+                    case Ingestion.ReleaseSatisfaction.LocalArchive:
+                    case Ingestion.ReleaseSatisfaction.ReachableVolume:
+                        satisfiedTargets.Add(key);
+                        continue;
+                    case Ingestion.ReleaseSatisfaction.AssignedVolumeUnavailable:
+                        assignedUnavailableTargets.Add(key);
+                        continue;
+                }
 
                 var relName    = releases.TryGetValue(releaseId, out var rel) ? rel.Name : releaseId;
                 var safeFolder = SafeFileName(relName);
@@ -9348,6 +9424,14 @@ public partial class MainWindow : Window
             }
         }
 
+        // A target is stageable only when it is neither already satisfied nor pinned to an
+        // unavailable volume (the latter is quarantined, not staged).
+        bool IsStageable(string releaseId, string romName)
+        {
+            var k = $"{releaseId}|{romName}";
+            return !satisfiedTargets.Contains(k) && !assignedUnavailableTargets.Contains(k);
+        }
+
         // ── Phase 5: Space preflight ──────────────────────────────────────────
         progress.Report(new IngestionProgress { PhaseText = "Checking disk space…" });
 
@@ -9356,7 +9440,7 @@ public partial class MainWindow : Window
         {
             long srcLen = 0;
             try { srcLen = new FileInfo(srcPath).Length; } catch { }
-            int pendingCount = destinations.Count(d => !satisfiedTargets.Contains($"{d.ReleaseId}|{d.RomName}"));
+            int pendingCount = destinations.Count(d => IsStageable(d.ReleaseId, d.RomName));
             bytesNeeded += srcLen * pendingCount;
         }
         bytesNeeded += 256L * 1024 * 1024; // 256 MB safety buffer
@@ -9378,9 +9462,9 @@ public partial class MainWindow : Window
         }
 
         // ── Phase 6: Copy to staging ──────────────────────────────────────────
-        // copyTotal counts only targets not already satisfied.
+        // copyTotal counts only stageable targets (not satisfied, not volume-unavailable).
         int copyTotal = copyPlan.Values.Sum(
-            dests => dests.Count(d => !satisfiedTargets.Contains($"{d.ReleaseId}|{d.RomName}")));
+            dests => dests.Count(d => IsStageable(d.ReleaseId, d.RomName)));
 
         progress.Report(new IngestionProgress
         {
@@ -9398,6 +9482,9 @@ public partial class MainWindow : Window
         var movedFromIncoming       = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allTargetsSatisfied     = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allTargetsUnwanted      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Source files whose only non-satisfied targets are pinned to an unavailable volume →
+        // quarantine to incoming-skip in Phase 8 (never staged, never deleted).
+        var allTargetsAssignedUnavailable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var affectedReleaseIds      = new HashSet<string>(StringComparer.Ordinal);
         var transformFailedReleases = new HashSet<string>(StringComparer.Ordinal);
         var unwantedSkippedReleases = new HashSet<string>(StringComparer.Ordinal);
@@ -9410,15 +9497,20 @@ public partial class MainWindow : Window
         {
             var srcInfo = new FileInfo(srcPath);
 
-            // Filter to targets not yet satisfied.
+            // Filter to stageable targets (not satisfied, not pinned to an unavailable volume).
             var pending = destinations
-                .Where(d => !satisfiedTargets.Contains($"{d.ReleaseId}|{d.RomName}"))
+                .Where(d => IsStageable(d.ReleaseId, d.RomName))
                 .ToList();
 
             if (pending.Count == 0)
             {
-                // Every target for this source is already covered — treat as skipped.
-                allTargetsSatisfied.Add(srcPath);
+                // No stageable target. If any target is pinned to an unavailable volume,
+                // quarantine the source (cannot confirm the durable copy — don't delete);
+                // otherwise every target was already satisfied → duplicate.
+                if (destinations.Any(d => assignedUnavailableTargets.Contains($"{d.ReleaseId}|{d.RomName}")))
+                    allTargetsAssignedUnavailable.Add(srcPath);
+                else
+                    allTargetsSatisfied.Add(srcPath);
                 continue;
             }
 
@@ -9779,6 +9871,29 @@ public partial class MainWindow : Window
                 catch
                 {
                     var op = new IngestionOperation(fileName, "duplicate-delete-failed", "duplicate source file could not be removed");
+                    result.Operations.Add(op);
+                    progress.Report(new IngestionProgress { NewOperation = op });
+                }
+            }
+            else if (allTargetsAssignedUnavailable.Contains(srcPath))
+            {
+                // Release is assigned to a volume that is currently unavailable — do not stage
+                // (avoid cue-only clutter) and do not delete (DB is not filesystem truth):
+                // quarantine to incoming-skip\<platform>\ for a later run when the volume is back.
+                result.FilesSkipped++;
+                var destPath = IncomingSkipUniquePath(skipDir, fileName);
+                try
+                {
+                    File.Move(srcPath, destPath, overwrite: false);
+                    var op = new IngestionOperation(fileName, "assigned-volume-unavailable",
+                        $"incoming-skip/{platformId}/{Path.GetFileName(destPath)}");
+                    result.Operations.Add(op);
+                    progress.Report(new IngestionProgress { NewOperation = op });
+                }
+                catch
+                {
+                    var op = new IngestionOperation(fileName, "assigned-volume-unavailable-failed",
+                        "could not move to incoming-skip");
                     result.Operations.Add(op);
                     progress.Report(new IngestionProgress { NewOperation = op });
                 }
@@ -12587,6 +12702,12 @@ public partial class MainWindow : Window
 
         if (btn == NavDashboard)
             InitDashboard();
+
+        if (btn == NavSystems)
+            // Recompute wanted coverage / unwanted share every time Systems is shown, so
+            // status mutations made elsewhere (Mark Unwanted, Restore Wanted, Purge, bulk
+            // operations, collision review) are reflected immediately. Preserves selection.
+            RefreshSystemsKeepSelection(_selectedPlatformId);
 
         if (btn == NavLibrary)
             ApplySystemsContextToLibrary();

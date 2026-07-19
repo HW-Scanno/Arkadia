@@ -151,4 +151,59 @@ public sealed class SystemPlatformCoverageTests : IDisposable
         Assert.Equal(1, p.Lost);
         Assert.Equal(50, p.WantedCoveragePercent);
     }
+
+    // ── Systems refresh after a status mutation recomputes coverage ────────────
+    // The UI refresh itself (SetActive → RefreshSystems) is not unit-testable, but the
+    // data it re-aggregates (GetAllStatusCounts → SystemPlatform) IS: these prove that
+    // a fresh recompute after the mutation yields corrected wanted coverage / share.
+
+    /// <summary>Rebuilds a SystemPlatform exactly as RefreshSystems does: total from the
+    /// declared release count, present/unwanted/lost from the live per-DAT store.</summary>
+    private static SystemPlatform PlatformFromStore(DatLineStore store, int total)
+    {
+        var c = store.GetAllStatusCounts();
+        return Platform(total, present: c.Present, unwanted: c.Unwanted, lost: c.Lost);
+    }
+
+    [Fact]
+    public void SystemsRefresh_MarkUnwanted_RecomputesWantedCoverage()
+    {
+        var store = new DatLineStore(Path.Combine(_tmp, "markunwanted.db"));
+        store.UpsertRelease(new ReleaseRecord { Id = "p",  DatLineId = "dl", Name = "Present", Status = "present" });
+        store.UpsertRelease(new ReleaseRecord { Id = "m1", DatLineId = "dl", Name = "Miss 1",  Status = "missing" });
+        store.UpsertRelease(new ReleaseRecord { Id = "m2", DatLineId = "dl", Name = "Miss 2",  Status = "missing" });
+        store.UpsertRelease(new ReleaseRecord { Id = "m3", DatLineId = "dl", Name = "Miss 3",  Status = "missing" });
+
+        var before = PlatformFromStore(store, total: 4);
+        Assert.Equal(25, before.WantedCoveragePercent);   // 1 present / 4 wanted
+        Assert.Equal(0,  before.UnwantedSharePercent);
+
+        // Operator marks a missing release unwanted (the reported scenario).
+        store.UpdateReleaseStatus("m1", "unwanted");
+
+        var after = PlatformFromStore(store, total: 4);
+        Assert.Equal(33, after.WantedCoveragePercent);    // 1 present / 3 wanted — denominator shrank
+        Assert.Equal(25, after.UnwantedSharePercent);     // 1 unwanted / 4 total
+        Assert.NotEqual(before.WantedCoveragePercent, after.WantedCoveragePercent);
+    }
+
+    [Fact]
+    public void SystemsRefresh_RestoreWanted_RecomputesWantedCoverage()
+    {
+        var store = new DatLineStore(Path.Combine(_tmp, "restore.db"));
+        store.UpsertRelease(new ReleaseRecord { Id = "p", DatLineId = "dl", Name = "Present",  Status = "present" });
+        store.UpsertRelease(new ReleaseRecord { Id = "u", DatLineId = "dl", Name = "Unwanted", Status = "unwanted" });
+
+        var before = PlatformFromStore(store, total: 2);
+        Assert.Equal(100, before.WantedCoveragePercent);  // 1 present / 1 wanted
+        Assert.Equal(50,  before.UnwantedSharePercent);
+
+        // Operator restores the unwanted release (→ missing).
+        store.RestoreWantedRelease("u");
+
+        var after = PlatformFromStore(store, total: 2);
+        Assert.Equal(50, after.WantedCoveragePercent);    // 1 present / 2 wanted — denominator grew
+        Assert.Equal(0,  after.UnwantedSharePercent);
+        Assert.NotEqual(before.WantedCoveragePercent, after.WantedCoveragePercent);
+    }
 }
