@@ -33,8 +33,10 @@ public static class IngestionSummary
             ("Archives deleted",          r.FilesDeletedFromIncoming.ToString("N0")),
         };
 
-        // Stale-cleanup rows are shown only when they actually occurred, so normal
+        // Edge-case rows are shown only when they actually occurred, so normal
         // runs keep the standard 12-counter summary unchanged.
+        if (r.StagingResumed > 0)
+            list.Add(("Staging resumed", r.StagingResumed.ToString("N0")));
         if (r.StaleStagingMoved > 0)
             list.Add(("Stale staging moved", r.StaleStagingMoved.ToString("N0")));
         if (r.StaleSourceMoved > 0)

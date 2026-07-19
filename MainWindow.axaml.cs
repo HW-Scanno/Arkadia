@@ -1067,6 +1067,36 @@ public partial class MainWindow : Window
         _ = OnVerifyAllDatLine(_selectedDatLine);
     }
 
+    // Maintenance: verify every DAT line's archive output policy (M1). Read-only over
+    // releases — persists form/state/fingerprints, never excludes releases or touches files.
+    private async void OnSysVerifyDat(object? sender, RoutedEventArgs e)
+    {
+        var report = new Archive.ArchiveOutputBatchValidator(_catalog, _dataDir).ValidateAll();
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("Validates archive output policy for all DAT lines. No files are moved or modified.");
+        sb.AppendLine();
+        sb.AppendLine($"DAT lines scanned:        {report.TotalScanned}");
+        sb.AppendLine($"Valid (full set):         {report.ValidFullSet}");
+        sb.AppendLine($"Valid (with exclusions):  {report.ValidWithExclusions}");
+        sb.AppendLine($"Collision unresolved:     {report.CollisionUnresolved}");
+        sb.AppendLine($"Unknown / stale / error:  {report.UnknownOrError}");
+
+        if (report.Problematic.Count > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine("Needs attention:");
+            foreach (var p in report.Problematic.Take(20))
+                sb.AppendLine($"  • {p.DatLineName}  [{p.State}]  {p.Detail}");
+            if (report.Problematic.Count > 20)
+                sb.AppendLine($"  …and {report.Problematic.Count - 20} more.");
+            sb.AppendLine();
+            sb.AppendLine("Open DAT configuration to resolve collisions (Exclude A/B or reconfigure).");
+        }
+
+        await new InfoDialog("DAT Policy Verification", sb.ToString()).ShowDialog(this);
+    }
+
     private async void OnSysDeleteDat(object? sender, RoutedEventArgs e)
     {
         if (_selectedDatLine is null) return;
@@ -2974,14 +3004,14 @@ public partial class MainWindow : Window
 
         // ── Check pre-existing archive / source availability ───────────────
         // daId → canonical local path (archive preferred, source fallback).
+        // Archive is resolved via the DB relative_path so flat CHD artifacts and
+        // legacy release-foldered artifacts are both found (see LocalRepairSourceResolver).
         var preAvailable = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var vi in repairTargets)
         {
-            var safe        = SafeFileName(vi.ReleaseName);
-            var archivePath = Path.Combine(appRoot, "archive", platformId, rawDatLineId, safe, vi.FileName);
-            var sourcePath  = Path.Combine(appRoot, "source",  platformId, rawDatLineId, safe, vi.FileName);
-            if      (File.Exists(archivePath)) preAvailable[vi.DerivedArtifactId] = archivePath;
-            else if (File.Exists(sourcePath))  preAvailable[vi.DerivedArtifactId] = sourcePath;
+            var localSource = Volumes.LocalRepairSourceResolver.Resolve(
+                appRoot, vi.RelativePath, platformId, rawDatLineId, vi.ReleaseName, vi.FileName);
+            if (localSource is not null) preAvailable[vi.DerivedArtifactId] = localSource;
         }
 
         // ── Scan incoming-repair/<platform>/ for derived SHA1 matches ─────
@@ -3234,15 +3264,14 @@ public partial class MainWindow : Window
 
         // ── POST-INGEST: Build full availability map ───────────────────────
         // Start from preAvailable and re-check archive + source for the rest.
+        // Archive resolved via DB relative_path (flat CHD + legacy foldered).
         var available = new Dictionary<string, string>(preAvailable, StringComparer.Ordinal);
         foreach (var vi in repairTargets)
         {
             if (available.ContainsKey(vi.DerivedArtifactId)) continue;
-            var safe        = SafeFileName(vi.ReleaseName);
-            var archivePath = Path.Combine(appRoot, "archive", platformId, rawDatLineId, safe, vi.FileName);
-            var sourcePath  = Path.Combine(appRoot, "source",  platformId, rawDatLineId, safe, vi.FileName);
-            if      (File.Exists(archivePath)) available[vi.DerivedArtifactId] = archivePath;
-            else if (File.Exists(sourcePath))  available[vi.DerivedArtifactId] = sourcePath;
+            var localSource = Volumes.LocalRepairSourceResolver.Resolve(
+                appRoot, vi.RelativePath, platformId, rawDatLineId, vi.ReleaseName, vi.FileName);
+            if (localSource is not null) available[vi.DerivedArtifactId] = localSource;
         }
 
         int availableCount   = available.Count;
@@ -8962,6 +8991,26 @@ public partial class MainWindow : Window
         }
     }
 
+    // Builds the ArchiveOutputConfig for the M1f ingestion gate from catalog primitives.
+    private Archive.ArchiveOutputConfig BuildArchiveGateConfig(string datLineId, string platformId, string absDbPath)
+    {
+        var dlRecord      = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
+        var strategyType  = dlRecord?.TransformStrategyType ?? "none";
+        var allTransforms = _catalog.LoadTransforms();
+
+        TransformRecord? folderXf = null;
+        if (strategyType == "release_folder" && dlRecord?.FolderTransformId is { Length: > 0 } fid)
+            folderXf = allTransforms.FirstOrDefault(t => t.Id == fid);
+
+        var extMappings = new Dictionary<string, ExtensionTransformMapping>(StringComparer.OrdinalIgnoreCase);
+        if (strategyType == "file_extension")
+            foreach (var m in _catalog.LoadExtensionMappings(datLineId))
+                extMappings[m.FileExtension] = m;
+
+        return Archive.ArchiveOutputConfigFactory.BuildConfig(
+            platformId, datLineId, strategyType, folderXf, extMappings, allTransforms);
+    }
+
     private IngestionResult RunIngestionWork(
         string                       platformId,
         string                       datLineId,
@@ -8984,6 +9033,33 @@ public partial class MainWindow : Window
         Directory.CreateDirectory(stagingRoot);
         Directory.CreateDirectory(sourceRoot);
         Directory.CreateDirectory(skipDir);
+
+        // ── Archive-output validation gate (M1f) ──────────────────────────────
+        // Non-interactive safety gate. Runs BEFORE any mutation (stale cleanup,
+        // extraction, staging, source, archive, incoming moves, transform), so a
+        // block leaves incoming files and release statuses untouched. Read-only:
+        // performs a live re-validation to catch collision_unresolved and stale;
+        // allows valid_full_set / valid_with_exclusions and legacy 'unknown' lines.
+        {
+            var storedFp = _catalog.GetDatLineArchiveOutputValidation(datLineId)?.StructuralFingerprint;
+            if (!string.IsNullOrEmpty(storedFp))   // legacy/unvalidated lines are allowed as-is
+            {
+                var gateConfig   = BuildArchiveGateConfig(datLineId, platformId, absDbPath);
+                var gateReleases = Archive.ArchiveOutputConfigFactory.BuildReleaseInputs(
+                    new DatLineStore(absDbPath).LoadReleases(), new DatLineStore(absDbPath).LoadAllReleaseFiles());
+                var gate = Archive.ArchiveIngestionGateEvaluator.Evaluate(
+                    gateConfig, gateReleases, storedFp, gateEnabled: true);
+
+                if (!gate.Allow)
+                {
+                    var op = new IngestionOperation(datLineId, "archive-validation-blocked", gate.Reason);
+                    result.Operations.Add(op);
+                    progress.Report(new IngestionProgress { NewOperation = op });
+                    result.Error = gate.Reason;
+                    return result;   // nothing mutated yet
+                }
+            }
+        }
 
         // ── Stale unwanted cleanup ────────────────────────────────────────────
         // Relocate leftover staging/source work files that belong to releases now
@@ -9034,17 +9110,32 @@ public partial class MainWindow : Window
             .ToList();
         result.FilesScanned = sourceFiles.Count;
 
-        if (sourceFiles.Count == 0)
-            return result;
-
         var store = new DatLineStore(absDbPath);
 
+        var allReleasesList = store.LoadReleases();
+        var allReleaseFiles = store.LoadAllReleaseFiles();
+
+        // ── Resumable wanted staging (interrupted-run recovery) ────────────────
+        // A wanted release with complete staging that never became 'present' was
+        // interrupted before its derived artifact was produced. Detect it here
+        // (read-only) and route it through Phase 7 below. Runs even when incoming
+        // is empty, so a resume can complete without re-dropping the raw files.
+        var resumable = Ingestion.ResumableStagingDetector.Detect(
+            stagingRoot,
+            allReleasesList.Select(r => new Ingestion.ResumeReleaseInput(
+                r.Id, r.Name, r.Status,
+                allReleaseFiles.TryGetValue(r.Id, out var rf)
+                    ? rf.Select(f => f.RomName).ToList()
+                    : new List<string>())).ToList());
+
+        // Nothing to ingest and nothing to resume → done.
+        if (sourceFiles.Count == 0 && resumable.ResumableReleaseIds.Count == 0)
+            return result;
+
         // ── Build hash indexes from non-outdated release files ─────────────────
-        var releases = store.LoadReleases()
+        var releases = allReleasesList
             .Where(r => r.Status != "outdated")
             .ToDictionary(r => r.Id, StringComparer.Ordinal);
-
-        var allReleaseFiles = store.LoadAllReleaseFiles();
 
         // Per-archive cleanup tracking (Phase 9).
         // successfulReleaseIds: pre-seeded with releases already present before this run
@@ -9453,6 +9544,57 @@ public partial class MainWindow : Window
             }
         }
 
+        // ── Resolve the uniform archive output form (M1d) ──────────────────────
+        // Only file_extension is release-set-dependent; the others are fixed by strategy.
+        // Prefer the persisted form; fall back to the M1a resolver (do not persist here).
+        var datLineArchiveForm = Archive.ArchiveDatLineOutputForm.SingleFileFlat;
+        if (datLineStrategyType == "file_extension")
+        {
+            var persistedForm = Archive.ArchiveOutputPersistenceMapping.FormFromDb(
+                _catalog.GetDatLineArchiveOutputValidation(datLineId)?.Form);
+            if (persistedForm != Archive.ArchiveDatLineOutputForm.Unknown)
+            {
+                datLineArchiveForm = persistedForm;
+            }
+            else
+            {
+                static string ExtKey(string rom)
+                {
+                    var e = Path.GetExtension(rom).ToLowerInvariant();
+                    return e.Length == 0 ? "(no ext)" : e;
+                }
+                bool anyMulti = releases.Values
+                    .Where(r => r.Status != "unwanted")
+                    .Any(r => allReleaseFiles.TryGetValue(r.Id, out var rf) &&
+                              rf.Count(x => extMappingDict.TryGetValue(ExtKey(x.RomName), out var m) && !m.IsDiscard) >= 2);
+                datLineArchiveForm = anyMulti
+                    ? Archive.ArchiveDatLineOutputForm.MultiFileReleaseFolder
+                    : Archive.ArchiveDatLineOutputForm.SingleFileFlat;
+            }
+        }
+        else if (datLineStrategyType == "release_folder")
+        {
+            datLineArchiveForm = folderXform is { IsFolderOriented: true, OutputIsFolder: true }
+                ? Archive.ArchiveDatLineOutputForm.MultiFileReleaseFolder
+                : Archive.ArchiveDatLineOutputForm.SingleFileFlat;
+        }
+
+        // ── Resume interrupted wanted staging ─────────────────────────────────
+        // Add releases whose staging is already complete (detected up front) so
+        // Phase 7 promotes + transforms them exactly like freshly-staged releases.
+        // Phase 7 re-checks completeness, and the processors' own idempotency
+        // guards prevent re-transforming an already-valid derived artifact.
+        foreach (var rid in resumable.ResumableReleaseIds)
+        {
+            if (!affectedReleaseIds.Add(rid)) continue;   // already staged this run
+            if (!releases.TryGetValue(rid, out var resumeRel)) continue;
+            result.StagingResumed++;
+            var resumeOp = new IngestionOperation(resumeRel.Name, "staging-resumed",
+                $"staging/{platformId}/{datLineId}/{SafeFileName(resumeRel.Name)}");
+            result.Operations.Add(resumeOp);
+            progress.Report(new IngestionProgress { NewOperation = resumeOp });
+        }
+
         foreach (var releaseId in affectedReleaseIds)
         {
             if (!releases.TryGetValue(releaseId, out var release)) continue;
@@ -9563,7 +9705,7 @@ public partial class MainWindow : Window
                     releaseId, safeFolder, sourceDir, expectedFiles,
                     datLineStrategyType, extMappingDict,
                     activeXform, activeTool, allTransforms, allTools, storageStrategyId,
-                    appRoot, platformId, datLineId,
+                    appRoot, platformId, datLineId, datLineArchiveForm,
                     now, store, result, progress, transformFailedReleases);
             }
 
@@ -9755,6 +9897,7 @@ public partial class MainWindow : Window
         string                                        appRoot,
         string                                        platformId,
         string                                        datLineId,
+        Archive.ArchiveDatLineOutputForm              datLineArchiveForm,
         DateTime                                      now,
         DatLineStore                                  store,
         IngestionResult                               result,
@@ -9890,15 +10033,42 @@ public partial class MainWindow : Window
                     continue;
                 }
 
-                // ── 4. Transform: produce derived archive file ────────────
-                var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId, safeFolder);
-                Directory.CreateDirectory(archiveDir);
-                var outputExt = effectiveXform.OutputExtension.Length > 0 ? effectiveXform.OutputExtension : "";
-                var destName  = outputExt.Length > 0
+                // ── 4. Resolve archive output path (form-based, via builder) ──
+                // SingleFileFlat → release-name-based flat filename; MultiFileReleaseFolder
+                // → original filename inside the release folder. Idempotency: reuse the
+                // stored relative_path if a derived artifact already exists for this content.
+                var outputExt   = effectiveXform.OutputExtension.Length > 0 ? effectiveXform.OutputExtension : "";
+                var originalName = outputExt.Length > 0
                     ? Path.GetFileNameWithoutExtension(f.RomName) + outputExt
                     : f.RomName;
-                var destPath = Path.Combine(archiveDir, destName);
-                var relPath  = $"archive/{platformId}/{datLineId}/{safeFolder}/{destName}";
+                var newFileName = datLineArchiveForm == Archive.ArchiveDatLineOutputForm.SingleFileFlat
+                    ? safeFolder + (outputExt.Length > 0 ? outputExt : Path.GetExtension(f.RomName))
+                    : originalName;
+                var existingRel = store.GetDerivedByContentKey(ck)?.RelativePath;
+                var writePlan = Archive.ArchiveWritePlanner.Plan(
+                    appRoot, platformId, datLineId, datLineArchiveForm, safeFolder, newFileName, existingRel);
+                var relPath  = writePlan.RelativePath;
+                var destPath = writePlan.FullPath;
+                var destName = Path.GetFileName(destPath);
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+
+                // ── Archive write collision guard (defense-in-depth) ───────
+                // Never overwrite/reuse a target that belongs to a different content
+                // identity (or an unclaimed existing file). Same-identity reuse and
+                // fresh writes proceed unchanged.
+                var guardDecision = Archive.ArchiveWriteCollisionGuard.Decide(
+                    File.Exists(destPath),
+                    store.GetDerivedArtifactContentKeysByRelativePath(relPath),
+                    ck);
+                if (Archive.ArchiveWriteCollisionGuard.IsBlocking(guardDecision))
+                {
+                    transformFailedReleases.Add(releaseId);
+                    var collOp = new IngestionOperation(f.RomName, "archive-collision",
+                        $"target \"{relPath}\" belongs to a different artifact ({guardDecision}); not overwritten");
+                    result.Operations.Add(collOp);
+                    progress.Report(new IngestionProgress { NewOperation = collOp });
+                    continue;   // leave source/staging intact for recovery
+                }
 
                 if (!File.Exists(destPath))
                 {
@@ -9999,13 +10169,32 @@ public partial class MainWindow : Window
                 CreatedAtUtc       = now,
             });
 
-            // ── 2. Build derived artifact destination path ─────────────────────
-            var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId);
-            Directory.CreateDirectory(archiveDir);
-            var outputExt = folderXform.OutputExtension.Length > 0 ? folderXform.OutputExtension : ".zip";
-            var destName  = safeFolder + outputExt;
-            var destPath  = Path.Combine(archiveDir, destName);
-            var relPath   = $"archive/{platformId}/{datLineId}/{destName}";
+            // ── 2. Resolve archive output path (release-name-based, via builder) ─
+            var outputExt   = folderXform.OutputExtension.Length > 0 ? folderXform.OutputExtension : ".zip";
+            var newFileName = safeFolder + outputExt;   // already release-name-based
+            var existingRel = store.GetDerivedByContentKey(ck)?.RelativePath;
+            var writePlan = Archive.ArchiveWritePlanner.Plan(
+                appRoot, platformId, datLineId,
+                Archive.ArchiveDatLineOutputForm.SingleFileFlat, safeFolder, newFileName, existingRel);
+            var relPath  = writePlan.RelativePath;
+            var destPath = writePlan.FullPath;
+            var destName = Path.GetFileName(destPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+
+            // ── Archive write collision guard (defense-in-depth) ───────────────
+            var guardDecision = Archive.ArchiveWriteCollisionGuard.Decide(
+                File.Exists(destPath),
+                store.GetDerivedArtifactContentKeysByRelativePath(relPath),
+                ck);
+            if (Archive.ArchiveWriteCollisionGuard.IsBlocking(guardDecision))
+            {
+                transformFailedReleases.Add(releaseId);
+                var collOp = new IngestionOperation(destName, "archive-collision",
+                    $"target \"{relPath}\" belongs to a different artifact ({guardDecision}); not overwritten");
+                result.Operations.Add(collOp);
+                progress.Report(new IngestionProgress { NewOperation = collOp });
+                return;   // leave source intact for recovery
+            }
 
             // ── 3. Transform: source folder → derived file ────────────────────
             if (!File.Exists(destPath))
@@ -10132,20 +10321,28 @@ public partial class MainWindow : Window
                 CreatedAtUtc       = now,
             });
 
-            // ── 2. Build derived artifact destination path ────────────────────
-            var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId);
-            Directory.CreateDirectory(archiveDir);
-            var outputExt  = xform.OutputExtension.Length > 0 ? xform.OutputExtension : ".chd";
-            var destName   = Path.GetFileNameWithoutExtension(plan.MainInputFile) + outputExt;
-            var destPath   = Path.Combine(archiveDir, destName);
-            var relPath    = $"archive/{platformId}/{datLineId}/{destName}";
+            // ── 2. Resolve archive output path (release-name-based, idempotent) ─
+            // New naming is release-name-based (SafeReleaseName.chd) via the single
+            // ArchiveArtifactPathBuilder authority. Idempotency: if a derived artifact
+            // already exists for this release, keep writing to its STORED relative_path
+            // (e.g. a legacy "disc.chd") so it is recognized and never orphaned.
+            var outputExt   = xform.OutputExtension.Length > 0 ? xform.OutputExtension : ".chd";
+            var newFileName = safeFolder + outputExt;   // was: basename(plan.MainInputFile) + outputExt
+            var existingArtifacts = store.GetDerivedArtifactsByReleaseId(releaseId);
+            var existingRel = existingArtifacts.FirstOrDefault(a => a.RelativePath.Length > 0)?.RelativePath;
+            var writePlan = Archive.ArchiveWritePlanner.Plan(
+                appRoot, platformId, datLineId,
+                Archive.ArchiveDatLineOutputForm.SingleFileFlat, safeFolder, newFileName, existingRel);
+            var relPath  = writePlan.RelativePath;
+            var destPath = writePlan.FullPath;
+            var destName = Path.GetFileName(destPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
 
             // ── 2b. Satisfaction check — skip if artifact is already valid ────
             // A "present" release whose CHD exists, has size > 0, and whose physical
             // hash matches the DB record does not need to be re-transformed.
             bool fileExistedBefore = File.Exists(destPath);
             {
-                var existingArtifacts = store.GetDerivedArtifactsByReleaseId(releaseId);
                 var check = Ingestion.DerivedArtifactSatisfactionChecker.Check(
                     releaseStatus, existingArtifacts, destPath);
                 if (check.IsSatisfied)
@@ -10171,6 +10368,25 @@ public partial class MainWindow : Window
                     result.Operations.Add(rebuildOp);
                     progress.Report(new IngestionProgress { NewOperation = rebuildOp });
                 }
+            }
+
+            // ── Archive write collision guard (defense-in-depth) ───────────────
+            // A different release resolving to the same CHD filename (e.g. two
+            // releases whose main input is "disc.cue" → "disc.chd") must never
+            // overwrite this artifact. Same-release rebuilds carry the same
+            // content identity and proceed unchanged.
+            var guardDecision = Archive.ArchiveWriteCollisionGuard.Decide(
+                fileExistedBefore,
+                store.GetDerivedArtifactContentKeysByRelativePath(relPath),
+                ck);
+            if (Archive.ArchiveWriteCollisionGuard.IsBlocking(guardDecision))
+            {
+                transformFailedReleases.Add(releaseId);
+                var collOp = new IngestionOperation(destName, "archive-collision",
+                    $"target \"{relPath}\" belongs to a different artifact ({guardDecision}); not overwritten");
+                result.Operations.Add(collOp);
+                progress.Report(new IngestionProgress { NewOperation = collOp });
+                return;   // leave source intact for recovery
             }
 
             // ── 3. Transform: main input file → derived CHD ───────────────────
@@ -10328,11 +10544,33 @@ public partial class MainWindow : Window
                 CreatedAtUtc       = now,
             });
 
-            // ── 2. Build derived folder destination path ───────────────────────
-            var archiveDir = Path.Combine(appRoot, "archive", platformId, datLineId);
-            Directory.CreateDirectory(archiveDir);
-            var destPath = Path.Combine(archiveDir, safeFolder);   // folder, no extension
-            var relPath  = $"archive/{platformId}/{datLineId}/{safeFolder}";
+            // ── 2. Resolve derived folder destination path ─────────────────────
+            // MultiFileReleaseFolder: the derived artifact IS the release folder
+            // (archive/<platform>/<datLine>/<SafeReleaseName>). Idempotency: reuse the
+            // stored relative_path if an artifact already exists.
+            var existingRel = store.GetDerivedByContentKey(ck)?.RelativePath;
+            var relPath  = existingRel is { Length: > 0 } er
+                ? er
+                : $"archive/{platformId}/{datLineId}/{safeFolder}";
+            var destPath = Path.Combine(appRoot, relPath.Replace('/', Path.DirectorySeparatorChar));
+            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+
+            // ── Archive write collision guard (defense-in-depth) ───────────────
+            // The derived artifact is a folder; a different release resolving to the
+            // same SafeReleaseName folder must never merge into it.
+            var guardDecision = Archive.ArchiveWriteCollisionGuard.Decide(
+                Directory.Exists(destPath),
+                store.GetDerivedArtifactContentKeysByRelativePath(relPath),
+                ck);
+            if (Archive.ArchiveWriteCollisionGuard.IsBlocking(guardDecision))
+            {
+                transformFailedReleases.Add(releaseId);
+                var collOp = new IngestionOperation(safeFolder, "archive-collision",
+                    $"target folder \"{relPath}\" belongs to a different artifact ({guardDecision}); not merged");
+                result.Operations.Add(collOp);
+                progress.Report(new IngestionProgress { NewOperation = collOp });
+                return;   // leave source intact for recovery
+            }
 
             // ── 3. Copy source folder → derived folder (no compression) ────────
             // Only transforms with an empty command template are supported for folder

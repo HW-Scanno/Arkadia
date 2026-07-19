@@ -77,6 +77,12 @@ This applies in:
 - Repair moves the file to `incoming-skip\<platform>\` and removes the `derived_artifacts` row (plus content links).
 - Release status is **not** changed — the release remains `unwanted` after repair.
 
+### Archive output collision review
+
+- When a **SingleFileFlat** DAT line has two wanted releases that normalize to the same archive artifact name, the config-time collision review resolves it by **Exclude A / Exclude B** — which marks the selected release **unwanted** via the standard curator veto (no files deleted). See [INGESTION_PIPELINE.md → Archive output validation](INGESTION_PIPELINE.md#archive-output-validation-form-collision-review-and-gate).
+- **Abort** rolls back any exclusions applied during review (via `RestoreWantedRelease`, restoring the exact prior status) and saves nothing — an aborted review leaves no release unwanted.
+- The ingestion gate never marks releases unwanted; it only blocks a `collision_unresolved`/`stale` line and directs the curator to reconfigure.
+
 ---
 
 ## Invariants to preserve

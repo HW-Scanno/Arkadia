@@ -144,10 +144,40 @@ Files in these folders are reported as managed content, not as active artifacts,
 | Situation | Action |
 |---|---|
 | Wanted artifact found flat in root | `verify-ok` — no action |
-| Wanted artifact found in wrong subfolder | Move to root (`misplaced-restored`) |
+| Wanted artifact found in wrong subfolder | Move to root (`misplaced-restored`); assignment preserved |
 | Artifact linked to any unwanted release | Move to `<volume root>\unwanted\`, remove VA row, decrement `actual_size_bytes` |
+| **Assigned artifact confirmed missing on a reachable volume** | **Remove stale VA row, decrement `actual_size_bytes`, mark DA missing (`stale-assignment-removed`)** |
 | Known non-active file (in catalog but not wanted here) | Move to `<volume root>\known\` |
 | Unknown file (no hash match in any DAT-line DB) | Move to `<volume root>\unknown\` |
+
+### Missing-assignment reconciliation
+
+`volume_artifacts` represents physical placement. When Verify Volume scans a **reachable** volume root and an assigned artifact is confirmed absent — not present at the canonical flat path, and not found elsewhere as a valid misplaced wanted artifact — filesystem reality wins and the stale assignment is reconciled:
+
+```text
+volume_artifacts says artifact X is assigned to volume V
+volume root is reachable and scanned
+artifact X is not present at the canonical flat path
+artifact X is not found elsewhere as a valid misplaced wanted artifact
+→ stale volume_artifacts row is removed
+→ actual_size_bytes is decremented by the artifact size
+→ derived artifact is marked missing (existing status logic)
+→ artifact becomes eligible for Append/Build again
+```
+
+Guarantees and limits:
+
+- **Unreachable volumes are never reconciled.** If the volume root does not physically exist (disk unplugged, path missing), no assignments are removed — an unscanned volume must not lose assignments. (`VolumeVerifyService` gates this on `Directory.Exists(volumeRoot)`.)
+- **No physical files are deleted.** Reconciliation is DB-only for the confirmed-missing case.
+- **`derived_artifacts` rows are not deleted** — the DA is only marked `missing`.
+- **`release_content_links` rows are not deleted.**
+- **Misplaced wanted artifacts keep their assignment** — they are moved flat (`misplaced-restored`), never removed.
+- **Managed-folder files** (`unwanted\`, `known\`, `unknown\`) and **unknown/unassigned files** are never counted as active volume size.
+- Re-running Verify Volume after a reconciliation is **idempotent** — the assignment is already gone, so there is nothing further to remove.
+
+> **Scope limitation — not a full recompute.** Verify Volume reconciles `actual_size_bytes` for confirmed missing assignments only (a per-artifact decrement). It does **not yet** perform a full recompute-from-disk or recompute-from-verified-assignments pass, so general drift from old bugs or manual DB edits is not automatically corrected unless it is tied to a confirmed missing assignment. A future explicit reconcile command may be added for broader drift correction.
+
+> **Minor edge.** A misplaced artifact blocked by a name **collision** at the flat root keeps its assignment (the bytes are physically present and count toward size), while its derived artifact status may remain `missing` until the placement conflict is resolved.
 
 ### Flat layout enforcement
 
@@ -172,6 +202,7 @@ Emitted via `IProgress<FoundFileProgress>` and `IProgress<VolumeVerifyProgress>`
 | `known-unexpected-moved` | Moved to `known\` |
 | `unknown-found` | No hash match |
 | `unknown-moved` | Moved to `unknown\` |
+| `stale-assignment-removed` | Assigned artifact confirmed missing on a reachable volume — VA row removed, size decremented |
 | `collision` | Move blocked (name collision in target) |
 
 Colors are in `Ingestion/VerifyResultColorConverter.cs`.

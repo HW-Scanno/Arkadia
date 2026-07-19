@@ -77,7 +77,8 @@ public sealed class RepairVolumeTests : IDisposable
 
     private (CatalogService Catalog, DatLineStore Store, VolumeRecord Volume, List<ArtifactSpec> Artifacts)
         Provision(string label, string status, int artifactCount,
-                  string platformId = "platform-test", string dlId = "dl-test")
+                  string platformId = "platform-test", string dlId = "dl-test",
+                  bool flatChd = false)
     {
         var catalog = new CatalogService(_catalogDir);
         var dbPath  = Path.Combine(_datDir, $"{label}.db");
@@ -101,7 +102,7 @@ public sealed class RepairVolumeTests : IDisposable
         var rawItems = Enumerable.Range(0, artifactCount).Select(i =>
         {
             var relName   = $"Release {i}";
-            var fileName  = $"game_{i}.rom";
+            var fileName  = flatChd ? $"game_{i}.chd" : $"game_{i}.rom";
             var content   = System.Text.Encoding.UTF8.GetBytes($"content-seed-{i}");
             var sha1      = FileSha1(content);
             var cik       = $"sha1:{sha1}";
@@ -129,10 +130,13 @@ public sealed class RepairVolumeTests : IDisposable
                 ContentIdentityKey = cik, CreatedAtUtc = DateTime.UtcNow,
             });
 
+            // Flat CHD artifacts store a flat relative_path; legacy file-extension
+            // artifacts store a release-foldered relative_path.
+            var relPath = flatChd
+                ? $"archive/{platformId}/{dlId}/{fileName}"
+                : $"archive/{platformId}/{dlId}/{SafeFileName(relName)}/{fileName}";
             var daId = store.IngestDerivedArtifact(
-                cik, "", "no_compression", fileName,
-                $"archive/{platformId}/{dlId}/{SafeFileName(relName)}/{fileName}",
-                content.Length, sha1);
+                cik, "", "no_compression", fileName, relPath, content.Length, sha1);
 
             catalog.SaveVolumeArtifact(new VolumeArtifactRecord
             {
@@ -183,15 +187,15 @@ public sealed class RepairVolumeTests : IDisposable
             }
         }
 
-        // 2. Build availability map: archive preferred, source fallback
+        // 2. Build availability map via the SAME production resolver the app uses,
+        //    so this test exercises real path logic (archive via DB relative_path,
+        //    then source fallback) instead of a test-local reconstruction.
         var available = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var vi in repairTargets)
         {
-            var safe        = SafeFileName(vi.ReleaseName);
-            var archivePath = Path.Combine(_archiveDir, platformId, dlId, safe, vi.FileName);
-            var sourcePath  = Path.Combine(_sourceDir,  platformId, dlId, safe, vi.FileName);
-            if      (File.Exists(archivePath)) available[vi.DerivedArtifactId] = archivePath;
-            else if (File.Exists(sourcePath))  available[vi.DerivedArtifactId] = sourcePath;
+            var localSource = Arkadia.Volumes.LocalRepairSourceResolver.Resolve(
+                _tempRoot, vi.RelativePath, platformId, dlId, vi.ReleaseName, vi.FileName);
+            if (localSource is not null) available[vi.DerivedArtifactId] = localSource;
         }
 
         // 3. Scan incoming-repair for SHA1 matches (for targets not yet available)
@@ -328,6 +332,14 @@ public sealed class RepairVolumeTests : IDisposable
         var dir = Path.Combine(_archiveDir, platformId, dlId, SafeFileName(s.ReleaseName));
         Directory.CreateDirectory(dir);
         File.WriteAllBytes(Path.Combine(dir, s.FileName), s.Content);
+    }
+
+    // Flat archive layout (release-shape / CHD): archive\<platform>\<datLine>\<file>
+    private void SeedArchiveFlat(ArtifactSpec s, string platformId, string dlId, byte[]? content = null)
+    {
+        var dir = Path.Combine(_archiveDir, platformId, dlId);
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(Path.Combine(dir, s.FileName), content ?? s.Content);
     }
 
     private void SeedSource(ArtifactSpec s, string platformId, string dlId)
@@ -614,6 +626,129 @@ public sealed class RepairVolumeTests : IDisposable
 
         Assert.True(File.Exists(archiveFile), "archive file must never be deleted by repair");
         Assert.True(File.Exists(sourceFile),  "source file must never be deleted by repair");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // CHECK 2b — Archive-source resolution via DB relative_path (H1 regression)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void RepairVolume_FindsFlatChdArchiveSourceByRelativePath()
+    {
+        // CHD artifact stored FLAT: archive\<platform>\<datLine>\<file>.chd
+        var (catalog, store, volume, specs) = Provision("vol-flat-chd", "present", 1, flatChd: true);
+        var root = Path.Combine(_volumesDir, "vol-flat-chd");
+        Directory.CreateDirectory(root);
+
+        SeedArchiveFlat(specs[0], "platform-test", "dl-test");
+
+        var result = SimulateRepair(catalog, store, volume, root, "platform-test", "dl-test");
+
+        Assert.Contains(specs[0].DerivedArtifactId, result.VerifiedDaIds);
+        Assert.Empty(result.FailedDaIds);
+        Assert.Empty(result.SkippedDaIds);
+    }
+
+    [Fact]
+    public void RepairVolume_FindsLegacyFolderedArchiveSourceByRelativePath()
+    {
+        // Legacy file-extension artifact stored FOLDERED: archive\<platform>\<datLine>\<release>\<file>
+        var (catalog, store, volume, specs) = Provision("vol-foldered", "present", 1); // default foldered
+        var root = Path.Combine(_volumesDir, "vol-foldered");
+        Directory.CreateDirectory(root);
+
+        SeedArchive(specs[0], "platform-test", "dl-test"); // foldered seeding
+
+        var result = SimulateRepair(catalog, store, volume, root, "platform-test", "dl-test");
+
+        Assert.Contains(specs[0].DerivedArtifactId, result.VerifiedDaIds);
+        Assert.Empty(result.FailedDaIds);
+    }
+
+    [Fact]
+    public void RepairVolume_DoesNotAssumeReleaseFolderForChd()
+    {
+        // Flat CHD present; the OLD reconstructed release-folder path must NOT exist,
+        // proving repair does not depend on it.
+        var (catalog, store, volume, specs) = Provision("vol-no-assume", "present", 1, flatChd: true);
+        var root = Path.Combine(_volumesDir, "vol-no-assume");
+        Directory.CreateDirectory(root);
+
+        SeedArchiveFlat(specs[0], "platform-test", "dl-test");
+
+        var reconstructedFoldered = Path.Combine(
+            _archiveDir, "platform-test", "dl-test",
+            SafeFileName(specs[0].ReleaseName), specs[0].FileName);
+        Assert.False(File.Exists(reconstructedFoldered),
+            "the release-foldered archive path must not exist for a flat CHD artifact");
+
+        var result = SimulateRepair(catalog, store, volume, root, "platform-test", "dl-test");
+
+        Assert.Contains(specs[0].DerivedArtifactId, result.VerifiedDaIds);
+    }
+
+    [Fact]
+    public void RepairVolume_FallsBackWhenRelativePathFileMissing()
+    {
+        // Flat CHD relative_path is set, but no archive file exists there.
+        // Repair must fall through to incoming-repair (existing fallback), not fail hard.
+        var (catalog, store, volume, specs) = Provision("vol-relpath-missing", "present", 1, flatChd: true);
+        var root = Path.Combine(_volumesDir, "vol-relpath-missing");
+        Directory.CreateDirectory(root);
+
+        // Do NOT seed archive; provide the artifact via incoming-repair instead.
+        SeedIncoming(specs[0], "platform-test");
+
+        var result = SimulateRepair(catalog, store, volume, root, "platform-test", "dl-test");
+
+        Assert.Contains(specs[0].DerivedArtifactId, result.VerifiedDaIds);
+    }
+
+    [Fact]
+    public void RepairVolume_RejectsArchiveSourceHashMismatch()
+    {
+        // Flat CHD archive exists at relative_path but has WRONG content.
+        // Copy succeeds, target verify fails → artifact must NOT be marked present.
+        var (catalog, store, volume, specs) = Provision("vol-hash-mismatch", "present", 1, flatChd: true);
+        var root = Path.Combine(_volumesDir, "vol-hash-mismatch");
+        Directory.CreateDirectory(root);
+
+        SeedArchiveFlat(specs[0], "platform-test", "dl-test",
+            System.Text.Encoding.UTF8.GetBytes("CORRUPTED_FLAT_CHD"));
+
+        var result = SimulateRepair(catalog, store, volume, root, "platform-test", "dl-test");
+
+        Assert.Contains(specs[0].DerivedArtifactId, result.FailedDaIds);
+        Assert.Empty(result.VerifiedDaIds);
+
+        var derived = store.GetDerivedArtifacts().Single(d => d.Id == specs[0].DerivedArtifactId);
+        Assert.NotEqual("present", derived.Status);
+    }
+
+    [Fact]
+    public void RepairVolume_UsesDbRelativePathNotReconstructedReleaseFolder()
+    {
+        // Strongest proof: the FLAT relative_path holds the CORRECT content, while a
+        // reconstructed release-folder path holds WRONG content. Repair succeeds only
+        // if it used the DB relative_path (flat) rather than the reconstructed folder.
+        var (catalog, store, volume, specs) = Provision("vol-relpath-authority", "present", 1, flatChd: true);
+        var root = Path.Combine(_volumesDir, "vol-relpath-authority");
+        Directory.CreateDirectory(root);
+
+        SeedArchiveFlat(specs[0], "platform-test", "dl-test"); // correct content, flat
+
+        // Decoy at the old reconstructed release-folder path with WRONG content.
+        var folderedDir = Path.Combine(_archiveDir, "platform-test", "dl-test",
+            SafeFileName(specs[0].ReleaseName));
+        Directory.CreateDirectory(folderedDir);
+        File.WriteAllBytes(Path.Combine(folderedDir, specs[0].FileName),
+            System.Text.Encoding.UTF8.GetBytes("WRONG_FOLDERED_DECOY"));
+
+        var result = SimulateRepair(catalog, store, volume, root, "platform-test", "dl-test");
+
+        // Verified → the flat relative_path source was used, not the foldered decoy.
+        Assert.Contains(specs[0].DerivedArtifactId, result.VerifiedDaIds);
+        Assert.Empty(result.FailedDaIds);
     }
 
     // ══════════════════════════════════════════════════════════════════════════

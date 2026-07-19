@@ -1,0 +1,52 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.ArchiveCollisionReviewDialog"
+        Title="Archive Output Collision"
+        Width="920" Height="660"
+        MinWidth="760" MinHeight="480"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <!-- Rows: 0 header · 1 sub-header · 2 shared-scroll two-column body · 3 actions -->
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="24,20,24,18">
+
+        <TextBlock Grid.Row="0"
+                   x:Name="HeaderText"
+                   FontSize="15" FontWeight="SemiBold"
+                   Foreground="#F0F0F0"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,6"/>
+
+        <TextBlock Grid.Row="1"
+                   x:Name="SubHeaderText"
+                   FontSize="12" Foreground="#AAAACC"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,12"/>
+
+        <!-- One shared vertical ScrollViewer over a two-column grid → both columns
+             scroll together (synchronized-scroll fallback, robust in Avalonia). -->
+        <Border Grid.Row="2" Background="#1A1A24" CornerRadius="6" Padding="0" Margin="0,0,0,14">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <Grid ColumnDefinitions="*,1,*">
+                    <StackPanel Grid.Column="0" x:Name="ColumnA" Spacing="4" Margin="16,14,16,16"/>
+                    <Border    Grid.Column="1" Background="#2A2A3C" Width="1"/>
+                    <StackPanel Grid.Column="2" x:Name="ColumnB" Spacing="4" Margin="16,14,16,16"/>
+                </Grid>
+            </ScrollViewer>
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+            <Button x:Name="ExcludeAButton" Content="Exclude A (mark unwanted)"
+                    Padding="16,8" CornerRadius="6" BorderThickness="0"
+                    Background="#7A2020" Foreground="#FFFFFF" Click="OnExcludeA"/>
+            <Button x:Name="ExcludeBButton" Content="Exclude B (mark unwanted)"
+                    Padding="16,8" CornerRadius="6" BorderThickness="0"
+                    Background="#7A2020" Foreground="#FFFFFF" Click="OnExcludeB"/>
+            <Button Content="Abort"
+                    Padding="16,8" CornerRadius="6" BorderThickness="0"
+                    Background="#2A2A3C" Foreground="#F0F0F0" Click="OnAbort"/>
+        </StackPanel>
+    </Grid>
+</Window>

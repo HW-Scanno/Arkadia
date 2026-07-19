@@ -761,7 +761,7 @@ public partial class ConfigureDatLineDialog : Window
 
     // ── Footer handlers ───────────────────────────────────────────────────────
 
-    private void OnSave(object? sender, RoutedEventArgs e)
+    private async void OnSave(object? sender, RoutedEventArgs e)
     {
         if (_isConfigInvalid || _d.CatalogId is null) { Close(false); return; }
 
@@ -773,28 +773,86 @@ public partial class ConfigureDatLineDialog : Window
             folderTransformId = _folderXforms[_folderBox.SelectedIndex].Id;
 
         var fhVal = _fhBox.SelectedIndex == 1 ? "all_files" : "archives_pre_extraction";
-        _catalog.SaveDatLineFileHandling(_d.CatalogId, fhVal);
-        _catalog.SaveDatLineTransformStrategy(_d.CatalogId, stratVal, folderTransformId);
 
-        if (stratVal == "file_extension" && _extActionBoxes.Count > 0)
+        // In-memory selected extension mappings (not yet persisted — see atomicity below).
+        var mappings = (stratVal == "file_extension" && _extActionBoxes.Count > 0)
+            ? _extActionBoxes.Select(kv =>
+              {
+                  var selIdx    = kv.Value.SelectedIndex;
+                  var isDiscard = selIdx <= 0;
+                  var xformId   = isDiscard ? "" : _fileXforms[selIdx - 1].Id;
+                  return new ExtensionTransformMapping
+                  {
+                      DatLineId     = _d.CatalogId,
+                      FileExtension = kv.Key,
+                      IsDiscard     = isDiscard,
+                      TransformId   = xformId,
+                  };
+              }).ToList()
+            : new List<ExtensionTransformMapping>();
+
+        // Persists the config choices. Called ONLY after validation succeeds so an
+        // aborted collision review never leaves a partial config save (atomicity).
+        void PersistConfig()
         {
-            var mappings = _extActionBoxes.Select(kv =>
+            _catalog.SaveDatLineFileHandling(_d.CatalogId!, fhVal);
+            _catalog.SaveDatLineTransformStrategy(_d.CatalogId!, stratVal, folderTransformId);
+            if (stratVal == "file_extension" && mappings.Count > 0)
+                _catalog.SaveExtensionMappings(_d.CatalogId!, mappings);
+        }
+
+        // ── Archive output validation (M1e / M1e.1 atomic save) ───────────────
+        // Validate first against the in-memory selection; persist config + validation
+        // only once the plan is valid. On an unresolved collision, review resolves it
+        // (Exclude A/B → unwanted) or Abort rolls back exclusions and saves nothing.
+        var absPath = _d.DataStorePath.Length > 0 ? Path.Combine(_dataDir, _d.DataStorePath) : "";
+        if (absPath.Length > 0 && File.Exists(absPath))
+        {
+            var store  = new DatLineStore(absPath);
+            var config = BuildArchiveConfig(stratVal, folderTransformId, mappings);
+            IReadOnlyList<Archive.ArchiveReleaseInput> Load() =>
+                Archive.ArchiveOutputConfigFactory.BuildReleaseInputs(
+                    store.LoadReleases(), store.LoadAllReleaseFiles());
+
+            var session     = new Archive.ArchiveCollisionReviewSession(
+                config, Load, id => store.UpdateReleaseStatus(id, "unwanted"));
+            var coordinator = new Archive.ArchiveConfigSaveCoordinator(_catalog);
+
+            if (session.HasUnresolvedCollision)
             {
-                var selIdx    = kv.Value.SelectedIndex;
-                var isDiscard = selIdx <= 0;
-                var xformId   = isDiscard ? "" : _fileXforms[selIdx - 1].Id;
-                return new ExtensionTransformMapping
+                var resolved = await new ArchiveCollisionReviewDialog(session, _d.Name).ShowDialog<bool>(this);
+                if (!resolved)
                 {
-                    DatLineId     = _d.CatalogId,
-                    FileExtension = kv.Key,
-                    IsDiscard     = isDiscard,
-                    TransformId   = xformId,
-                };
-            }).ToList();
-            _catalog.SaveExtensionMappings(_d.CatalogId, mappings);
+                    // Abort: undo any exclusions applied during review; persist nothing.
+                    Archive.ArchiveConfigSaveCoordinator.RollbackExclusions(session, store);
+                    return;
+                }
+            }
+
+            coordinator.TryCommit(_d.CatalogId, session, PersistConfig);   // persists config + validation
+        }
+        else
+        {
+            // No release store to validate against — persist the config as before.
+            PersistConfig();
         }
 
         Close(true);
+    }
+
+    private Archive.ArchiveOutputConfig BuildArchiveConfig(
+        string stratVal, string? folderTransformId, List<ExtensionTransformMapping> inMemoryMappings)
+    {
+        var allTransforms = _catalog.LoadTransforms();
+        var folderXf = folderTransformId is { Length: > 0 }
+            ? allTransforms.FirstOrDefault(t => t.Id == folderTransformId)
+            : null;
+        var extMappings = new Dictionary<string, ExtensionTransformMapping>(StringComparer.OrdinalIgnoreCase);
+        if (stratVal == "file_extension")
+            foreach (var m in inMemoryMappings)   // in-memory selection, not yet persisted
+                extMappings[m.FileExtension] = m;
+        return Archive.ArchiveOutputConfigFactory.BuildConfig(
+            _d.CatalogPlatformId ?? "", _d.CatalogId!, stratVal, folderXf, extMappings, allTransforms);
     }
 
     private void OnClose(object? sender, RoutedEventArgs e) => Close(false);

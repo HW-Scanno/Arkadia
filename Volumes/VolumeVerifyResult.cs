@@ -26,6 +26,11 @@ public sealed class VolumeVerifyResult
     public int UnknownMoved         { get; init; }
     /// <summary>Expected active artifacts that could not be found anywhere in the active area.</summary>
     public int Missing              { get; init; }
+    /// <summary>
+    /// Stale volume_artifacts assignments removed because their file was confirmed
+    /// missing from the reachable, fully-scanned volume (actual_size_bytes decremented).
+    /// </summary>
+    public int StaleAssignmentsRemoved { get; init; }
     /// <summary>Errors (collisions, I/O failures) that prevent full recovery.</summary>
     public int Errors               { get; init; }
 

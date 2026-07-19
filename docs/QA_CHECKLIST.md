@@ -135,15 +135,61 @@ _Last revised: 2026-06-14. Companion to [ARCHIVE_AND_VOLUME_MODEL.md](ARCHIVE_AN
 
 ---
 
+## §10a Verify Volume — missing-assignment reconciliation
+
+| # | Action | Expected | Failure notes |
+|---|---|---|---|
+| 10a.1 | Assigned artifact present and valid at flat root → run Verify Volume | `verify-ok`; VA row and `actual_size_bytes` **preserved**; no `stale-assignment-removed` |
+| 10a.2 | Delete an assigned artifact from a **reachable** volume root, then run Verify Volume | `missing` → `stale-assignment-removed`: VA row removed; `actual_size_bytes` decremented by the artifact size; derived artifact marked `missing`; physical files / DA rows / content links **not** deleted |
+| 10a.3 | Place an assigned artifact under a wrong subfolder (misplaced), then run Verify Volume | `misplaced-restored`: moved flat; **assignment preserved**; not removed |
+| 10a.4 | Run Verify Volume on an **unreachable** volume (disk unplugged / path missing) | No assignments removed; `actual_size_bytes` unchanged (unreachable volumes are never reconciled) |
+| 10a.5 | Add an unknown file at root and a file inside `unwanted\`/`known\`/`unknown\`, then run Verify Volume | Unknown moved to `unknown\`; managed-folder and unknown files are **not** counted in active volume size |
+| 10a.6 | Re-run Verify Volume immediately after a missing reconciliation | Idempotent: no further `stale-assignment-removed`, no additional size change, no error |
+
+---
+
 ## §11 UNWANTED guard
 
 | # | Action | Expected | Failure notes |
 |---|---|---|---|
 | 11.1 | Mark a release as Unwanted | Status = "unwanted" |
-| 11.2 | Attempt ingest of a file matching that release | File moved to `incoming-skip\<platform>\`; release status remains "unwanted" |
+| 11.2 | Attempt ingest of a file matching that release | Fresh file classified (`unwanted-classified`) and moved to `incoming-skip\<platform>\` (`unwanted-moved`); release status remains "unwanted"; `Unwanted skipped` counter increments (separate from `Files skipped`) |
 | 11.3 | Run Append Volume plan | Artifact for the unwanted release does not appear as a candidate |
 | 11.4 | Confirm no automatic flow can set status to "present" | UpdateReleaseStatus SQL guard enforced |
 | 11.5 | Restore the release via Restore Wanted Release | Status → missing; catalog entry reappears |
+| 11.6 | Leave a stale file under `staging\<plat>\<datLine>\<release folder>\` for a release you then mark Unwanted, then re-ingest | File relocated to `incoming-skip\<platform>\` (`stale-staging-unwanted-moved`); empty release folder removed; `Stale staging moved` shown in summary. **Only** when the folder maps exclusively to unwanted releases — a wanted collision or orphan folder is left untouched |
+
+---
+
+## §11a Wanted staging resumability
+
+| # | Action | Expected | Failure notes |
+|---|---|---|---|
+| 11a.1 | Place **all** expected files for a wanted release under `staging\<plat>\<datLine>\<release folder>\`; ensure its derived artifact is **absent** from `archive`; run ingest (incoming may be empty) | Release is `staging-resumed`, routed through the normal transform path; `release-input-assembled` → `transform` → `derived-committed`; derived artifact appears in `archive`; release becomes `present`; `Staging resumed` shown in summary |
+| 11a.2 | Repeat 11a.1 but leave **one expected file missing** from staging | Release is **not** resumed (incomplete-staging); no transform runs; release remains incomplete; no data loss |
+| 11a.3 | Repeat 11a.1 but mark the release **Unwanted** first | Release is **not** resumed; handled by unwanted stale cleanup instead (§11.6) |
+| 11a.4 | Repeat 11a.1 for a release already `present` with a valid derived artifact | Release is **not** resumed (already-present); no re-transform; existing derived artifact untouched |
+| 11a.5 | Create an **ambiguous** staging folder (two release names sanitize to the same `SafeFolderName`), one wanted | Folder is **not** resumed; left untouched |
+| 11a.6 | Create an **orphan** staging folder (no matching release) | Folder is **not** resumed; left untouched |
+| 11a.7 | Confirm `source`-complete / derived-missing is **not** auto-retried | A release with files only in `source` (not `staging`) and no derived artifact is left as-is — this remains a deferred future workflow, not a bug |
+
+---
+
+## §11b Archive output policy (form, collision review, gate, guard)
+
+| # | Action | Expected | Failure notes |
+|---|---|---|---|
+| 11b.1 | Ingest a `release_shape` (CHD) DAT line release "Sonic Adventure (USA)" | Archive artifact is `archive\<plat>\<datLine>\Sonic Adventure (USA).chd` (release-name-based flat) — **not** `disc.chd` |
+| 11b.2 | Ingest a `release_folder` single-file (ZIP) line | Artifact is `archive\<plat>\<datLine>\<SafeReleaseName>.zip` (release-name-based flat) |
+| 11b.3 | Ingest a `file_extension` line where every release yields one output | Each artifact is `archive\<plat>\<datLine>\<SafeReleaseName>.<ext>` (release-name-based flat) |
+| 11b.4 | Ingest a `file_extension` line where a release yields ≥2 outputs | Artifacts are under `archive\<plat>\<datLine>\<SafeReleaseName>\` with **original** inner filenames |
+| 11b.5 | Ingest a No Compression Folder line | Derived artifact is the release folder `archive\<plat>\<datLine>\<SafeReleaseName>\` with original files preserved |
+| 11b.6 | Configure a SingleFileFlat line with two wanted releases whose names normalize to the same `SafeReleaseName` | Save opens the collision review dialog (Release A \| Release B); state = `collision_unresolved` |
+| 11b.7 | In collision review, click **Exclude A** | Only release A becomes unwanted; no files deleted; re-validates; if resolved, state = `valid_with_exclusions` and save completes |
+| 11b.8 | In collision review, click **Abort** | No release excluded (exclusions rolled back); **no** partial config saved; validation not marked valid; returns to configuration |
+| 11b.9 | Attempt ingest of a line with `collision_unresolved` (or a restored exclusion re-introducing a collision) | Ingestion **blocked before any file mutation**; `archive-validation-blocked` op + clear "Open DAT configuration…" error; incoming files untouched |
+| 11b.10 | Attempt ingest of a legacy DAT line never validated under the policy | Ingestion **allowed for now** (no stored fingerprint → unknown) |
+| 11b.11 | Force two releases to the same archive target of **different** content (guard test) | Runtime guard emits `archive-collision`; the existing archive file is **not** overwritten; source/staging preserved |
 
 ---
 

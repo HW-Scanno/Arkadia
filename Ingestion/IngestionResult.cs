@@ -30,6 +30,8 @@ public sealed class IngestionResult
     public int StaleStagingMoved        { get; set; }
     /// <summary>Stale source files relocated to incoming-skip because their release is now unwanted.</summary>
     public int StaleSourceMoved         { get; set; }
+    /// <summary>Wanted releases with complete staging (from an interrupted run) routed back through transform.</summary>
+    public int StagingResumed           { get; set; }
     public List<ExtractedArchiveInfo> ExtractedArchiveInfos { get; } = new();
     public List<IngestionOperation> Operations        { get; } = new();
     /// <summary>Non-null only for hard failures that aborted the pipeline.</summary>

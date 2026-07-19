@@ -62,6 +62,7 @@ public partial class IngestionProgressDialog : Window
         // "release-input-assembled" = staging → source (was "source-promoted")
         if (action == "release-input-assembled" && FilterSource.IsChecked == true) return true;
         if (action == "transform"                && FilterTransform.IsChecked == true) return true;
+        if (action == "staging-resumed"          && FilterTransform.IsChecked == true) return true;
         if (action == "derived-committed"        && FilterTransform.IsChecked == true) return true;
         if (action == "already-present"          && FilterTransform.IsChecked == true) return true;
         if (action == "rebuild-required"         && FilterTransform.IsChecked == true) return true;
@@ -73,15 +74,18 @@ public partial class IngestionProgressDialog : Window
         // Stale staging/source relocation for now-unwanted releases → Skip bucket
         if (action == "stale-staging-unwanted-moved" && FilterSkip.IsChecked == true) return true;
         if (action == "stale-source-unwanted-moved"  && FilterSkip.IsChecked == true) return true;
-        // incomplete-skipped is failure-like: show under Failed filter
-        if (action == "incomplete-skipped" && FilterFailed.IsChecked    == true) return true;
+        // incomplete-skipped / archive-collision / archive-validation-blocked are failure-like
+        if (action == "incomplete-skipped"         && FilterFailed.IsChecked == true) return true;
+        if (action == "archive-collision"          && FilterFailed.IsChecked == true) return true;
+        if (action == "archive-validation-blocked" && FilterFailed.IsChecked == true) return true;
         if (action.EndsWith("-failed")     && FilterFailed.IsChecked    == true) return true;
         // catch-all (e.g. discarded-by-strategy, archive-deleted, unrecognized) — bucket with Skip
         if (action != "hash" && action != "copy" && action != "stage-moved" && action != "delete"
             && action != "release-input-assembled" && action != "transform"
             && action != "derived-committed" && action != "already-present"
             && action != "rebuild-required" && action != "stale-artifact-overwritten"
-            && action != "incomplete-skipped"
+            && action != "incomplete-skipped" && action != "archive-collision"
+            && action != "archive-validation-blocked"
             && !action.EndsWith("-failed")
             && FilterSkip.IsChecked == true) return true;
         return false;

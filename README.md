@@ -296,11 +296,14 @@ Output lands in `publish\win-x64\`. Copy `libraries/lib-vlc/win-x64/` alongside 
 | DAT import (No-Intro, Redump, TOSEC, MAME, FBNeo, EggmansWorld) | Stable |
 | SHA-1 integrity verification | Stable |
 | Local archive management (ingest, verify, repair) | Stable |
+| Uniform per-DAT-line archive output form (SingleFileFlat / MultiFileReleaseFolder) | Stable |
+| Release-name-based archive naming + `ArchiveArtifactPathBuilder` write authority | Stable |
+| Archive collision review (Exclude A/B / Abort) + non-interactive ingestion gate + runtime no-overwrite guard | Stable |
 | Verify Archive — filesystem-first scan + classify + repair | Stable |
 | Verify Archive — redundant copy detection (volume re-verify before move) | Stable |
 | Append Volume — fill volume from archive with diagnostics | Stable |
 | Fillback Volume — move content between volumes | Stable |
-| Verify Volume — recursive scan + recovery + flat layout enforcement | Stable |
+| Verify Volume — recursive scan + recovery + flat layout enforcement + missing-assignment reconciliation | Stable |
 | UNWANTED curator veto (SQL-guarded; only RestoreWantedRelease exits) | Stable |
 | Purge workflow (planner, executor, analytics) | Stable |
 | Catalog browse with cover/media gallery | Stable |

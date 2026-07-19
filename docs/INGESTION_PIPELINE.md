@@ -29,6 +29,12 @@ The pipeline is orchestrated in `MainWindow.axaml.cs` (long method `OnIngestDatL
 | `incoming-skip\<platform>\` | Suspension zone — files Arkadia cannot or should not process |
 | `archive\<platform>\<datLine>\` | Destination — derived artifacts at rest (the durable output) |
 
+**Lifecycle:**
+
+```
+incoming → staging → source (temporary transform input) → derived artifact → archive / volume
+```
+
 > **`source` is transient.** It holds raw release inputs only while a transform is in progress. After the derived artifact is verified and its DB rows are committed, the source input is deleted. The **durable** output is the derived artifact in `archive\...\` (or, once assigned, on a volume) — never the raw source. Raw source lingers only when a transform fails (kept as recovery material) or a delete is denied by the OS.
 
 ---
@@ -88,6 +94,7 @@ Each step emits an `IngestionOperation` with an action key. Current action keys:
 |---|---|
 | `hash` | Incoming file hashed and matched against the DB |
 | `copy` / `stage-moved` | File copied or moved into `staging` for wanted processing |
+| `staging-resumed` | A wanted release with complete staging residue (interrupted run) routed back into the normal transform flow |
 | `unwanted-classified` | Matched an unwanted release — will not be staged (Phase 6) |
 | `unwanted-moved` | Physical file moved to `incoming-skip\<platform>` (Phase 8) |
 | `unwanted-move-failed` | Could not move an unwanted file to `incoming-skip` |
@@ -96,6 +103,8 @@ Each step emits an `IngestionOperation` with an action key. Current action keys:
 | `transform` | Compression/transform executed |
 | `derived-committed` | Derived artifact hashed and written to the DB |
 | `already-present` | Derived artifact already existed and was verified — no re-transform |
+| `archive-collision` | Runtime guard refused to overwrite a target owned by a different content identity |
+| `archive-validation-blocked` | Ingestion aborted by the archive-output gate (collision_unresolved / stale) |
 | `transform-failed` | Transform failed (raw source is retained for recovery) |
 | `incomplete-skipped` | Release could not be completed (missing expected files) |
 | `delete` | Incoming source file removed after successful staging/transform |
@@ -125,6 +134,13 @@ The final log and the progress-dialog summary render the **same** counter set fr
 | `Transforms failed` | Transform failures |
 | `Archives deleted` | Archive containers deleted after successful extraction |
 
+Two edge-case rows are shown **only when non-zero** (normal runs keep the 12 counters above):
+
+| Counter | Meaning |
+|---|---|
+| `Staging resumed` | Complete wanted staging residue routed back into the normal transform flow (`StagingResumed`) |
+| `Stale staging moved` / `Stale source moved` | Stale files for now-unwanted releases relocated to `incoming-skip` (`StaleStagingMoved` / `StaleSourceMoved`) |
+
 > `Unwanted skipped` is counted **separately** from `Files skipped`. An all-unwanted run therefore shows `Files skipped: 0` alongside a positive `Unwanted skipped`, and the summary adds a clarifying note ("no wanted releases acquired; N unwanted file(s) moved to incoming-skip").
 
 > **Counter caveat:** `Derived artifacts created` counts DB commits. On the per-file (`file_extension`) path a re-ingest of an already-derived file still records a commit, so the count can slightly exceed genuinely new artifacts; the release-shape (CHD) path is exact because it short-circuits to `Already present` before committing.
@@ -139,7 +155,8 @@ Files land in incoming-skip from multiple sources:
 
 | Source | Condition |
 |---|---|
-| Ingestion Phase 8 | All matched releases are unwanted |
+| Ingestion Phase 8 | All matched releases are unwanted (`unwanted-moved`) |
+| Ingestion stale cleanup | Leftover `staging`/`source` files for a now-unwanted release (`stale-staging-unwanted-moved` / `stale-source-unwanted-moved`) |
 | Verify Archive repair | UnwantedArchiveArtifact, UnknownArchiveFile, ArchiveHashMismatch |
 | Verify Archive repair | RedundantArchiveCopy (after volume re-verification) |
 
@@ -149,12 +166,62 @@ To reintroduce a suspended file, move it manually to `incoming\<platform>\` and 
 
 ---
 
+## Stale unwanted cleanup
+
+At the **start of each ingestion run** (before scan, so it applies even to an empty-incoming re-run), Arkadia relocates leftover `staging`/`source` work files that belong to releases now marked `unwanted`. This handles edge-case residue — a release partially staged then vetoed, or failed-transform/failed-delete residue for a release later vetoed — so it does not linger as active pipeline state.
+
+`Ingestion.StaleUnwantedCleanup` implements the rule; `Ingestion.IngestionPaths` provides the shared folder-naming and collision-safe destination logic.
+
+**Conservative rule — a folder is cleaned only when it maps *exclusively* to unwanted releases:**
+
+- Release folders are named `SafeFileName(release.Name)`. Because that sanitization can map two different names to the same folder, a folder is relocated **only if every release whose name maps to it is currently `unwanted`**.
+- Folders that also map to a wanted/pending/missing release (a name-collision) are **skipped** — the mapping is ambiguous.
+- Folders that map to **no** release (orphans) are **skipped** — Arkadia never guesses from folder names alone.
+- Transform workdirs live under `transform-work\`, never in `staging`/`source`, so an active in-flight transform is never in scope.
+
+**Behavior:**
+
+- Each file in a cleanable folder is **moved** (never deleted, never overwritten) to `incoming-skip\<platform>\` with a collision-safe name.
+- The emptied release folder (and any emptied subfolders) is removed **only if every file moved successfully**; if any move fails, everything is left in place.
+- Locked files or move failures are reported (`stale-staging-cleanup-failed` / `stale-source-cleanup-failed`) and never deleted.
+
+**Counters:** `StaleStagingMoved` and `StaleSourceMoved` are surfaced in the dialog summary and final log **only when non-zero**, so ordinary runs keep the standard counter set.
+
+> This is a **narrow, veto-scoped** cleanup — Arkadia does **not** perform a broad `staging`/`source` sweep. Residue for **wanted** releases (including failed-transform recovery material) is intentionally left untouched.
+
+---
+
+## Resuming interrupted wanted staging
+
+If a wanted release has **all** expected files already present in `staging` but **no valid derived artifact** (an ingest was interrupted after staging, before/around transform), Arkadia now **resumes** it: the release is routed back through the normal Phase 7 transform path so a derived artifact is produced.
+
+`Ingestion.ResumableStagingDetector` implements the detection; it runs at the **start** of each ingest — **before** the empty-incoming early return — so a resume can complete even with nothing new in `incoming` (no need to re-drop the raw files). Detected release IDs are added to `affectedReleaseIds`, and each is logged as `staging-resumed` and counted as `StagingResumed`.
+
+**The detector is read-only.** It only inspects the filesystem and the release list to decide routing — it never moves, deletes, or writes anything and never touches the DB. **Phase 7 still owns** everything that follows: release-input assembly (`release-input-assembled`), transform, derived commit (`derived-committed`), source cleanup, and the `present` status update. A release is never marked `present` unless its derived artifact is created/verified and DB rows are committed.
+
+**A release is resumed only when every guard passes** (otherwise it is skipped with a reason):
+
+| Not resumed when… | Reason |
+|---|---|
+| Release status is `unwanted` | `unwanted` — a curator veto (handled by stale cleanup) |
+| Release status is `present` | `already-present` — a valid derived artifact already exists (`present` is set only after a verified derived commit) |
+| Its `SafeFolderName` maps to more than one release | `ambiguous-folder` — no guessing on name-sanitization collisions |
+| No staging folder exists for it | `no-staging` |
+| Staging is missing one or more expected files | `incomplete-staging` — remains incomplete; nothing is promoted or transformed |
+
+Orphan staging folders (no matching release) are never considered — the detector iterates releases, not folders.
+
+> **`Staging resumed`** = complete wanted staging residue routed back into the normal transform flow. It does **not** re-transform an already-valid derived artifact (the processors' idempotency guards prevent that), and it does **not** touch `source` residue — see the deferred `source`-complete case under [Known limitations](#known-limitations-future-work).
+
+---
+
 ## UNWANTED guard summary
 
 | Guard | Location |
 |---|---|
 | Phase 6 fan-out excludes unwanted targets (`unwanted-classified`) | `MainWindow` ingest loop |
 | Phase 8 moves all-unwanted source to incoming-skip (`unwanted-moved`) | `MainWindow` Phase 8 |
+| Stale `staging`/`source` for now-unwanted releases relocated to incoming-skip (exclusive-mapping only) | `Ingestion.StaleUnwantedCleanup` |
 | `UpdateReleaseStatus` SQL guard prevents promotion resetting unwanted | `DatLineStore.UpdateReleaseStatus` |
 | `RestoreWantedRelease` is the only exit from unwanted | `DatLineStore.RestoreWantedRelease` |
 
@@ -162,12 +229,57 @@ See [UNWANTED_RELEASES.md](UNWANTED_RELEASES.md) for the full invariant table.
 
 ---
 
-## Known limitations (future cleanup — not current behavior)
+## Archive output validation: form, collision review, and gate
 
-These are **not** implemented today; they are noted so the docs don't over-promise:
+The archive layout is **uniform per DAT line** (see [ARCHIVE_AND_VOLUME_MODEL.md → Archive output policy](ARCHIVE_AND_VOLUME_MODEL.md#archive-output-policy)). Two independent layers keep it consistent:
 
-- **Stale `staging`/`source` is not swept.** If a transform fails (source kept for recovery), a source delete is denied by the OS, or a release is marked unwanted *after* it was partially staged in an earlier run, the leftover files remain in `staging`/`source`. Nothing automatically relocates or removes them yet. There is **no** stale-staging or stale-source sweeper. Manual cleanup (move aside to `incoming-skip`, never silent-delete) is the only current remedy.
-- **Interrupted-run resumability** for files already in `staging` is not yet automatic.
+### Config-time validation + collision review (interactive)
+
+Saving a DAT line in **ConfigureDatLineDialog** resolves the output form and validates the plan (`ArchiveOutputValidator`), persisting the result on `dat_lines`:
+
+| State | Meaning | Save |
+|---|---|---|
+| `valid_full_set` | full release set has no collisions; curation (Exclude/Restore) does not invalidate it | allowed |
+| `valid_with_exclusions` | full set collides, but the current wanted subset is clean because releases are unwanted | allowed |
+| `collision_unresolved` | current wanted subset still collides | opens review |
+| `unknown` | form could not be determined (e.g. strategy `none`) / legacy line | allowed |
+
+On `collision_unresolved` the **collision review dialog** opens: two colliding releases are shown **side-by-side (Release A | Release B)** with title, safe release name, status, planned filename/path, source files with sizes and SHA1/MD5/CRC, and content identity. Actions:
+
+- **Exclude A / Exclude B** — marks that release **unwanted** (existing curation; **no files deleted**), re-validates, and advances (3+ way groups resolve iteratively).
+- **Abort** — cancels; **rolls back** any exclusions made during review and persists **no** partial config (save is atomic).
+
+Collisions are **DAT-line ambiguities resolved curatorially** — never by switching only the colliding releases to a folder layout.
+
+### Ingestion gate (non-interactive)
+
+Ingestion **never shows a dialog**. At the very start of `RunIngestionWork` — before any staging/source/archive write, extraction, incoming move, or transform — the gate (`ArchiveIngestionGateEvaluator` → `ArchiveIngestionGate`) does a read-only re-validation:
+
+| Effective state | Ingestion |
+|---|---|
+| `valid_full_set` / `valid_with_exclusions` | **allowed** |
+| `collision_unresolved` (incl. a restored exclusion re-introducing a collision) | **blocked** |
+| `stale` (DAT/strategy changed since config — structural fingerprint mismatch) | **blocked** |
+| `unknown` / legacy (no stored fingerprint) | **allowed for now** |
+
+A block sets `result.Error`, emits `archive-validation-blocked`, and returns immediately — **incoming files and release statuses are untouched**. The message tells the user to *open DAT configuration and resolve/re-save*.
+
+### Runtime no-overwrite guard (defense-in-depth)
+
+Independently, every archive writer consults `ArchiveWriteCollisionGuard` immediately before writing: if the target exists and belongs to a **different `content_identity_key`** (or is unclaimed), it emits `archive-collision` and refuses to overwrite — the safety net if a collision ever slips past the config/gate layers.
+
+---
+
+## Known limitations (future work)
+
+- **Complete wanted staging IS now resumed** (see [Resuming interrupted wanted staging](#resuming-interrupted-wanted-staging)). What remains deferred:
+  - **Source-complete / derived-missing is not auto-retried.** A wanted release whose files sit in `source` (not `staging`) with no derived artifact is **not** automatically re-transformed. `source` residue can represent failed-transform recovery material, so retrying it is ambiguous — this remains a separate future workflow. The raw files are retained (no data loss).
+  - **`present` in DB but derived physically deleted from `archive`.** If a release is marked `present` but its derived artifact was manually removed from `archive`, it is treated as complete and not resumed. This is a pre-existing edge and remains out of scope; a normal re-ingest of the raw file still repairs it via `DerivedArtifactSatisfactionChecker`.
+- **Stale cleanup is scoped to unwanted releases only** (see below). Stale `staging`/`source` residue for wanted releases (e.g. failed-transform recovery material) is intentionally left in place and is **not** swept.
+- **Legacy `unknown` DAT lines are not gated yet.** A DAT line never configured/validated under the archive-output policy (no stored structural fingerprint) is **allowed** to ingest as-is until it is reconfigured — this avoids blocking existing users. Its writers still apply the runtime no-overwrite guard.
+- **Restore of an excluded release** in a `valid_with_exclusions` line can re-introduce a collision. The **ingestion gate catches it** (`collision_unresolved` → blocked), but a proactive UI hook that flags it at restore time is future UX work.
+- **`RunIngestionWork` remains partly UI-private**, so archive-output coverage is at the helper/seam level (validator, planner, gate evaluator, path builder, write planner, collision guard) plus code comments at the call sites, rather than a full end-to-end ingestion test.
+- **No archive migration has been performed.** Existing artifacts keep their stored `relative_path` (including legacy release-foldered / source-derived names); the new naming applies to new writes only.
 
 ---
 

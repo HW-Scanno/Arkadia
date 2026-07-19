@@ -1206,6 +1206,29 @@ public sealed class DatLineStore
         return list;
     }
 
+    /// <summary>
+    /// Returns the distinct content_identity_keys of derived artifacts recorded at the
+    /// given <paramref name="relativePath"/>. Used by the archive write collision guard:
+    /// an empty result with a physically-present target means the target is unclaimed;
+    /// a key different from the one being written means a genuine collision.
+    /// </summary>
+    public List<string> GetDerivedArtifactContentKeysByRelativePath(string relativePath)
+    {
+        var list = new List<string>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT DISTINCT content_identity_key
+            FROM derived_artifacts
+            WHERE relative_path = $rp
+            """;
+        cmd.Parameters.AddWithValue("$rp", relativePath);
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add(r.GetString(0));
+        return list;
+    }
+
     public DerivedArtifactRecord? GetDerivedByContentKey(string contentKey)
     {
         using var conn = Open();
@@ -1653,7 +1676,7 @@ public sealed class DatLineStore
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = $"""
-            SELECT da.id, r.name, da.file_name, da.derived_size_bytes, da.hashed_derived_sha1
+            SELECT da.id, r.name, da.file_name, da.derived_size_bytes, da.hashed_derived_sha1, da.relative_path
             FROM derived_artifacts da
             JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
             JOIN releases              r   ON r.id = rcl.release_id
@@ -1675,6 +1698,7 @@ public sealed class DatLineStore
                 FileName          = r.GetString(2),
                 SizeBytes         = r.GetInt64(3),
                 Sha1              = r.GetString(4),
+                RelativePath      = r.IsDBNull(5) ? "" : r.GetString(5),
             });
         }
 

@@ -76,9 +76,13 @@ public sealed class VolumeVerifyService
         }
 
         // ── Recursive scan ────────────────────────────────────────────────────
+        // Reachability gate: only when the root physically exists did we actually
+        // scan it. If it is unreachable, every assigned artifact would look
+        // "missing" — we must NOT reconcile assignments in that case (Case D).
+        bool volumeReachable = Directory.Exists(volumeRoot);
         log.Add("recursive-scan-start");
         var physFiles = ScanFiles(volumeRoot, log, foundFileProgress);
-        log.Add($"recursive-scan-complete  total={physFiles.Count}");
+        log.Add($"recursive-scan-complete  total={physFiles.Count}  reachable={volumeReachable}");
 
         // ── Classify each active-area file ────────────────────────────────────
         foreach (var pf in physFiles)
@@ -221,6 +225,29 @@ public sealed class VolumeVerifyService
             }
         }
 
+        // ── Reconcile stale assignments for confirmed-missing artifacts ────────
+        // Filesystem reality wins: the volume root was reachable and fully scanned,
+        // and these assigned artifacts are absent from disk (not merely misplaced —
+        // misplaced files keep their DerivedArtifactId, so they are excluded from
+        // missingVis). Remove the stale volume_artifacts row and decrement
+        // actual_size_bytes, mirroring the unwanted-found path. derived_artifacts and
+        // release_content_links are NOT touched — the DA is only marked 'missing'
+        // below, which makes it eligible for Append/Build again. Skipped when the
+        // volume is unreachable so an unscanned volume never loses assignments.
+        int staleAssignmentsRemoved = 0;
+        if (volumeReachable)
+        {
+            foreach (var vi in missingVis)
+            {
+                if (!vaByDaId.TryGetValue(vi.DerivedArtifactId, out var va)) continue;
+                _catalog.DeleteVolumeArtifactRow(va.Id, volumeId, vi.SizeBytes);
+                staleAssignmentsRemoved++;
+                log.Add($"stale-assignment-removed  da={vi.DerivedArtifactId}  removed-bytes={vi.SizeBytes}");
+                verifyProgress?.Report(new VolumeVerifyProgress(
+                    "stale-assignment-removed", vi.FileName, "assignment removed (file missing)"));
+            }
+        }
+
         // ── Apply DB state updates ────────────────────────────────────────────
         if (presentDaIds.Count > 0)
             store.BatchUpdateDerivedArtifactStatus(presentDaIds, "present");
@@ -266,6 +293,7 @@ public sealed class VolumeVerifyService
             UnknownFound         = unknownFound,
             UnknownMoved         = unknownMoved,
             Missing              = missingVis.Count,
+            StaleAssignmentsRemoved = staleAssignmentsRemoved,
             Errors               = errors,
             IsHealthy            = isHealthy,
             HadRecoveryActions   = hadRecovery,

@@ -1165,4 +1165,186 @@ public sealed class VolumeVerifyServiceTests : IDisposable
         var vasAfter = OpenCatalog().GetVolumeArtifacts(vol.Id);
         Assert.Empty(vasAfter);
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // M2/M3 — Missing assigned artifact reconciliation (stale VA + actual_size)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    private long ActualSize(string volumeId)
+        => OpenCatalog().GetVolumes().Single(v => v.Id == volumeId).ActualSizeBytes;
+
+    // ── 1 ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void VerifyVolume_MissingAssignedArtifact_RemovesStaleVolumeArtifactOnRepair()
+    {
+        var content  = new byte[] { 1, 2, 3, 4 };
+        var (vol, _) = ProvisionOne("vol-miss-remove", "Game.chd", content);
+        // Reachable but EMPTY volume root — the assigned file is physically absent.
+        Directory.CreateDirectory(VolumeRoot("vol-miss-remove"));
+
+        Assert.NotEmpty(OpenCatalog().GetVolumeArtifacts(vol.Id));
+
+        var result = RunVerify(vol);
+
+        Assert.Empty(OpenCatalog().GetVolumeArtifacts(vol.Id));   // stale VA removed
+        Assert.Equal(1, result.Missing);
+        Assert.Equal(1, result.StaleAssignmentsRemoved);
+    }
+
+    // ── 2 ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void VerifyVolume_MissingAssignedArtifact_DecrementsOrRecomputesActualSize()
+    {
+        var content  = new byte[] { 1, 2, 3, 4, 5 };
+        var (vol, _) = ProvisionOne("vol-miss-size", "Game.chd", content);
+        Directory.CreateDirectory(VolumeRoot("vol-miss-size"));
+
+        Assert.Equal(content.Length, ActualSize(vol.Id));   // seeded to one artifact
+
+        RunVerify(vol);
+
+        Assert.Equal(0, ActualSize(vol.Id));   // decremented after removing the stale assignment
+    }
+
+    // ── 3 ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void VerifyVolume_MissingAssignedArtifact_MarksDerivedArtifactMissing()
+    {
+        var content   = new byte[] { 7, 7, 7 };
+        var (vol, daId) = ProvisionOne("vol-miss-status", "Game.chd", content);
+        Directory.CreateDirectory(VolumeRoot("vol-miss-status"));
+
+        RunVerify(vol);
+
+        var da = OpenStore().GetDerivedArtifacts().Single(d => d.Id == daId);
+        Assert.Equal("missing", da.Status);
+    }
+
+    // ── 4 ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void VerifyVolume_MissingAssignedArtifact_BecomesAppendEligible()
+    {
+        // Append excludes only artifacts still assigned to a volume
+        // (AppendVolumePlanner AlreadyAssigned guard). Once the stale assignment
+        // is removed, the artifact is no longer excluded on that basis.
+        var content  = new byte[] { 2, 4, 6, 8 };
+        var (vol, daId) = ProvisionOne("vol-miss-eligible", "Game.chd", content);
+        Directory.CreateDirectory(VolumeRoot("vol-miss-eligible"));
+
+        RunVerify(vol);
+
+        var assignedDaIds = OpenCatalog().GetVolumeArtifacts(vol.Id)
+            .Select(va => va.DerivedArtifactId).ToList();
+        Assert.DoesNotContain(daId, assignedDaIds);   // no longer assigned → eligible again
+    }
+
+    // ── 5 ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void VerifyVolume_PresentAssignedArtifact_KeepsVolumeArtifactAndSize()
+    {
+        var content  = new byte[] { 3, 3, 3, 3 };
+        var (vol, _) = ProvisionOne("vol-present-keep", "Game.chd", content);
+        WriteVolumeFile("vol-present-keep", "Game.chd", content);   // present + valid
+
+        var result = RunVerify(vol);
+
+        Assert.Single(OpenCatalog().GetVolumeArtifacts(vol.Id));    // assignment kept
+        Assert.Equal(content.Length, ActualSize(vol.Id));          // size unchanged
+        Assert.Equal(0, result.StaleAssignmentsRemoved);
+        Assert.Equal(0, result.Missing);
+    }
+
+    // ── 6 ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void VerifyVolume_MisplacedWantedArtifact_DoesNotRemoveAssignment()
+    {
+        var content  = new byte[] { 5, 6, 7, 8 };
+        var (vol, _) = ProvisionOne("vol-misplaced-keep", "Game.chd", content);
+        // Correct content, wrong filename → misplaced (matched by hash), restored flat.
+        WriteVolumeFile("vol-misplaced-keep", "Game.bin", content);
+
+        var result = RunVerify(vol);
+
+        Assert.Equal(1, result.MisplacedRestored);
+        Assert.Single(OpenCatalog().GetVolumeArtifacts(vol.Id));    // assignment preserved
+        Assert.Equal(0, result.StaleAssignmentsRemoved);
+    }
+
+    // ── 7 ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void VerifyVolume_UnavailableVolume_DoesNotRemoveAssignments()
+    {
+        var content  = new byte[] { 9, 9, 9 };
+        var (vol, _) = ProvisionOne("vol-unavailable", "Game.chd", content);
+        // Volume root is NEVER created → unreachable. Must not reconcile assignments.
+
+        var result = RunVerify(vol);
+
+        Assert.Single(OpenCatalog().GetVolumeArtifacts(vol.Id));    // assignment untouched
+        Assert.Equal(0, result.StaleAssignmentsRemoved);
+        Assert.Equal(content.Length, ActualSize(vol.Id));          // size untouched
+    }
+
+    // ── 8 ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void VerifyVolume_ManagedFolders_NotCountedInActualSize()
+    {
+        var content  = new byte[] { 4, 4, 4, 4 };
+        var (vol, _) = ProvisionOne("vol-managed-size", "Game.chd", content);
+        WriteVolumeFile("vol-managed-size", "Game.chd", content);        // present artifact
+        WriteVolumeFileNested("vol-managed-size", "unwanted", "junk.chd", // managed folder
+            new byte[] { 100, 101, 102, 103, 104, 105, 106, 107 });
+
+        RunVerify(vol);
+
+        // Only the active artifact contributes to actual_size; managed content is ignored.
+        Assert.Equal(content.Length, ActualSize(vol.Id));
+    }
+
+    // ── 9 ─────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void VerifyVolume_UnknownFiles_NotCountedInActualSize()
+    {
+        var content  = new byte[] { 6, 6, 6 };
+        var (vol, _) = ProvisionOne("vol-unknown-size", "Game.chd", content);
+        WriteVolumeFile("vol-unknown-size", "Game.chd", content);        // present artifact
+        WriteVolumeFile("vol-unknown-size", "mystery.bin",              // unknown, will be moved
+            new byte[] { 200, 201, 202, 203, 204, 205 });
+
+        RunVerify(vol);
+
+        // Unknown file does not inflate actual_size.
+        Assert.Equal(content.Length, ActualSize(vol.Id));
+    }
+
+    // ── 10 ────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void VerifyVolume_RepairIsIdempotent_ForMissingAssignments()
+    {
+        var content  = new byte[] { 1, 1, 2, 2 };
+        var (vol, _) = ProvisionOne("vol-idempotent", "Game.chd", content);
+        Directory.CreateDirectory(VolumeRoot("vol-idempotent"));
+
+        var first = RunVerify(vol);
+        Assert.Equal(1, first.StaleAssignmentsRemoved);
+        Assert.Empty(OpenCatalog().GetVolumeArtifacts(vol.Id));
+        Assert.Equal(0, ActualSize(vol.Id));
+
+        // Second run: nothing left to reconcile — no change, no crash.
+        var second = RunVerify(vol);
+        Assert.Equal(0, second.StaleAssignmentsRemoved);
+        Assert.Equal(0, second.Missing);
+        Assert.Empty(OpenCatalog().GetVolumeArtifacts(vol.Id));
+        Assert.Equal(0, ActualSize(vol.Id));
+    }
 }

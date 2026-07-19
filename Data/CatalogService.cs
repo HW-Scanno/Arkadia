@@ -364,6 +364,15 @@ public sealed class CatalogService
             """;
         txRename.ExecuteNonQuery();
 
+        // ── Migrate dat_lines: archive output validation columns (M1b) ───────
+        // Nullable/additive — existing rows keep NULL, which reads as "unknown"
+        // (never defaulted to single_file_flat). Idempotent via TryAddColumn.
+        TryAddColumn(conn, "dat_lines", "archive_output_form                   TEXT NULL");
+        TryAddColumn(conn, "dat_lines", "archive_output_validation_state       TEXT NULL");
+        TryAddColumn(conn, "dat_lines", "archive_output_structural_fingerprint TEXT NULL");
+        TryAddColumn(conn, "dat_lines", "archive_output_exclusion_fingerprint  TEXT NULL");
+        TryAddColumn(conn, "dat_lines", "archive_output_validated_at_utc       TEXT NULL");
+
         // ── Seed default settings if missing ─────────────────────────────────
         using var settingSeed = conn.CreateCommand();
         settingSeed.CommandText = """
@@ -2613,5 +2622,72 @@ public sealed class CatalogService
         var conn = new SqliteConnection(_connectionString);
         conn.Open();
         return conn;
+    }
+
+    /// <summary>Idempotent additive column migration — ignored if the column already exists.</summary>
+    private static void TryAddColumn(SqliteConnection conn, string table, string columnDef)
+    {
+        try
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"ALTER TABLE {table} ADD COLUMN {columnDef}";
+            cmd.ExecuteNonQuery();
+        }
+        catch (SqliteException) { /* column already exists — safe to ignore */ }
+    }
+
+    // ── Archive output validation (M1b) ────────────────────────────────────────
+
+    /// <summary>Reads persisted archive-output validation metadata for a DAT line (nulls = unvalidated legacy).</summary>
+    public DatLineArchiveOutputValidation? GetDatLineArchiveOutputValidation(string datLineId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT archive_output_form, archive_output_validation_state,
+                   archive_output_structural_fingerprint, archive_output_exclusion_fingerprint,
+                   archive_output_validated_at_utc
+            FROM dat_lines WHERE id = $id
+            """;
+        cmd.Parameters.AddWithValue("$id", datLineId);
+        using var r = cmd.ExecuteReader();
+        if (!r.Read()) return null;
+        return new DatLineArchiveOutputValidation
+        {
+            DatLineId             = datLineId,
+            Form                  = r.IsDBNull(0) ? null : r.GetString(0),
+            State                 = r.IsDBNull(1) ? null : r.GetString(1),
+            StructuralFingerprint = r.IsDBNull(2) ? null : r.GetString(2),
+            ExclusionFingerprint  = r.IsDBNull(3) ? null : r.GetString(3),
+            ValidatedAtUtc        = r.IsDBNull(4) ? null : r.GetString(4),
+        };
+    }
+
+    /// <summary>
+    /// Persists archive-output validation metadata for a DAT line. Independent of the
+    /// transform-strategy update path. Fingerprints/timestamp may be null (e.g. unknown form).
+    /// </summary>
+    public void UpdateDatLineArchiveOutputValidation(
+        string datLineId, string form, string state,
+        string? structuralFingerprint, string? exclusionFingerprint, string? validatedAtUtc)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dat_lines SET
+                archive_output_form                   = $form,
+                archive_output_validation_state       = $state,
+                archive_output_structural_fingerprint = $struct,
+                archive_output_exclusion_fingerprint  = $excl,
+                archive_output_validated_at_utc       = $ts
+            WHERE id = $id
+            """;
+        cmd.Parameters.AddWithValue("$form",   form);
+        cmd.Parameters.AddWithValue("$state",  state);
+        cmd.Parameters.AddWithValue("$struct", (object?)structuralFingerprint ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$excl",   (object?)exclusionFingerprint  ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$ts",     (object?)validatedAtUtc        ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$id",     datLineId);
+        cmd.ExecuteNonQuery();
     }
 }

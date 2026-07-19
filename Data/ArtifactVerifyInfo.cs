@@ -14,4 +14,10 @@ public sealed class ArtifactVerifyInfo
     public required long   SizeBytes         { get; init; }
     /// <summary>Expected SHA1 hex string, or "" if not recorded.</summary>
     public required string Sha1              { get; init; }
+    /// <summary>
+    /// Derived artifact path relative to the app root (from <c>derived_artifacts.relative_path</c>),
+    /// e.g. <c>archive/dc/dc-redump-gd/Sonic Adventure (USA).chd</c>. Authoritative archive
+    /// location regardless of layout (flat or legacy release-foldered). "" if not populated.
+    /// </summary>
+    public string RelativePath { get; init; } = "";
 }
