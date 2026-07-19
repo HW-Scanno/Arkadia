@@ -172,17 +172,22 @@ public partial class MainWindow : Window
             {
                 var platformDatLines = allDatLines.Where(dl => dl.HardwareFamilyId == platform.Id).ToList();
                 var total   = platformDatLines.Sum(dl => dl.ReleaseCount);
-                int present = 0, outdated = 0;
+                int present = 0, outdated = 0, unwanted = 0, lost = 0;
                 foreach (var dl in platformDatLines.Where(dl => dl.DataStorePath.Length > 0))
                 {
                     var absPath = Path.Combine(_dataDir, dl.DataStorePath);
                     if (File.Exists(absPath))
                     {
-                        var (p, o) = new DatLineStore(absPath).GetStatusCounts();
-                        present  += p;
-                        outdated += o;
+                        var c = new DatLineStore(absPath).GetAllStatusCounts();
+                        present  += c.Present;
+                        outdated += c.Outdated;
+                        unwanted += c.Unwanted;
+                        lost     += c.Lost;
                     }
                 }
+                // Wanted = titles minus the unwanted curator veto. Missing is measured over
+                // the wanted subset so unwanted rows never inflate the "missing" figure.
+                int wanted = Math.Max(0, total - unwanted);
                 return new SystemPlatform
                 {
                     Id           = platform.Id,
@@ -193,8 +198,9 @@ public partial class MainWindow : Window
                     TotalTitles  = total,
                     Present      = present,
                     Outdated     = outdated,
-                    Missing      = Math.Max(0, total - present - outdated),
-                    Lost         = 0,
+                    Missing      = Math.Max(0, wanted - present - outdated - lost),
+                    Lost         = lost,
+                    Unwanted     = unwanted,
                 };
             })
             .ToList();
@@ -323,12 +329,13 @@ public partial class MainWindow : Window
 
         var coverageBlock = new TextBlock
         {
-            Text              = p.Coverage,
+            Text              = p.WantedCoverage,
             FontSize          = 11,
             Foreground        = new SolidColorBrush(Color.Parse("#6B68EE")),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Margin            = new Avalonia.Thickness(8, 0, 0, 0),
         };
+        ToolTip.SetTip(coverageBlock, "Wanted coverage (excludes unwanted)");
 
         var datCountBlock = new TextBlock
         {
@@ -709,11 +716,13 @@ public partial class MainWindow : Window
 
         AddStat("DAT Lines", $"{p.DatLines:N0}");
         AddStat("Titles",    $"{p.TotalTitles:N0}");
-        AddStat("Present",   $"{p.Present:N0}");
+        AddStat("Wanted",    $"{p.WantedTitles:N0}");
+        AddStat("Present",   $"{p.PresentWanted:N0}");
         if (p.Outdated > 0) AddStat("Outdated", $"{p.Outdated:N0}");
         AddStat("Missing",   $"{p.Missing:N0}");
         if (p.Lost > 0)     AddStat("Lost",     $"{p.Lost:N0}");
-        AddStat("Coverage",  p.Coverage, isAccent: true);
+        if (p.Unwanted > 0) AddStat("Unwanted", $"{p.Unwanted:N0}  ·  {p.UnwantedShare}");
+        AddStat("Wanted Coverage", p.WantedCoverage, isAccent: true);
 
         panel.Children.Add(statsGrid);
     }
@@ -12734,8 +12743,8 @@ public partial class MainWindow : Window
         };
         row.ColumnDefinitions = new ColumnDefinitions($"{labelWidth},*,{valueWidth}");
 
-        // Col 0: Label
-        row.Children.Add(new TextBlock
+        // Col 0: Label — ellipsized; full value on hover so long strategy/type names stay readable
+        var labelBlock = new TextBlock
         {
             Text              = label,
             FontSize          = 12,
@@ -12743,7 +12752,9 @@ public partial class MainWindow : Window
             Foreground        = new SolidColorBrush(Color.Parse(isFirst ? "#DDDDEF" : "#AAAACC")),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
-        });
+        };
+        if (!string.IsNullOrEmpty(label)) ToolTip.SetTip(labelBlock, label);
+        row.Children.Add(labelBlock);
 
         // Col 1: Bar — wrapper Border approach: track is a standalone Border (HAlign=Stretch)
         // whose width comes from the parent column, never from internal column structure.
@@ -13335,7 +13346,8 @@ public partial class MainWindow : Window
             SolidColorBrush? fg     = null,
             FontWeight?      fwt    = null,
             int fontSize            = 12,
-            bool noTrim             = false)
+            bool noTrim             = false,
+            bool tip                = false)
         {
             var tb = new TextBlock
             {
@@ -13351,6 +13363,8 @@ public partial class MainWindow : Window
                                       : Avalonia.Media.TextTrimming.CharacterEllipsis,
                 TextWrapping        = Avalonia.Media.TextWrapping.NoWrap,
             };
+            // Full value on hover for clip-prone label/secondary cells.
+            if (tip && !string.IsNullOrEmpty(text)) ToolTip.SetTip(tb, text);
             Grid.SetColumn(tb, col);
             return tb;
         }
@@ -13378,12 +13392,12 @@ public partial class MainWindow : Window
             // Col 0: Disk label (bold)
             row.Children.Add(MakeCell(0, label,
                 fg:  new SolidColorBrush(Color.Parse(labelHex)),
-                fwt: FontWeight.SemiBold));
+                fwt: FontWeight.SemiBold, tip: true));
 
             // Col 1: Volume count secondary text (blank when 0)
             if (secondary.Length > 0)
                 row.Children.Add(MakeCell(1, secondary,
-                    fg: new SolidColorBrush(Color.Parse(secHex))));
+                    fg: new SolidColorBrush(Color.Parse(secHex)), tip: true));
 
             // Col 2: Occupancy bar — same pattern as Section A / Volume Heatmap
             {
@@ -13487,7 +13501,8 @@ public partial class MainWindow : Window
             Avalonia.Layout.HorizontalAlignment align = Avalonia.Layout.HorizontalAlignment.Left,
             SolidColorBrush? fg  = null,
             FontWeight?      fwt = null,
-            int fontSize         = 12)
+            int fontSize         = 12,
+            bool tip             = false)
         {
             var tb = new TextBlock
             {
@@ -13500,6 +13515,8 @@ public partial class MainWindow : Window
                 HorizontalAlignment = align,
                 TextTrimming        = Avalonia.Media.TextTrimming.CharacterEllipsis,
             };
+            // Full value on hover for clip-prone label/platform cells.
+            if (tip && !string.IsNullOrEmpty(text)) ToolTip.SetTip(tb, text);
             Grid.SetColumn(tb, col);
             return tb;
         }
@@ -13527,11 +13544,11 @@ public partial class MainWindow : Window
             // Col 0: Volume label
             row.Children.Add(MakeCell(0, label,
                 fg:  new SolidColorBrush(Color.Parse(labelHex)),
-                fwt: FontWeight.SemiBold));
+                fwt: FontWeight.SemiBold, tip: true));
 
             // Col 1: Platform · files
             row.Children.Add(MakeCell(1, platform,
-                fg: new SolidColorBrush(Color.Parse(platHex))));
+                fg: new SolidColorBrush(Color.Parse(platHex)), tip: true));
 
             // Col 2: Occupancy bar — wrapper Border (full-width) + proportional fillGrid inside
             // Uses the same layout approach as Section A: track is a standalone Border whose

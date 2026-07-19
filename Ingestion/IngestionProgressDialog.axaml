@@ -34,12 +34,11 @@
           0 Auto  — title
           1 Auto  — progress area (stays visible after completion)
           2 Auto  — filter bar
-          3 Auto  — column headers
-          4 *     — scrollable operations rows
-          5 Auto  — summary / failed
-          6 Auto  — OK button
+          3 *     — operations table (header + scrollable rows, shared horizontal scroll)
+          4 Auto  — summary / failed
+          5 Auto  — OK button
     -->
-    <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto" Margin="28,24,28,20">
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto,Auto" Margin="28,24,28,20">
 
         <!-- Row 0: Title -->
         <TextBlock Grid.Row="0"
@@ -121,59 +120,73 @@
             </StackPanel>
         </Border>
 
-        <!-- Row 3: Column headers — always visible -->
-        <Border Grid.Row="3"
-                Padding="12,6,12,6"
-                Background="#141420"
-                BorderBrush="#242433" BorderThickness="0,1,0,1">
-            <Grid ColumnDefinitions="2*,100,3*">
-                <TextBlock Grid.Column="0" Classes="col-header" Text="FILE"/>
-                <TextBlock Grid.Column="1" Classes="col-header" Text="ACTION"/>
-                <TextBlock Grid.Column="2" Classes="col-header" Text="DESTINATION"/>
+        <!-- Row 3: Operations table — header + rows share one horizontal scroll.
+             Outer ScrollViewer scrolls horizontally (both header and rows move together);
+             the inner ScrollViewer handles vertical row overflow. Columns are fixed pixel
+             widths so the content is wider than the viewport, revealing the horizontal bar.
+             Total content width = 420 + 200 + 440 (columns) + 24 (12+12 border padding). -->
+        <ScrollViewer Grid.Row="3"
+                      x:Name="OpsHScrollViewer"
+                      HorizontalScrollBarVisibility="Auto"
+                      VerticalScrollBarVisibility="Disabled"
+                      Margin="0,0,0,10">
+            <Grid RowDefinitions="Auto,*" Width="1084">
+
+                <!-- Column headers — scroll horizontally with the rows, fixed vertically -->
+                <Border Grid.Row="0"
+                        Padding="12,6,12,6"
+                        Background="#141420"
+                        BorderBrush="#242433" BorderThickness="0,1,0,1">
+                    <Grid ColumnDefinitions="420,200,440">
+                        <TextBlock Grid.Column="0" Classes="col-header" Text="FILE"/>
+                        <TextBlock Grid.Column="1" Classes="col-header" Text="ACTION"/>
+                        <TextBlock Grid.Column="2" Classes="col-header" Text="DESTINATION"/>
+                    </Grid>
+                </Border>
+
+                <!-- Scrollable operations rows — fills remaining height -->
+                <Border Grid.Row="1"
+                        Background="#1A1A24">
+                    <ScrollViewer x:Name="OpsScrollViewer"
+                                  HorizontalScrollBarVisibility="Disabled"
+                                  VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="OpsList" Padding="0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="ing:IngestionOperation">
+                                    <Border Padding="12,3,12,3"
+                                            BorderBrush="#0D0D13" BorderThickness="0,0,0,1">
+                                        <Grid ColumnDefinitions="420,200,440">
+                                            <TextBlock Grid.Column="0"
+                                                       Text="{Binding Object}"
+                                                       FontSize="11"
+                                                       Foreground="#CCCCDD"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1"
+                                                       Text="{Binding Label}"
+                                                       FontSize="11" FontWeight="Bold"
+                                                       Foreground="{Binding Action, Converter={StaticResource ActionColor}}"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="2"
+                                                       Text="{Binding Destination}"
+                                                       FontSize="10"
+                                                       FontFamily="Consolas,Courier New,monospace"
+                                                       Foreground="#888899"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       VerticalAlignment="Center"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Border>
+
             </Grid>
-        </Border>
+        </ScrollViewer>
 
-        <!-- Row 4: Scrollable operations rows — fills remaining height -->
-        <Border Grid.Row="4"
-                Background="#1A1A24"
-                Margin="0,0,0,10">
-            <ScrollViewer x:Name="OpsScrollViewer"
-                          HorizontalScrollBarVisibility="Disabled"
-                          VerticalScrollBarVisibility="Auto">
-                <ItemsControl x:Name="OpsList" Padding="0">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="ing:IngestionOperation">
-                            <Border Padding="12,3,12,3"
-                                    BorderBrush="#0D0D13" BorderThickness="0,0,0,1">
-                                <Grid ColumnDefinitions="2*,100,3*">
-                                    <TextBlock Grid.Column="0"
-                                               Text="{Binding Object}"
-                                               FontSize="11"
-                                               Foreground="#CCCCDD"
-                                               TextTrimming="CharacterEllipsis"
-                                               VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="1"
-                                               Text="{Binding Label}"
-                                               FontSize="11" FontWeight="Bold"
-                                               Foreground="{Binding Action, Converter={StaticResource ActionColor}}"
-                                               VerticalAlignment="Center"/>
-                                    <TextBlock Grid.Column="2"
-                                               Text="{Binding Destination}"
-                                               FontSize="10"
-                                               FontFamily="Consolas,Courier New,monospace"
-                                               Foreground="#888899"
-                                               TextTrimming="CharacterEllipsis"
-                                               VerticalAlignment="Center"/>
-                                </Grid>
-                            </Border>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
-        </Border>
-
-        <!-- Row 5: Summary / Failed panels -->
-        <StackPanel Grid.Row="5" Spacing="0">
+        <!-- Row 4: Summary / Failed panels -->
+        <StackPanel Grid.Row="4" Spacing="0">
 
             <StackPanel x:Name="SummaryPanel" IsVisible="False" Spacing="0">
                 <TextBlock x:Name="SumStatusTitle"
@@ -209,8 +222,8 @@
 
         </StackPanel>
 
-        <!-- Row 6: OK button -->
-        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right"
+        <!-- Row 5: OK button -->
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right"
                     Margin="0,4,0,0">
             <Button x:Name="OkButton"
                     Content="OK"

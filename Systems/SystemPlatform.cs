@@ -1,3 +1,5 @@
+using System;
+
 namespace Arkadia.Systems;
 
 public sealed class SystemPlatform
@@ -14,11 +16,41 @@ public sealed class SystemPlatform
     public required int    Lost         { get; init; }
 
     /// <summary>
-    /// Coverage = present / current-DAT-total.
-    /// TotalTitles = dat_lines.release_count (current DAT, excludes outdated rows).
-    /// Present = releases with status='present' in current DAT (excludes outdated).
+    /// Releases explicitly vetoed by the curator (status = 'unwanted').
+    /// Excluded from the wanted-coverage denominator; reported separately as a share.
     /// </summary>
-    public string Coverage => TotalTitles > 0
-        ? $"{Present * 100 / TotalTitles}%"
-        : "—";
+    public int Unwanted { get; init; }
+
+    /// <summary>
+    /// Releases we intend to keep = all titles minus the unwanted curator veto.
+    /// Coverage answers "of the releases I want to keep, how complete is this system?",
+    /// so the denominator must exclude unwanted (not merely-hidden catalog rows).
+    /// </summary>
+    public int WantedTitles => Math.Max(0, TotalTitles - Unwanted);
+
+    /// <summary>
+    /// Present releases are inherently wanted — 'unwanted' and 'present' are mutually
+    /// exclusive status values, so the present count never includes unwanted rows.
+    /// </summary>
+    public int PresentWanted => Present;
+
+    /// <summary>
+    /// Wanted coverage percent, or null when there are no wanted releases.
+    /// Integer division mirrors the previous coverage formula exactly when Unwanted = 0.
+    /// Null is surfaced as "N/A" so an all-unwanted system does not read as 0% missing.
+    /// </summary>
+    public int? WantedCoveragePercent =>
+        WantedTitles > 0 ? PresentWanted * 100 / WantedTitles : (int?)null;
+
+    /// <summary>Wanted coverage as a display string; "N/A" when there are no wanted releases.</summary>
+    public string WantedCoverage =>
+        WantedCoveragePercent is { } pct ? $"{pct}%" : "N/A";
+
+    /// <summary>Curation/exclusion ratio: unwanted over ALL releases (not the wanted subset).</summary>
+    public int UnwantedSharePercent =>
+        TotalTitles > 0 ? Unwanted * 100 / TotalTitles : 0;
+
+    /// <summary>Unwanted share as a display string; "—" when the system has no releases.</summary>
+    public string UnwantedShare =>
+        TotalTitles > 0 ? $"{UnwantedSharePercent}%" : "—";
 }
