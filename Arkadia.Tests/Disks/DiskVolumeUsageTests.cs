@@ -125,6 +125,58 @@ public sealed class DiskVolumeUsageTests
         Assert.True(untrackedIdx < freeIdx);
     }
 
+    // ── column weights (proportional Grid bar) ─────────────────────────────────
+
+    [Fact]
+    public void DiskUsageBar_UsesOneColumnPerSegment()
+    {
+        var segs    = DiskVolumeUsageSegments.Build(Cap, Used, new[] { V, V, V, V });
+        var weights = DiskVolumeUsageSegments.ToColumnWeights(segs);
+        Assert.Equal(segs.Count, weights.Length);      // exactly one column per segment
+        Assert.All(weights, w => Assert.True(w > 0));  // no zero/collapsed columns
+    }
+
+    [Fact]
+    public void DiskUsageBar_EqualVolumeWeightsRemainEqual()
+    {
+        var segs    = DiskVolumeUsageSegments.Build(Cap, Used, new[] { V, V, V, V });
+        var weights = DiskVolumeUsageSegments.ToColumnWeights(segs);
+        var volWeights = segs.Select((s, i) => (s, w: weights[i]))
+                             .Where(t => t.s.Kind == DiskUsageSegmentKind.Volume)
+                             .Select(t => t.w).ToList();
+        Assert.Equal(4, volWeights.Count);
+        Assert.True(volWeights.Max() - volWeights.Min() < 0.001);   // four near-equal columns
+    }
+
+    [Fact]
+    public void DiskUsageBar_FreeSegmentIsTrailingAndSmall()
+    {
+        var segs    = DiskVolumeUsageSegments.Build(Cap, Used, new[] { V, V, V, V });
+        var weights = DiskVolumeUsageSegments.ToColumnWeights(segs);
+
+        Assert.Equal(DiskUsageSegmentKind.Free, segs[^1].Kind);     // free is the LAST column
+        var freeWeight = weights[^1];
+        var volWeights = segs.Select((s, i) => (s, w: weights[i]))
+                             .Where(t => t.s.Kind == DiskUsageSegmentKind.Volume)
+                             .Select(t => t.w);
+        Assert.All(volWeights, vw => Assert.True(freeWeight < vw)); // free smaller than every volume
+    }
+
+    [Fact]
+    public void DiskUsageBar_DoesNotUseRemainderForLastVolume()
+    {
+        // The last volume column equals its OWN capacity fraction, NOT "capacity − others".
+        var segs    = DiskVolumeUsageSegments.Build(Cap, Used, new[] { V, V, V, V });
+        var weights = DiskVolumeUsageSegments.ToColumnWeights(segs);
+
+        var volEntries = segs.Select((s, i) => (s, w: weights[i]))
+                             .Where(t => t.s.Kind == DiskUsageSegmentKind.Volume).ToList();
+        var lastVolWeight  = volEntries[^1].w;
+        var firstVolWeight = volEntries[0].w;
+        Assert.True(System.Math.Abs(lastVolWeight - firstVolWeight) < 0.001);   // same as the first
+        Assert.InRange(lastVolWeight, 0.24, 0.25);                              // ≈ 460/1863, not a remainder
+    }
+
     [Fact]
     public void DiskVolumeUsageSegments_ZeroCapacity_ReturnsNoSegments()
         => Assert.Empty(DiskVolumeUsageSegments.Build(0, 0, new[] { V }));

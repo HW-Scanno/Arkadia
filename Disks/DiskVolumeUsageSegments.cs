@@ -62,4 +62,19 @@ internal static class DiskVolumeUsageSegments
 
         return result;
     }
+
+    /// <summary>
+    /// Star-column weights for a proportional Grid usage bar: exactly one weight per segment,
+    /// in order, each equal to that segment's own capacity fraction (never cumulative and never
+    /// a "remainder"). Fed into <c>GridLength(weight, GridUnitType.Star)</c> so Avalonia sizes
+    /// each column proportionally to the actual bar width — equal volumes get equal columns and
+    /// free space becomes a small trailing column, with no pixel-width assumption or clipping.
+    /// </summary>
+    internal static double[] ToColumnWeights(IReadOnlyList<DiskUsageSegment> segments)
+    {
+        var weights = new double[segments.Count];
+        for (int i = 0; i < segments.Count; i++)
+            weights[i] = segments[i].Weight;
+        return weights;
+    }
 }

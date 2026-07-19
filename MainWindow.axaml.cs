@@ -2550,43 +2550,44 @@ public partial class MainWindow : Window
 
     private void BuildDiskSegmentBar(DiskEntry disk, List<Data.VolumeRecord> trackedVolumes)
     {
-        // Replace the bar Border content with a horizontal stack of segments.
+        // Replace the bar content with a proportional Grid: one star-sized column per segment.
+        // Star columns size to the ACTUAL bar width (unknown at build time), so no pixel
+        // assumption can clip the last segment — equal volumes render as equal columns.
         DiskSegmentBar.Child = null;
         if (disk.DeclaredCapacityBytes <= 0)
             return;
 
-        var panel = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal };
-        const double BarWidth = 460.0; // detail panel is 500 - 40 margin
-        const double MinSegPx = 2.0;   // keeps a real (non-free) segment visible; never applied to free
-
-        // Proportional weights (own size / capacity) from the single authority — each volume
-        // is coloured by its index, matching the legend exactly. Free space is the trailing
-        // segment and can be a true sliver without shrinking the last volume.
         var segments = Disks.DiskVolumeUsageSegments.Build(
             disk.DeclaredCapacityBytes,
             disk.UsedBytes,
             trackedVolumes.Select(v => v.ActualSizeBytes).ToList());
+        if (segments.Count == 0)
+            return;
 
-        foreach (var seg in segments)
+        var weights = Disks.DiskVolumeUsageSegments.ToColumnWeights(segments);
+
+        var grid = new Grid { HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+        for (int i = 0; i < segments.Count; i++)
         {
-            var color = seg.Kind switch
+            grid.ColumnDefinitions.Add(new ColumnDefinition(new GridLength(weights[i], GridUnitType.Star)));
+
+            var color = segments[i].Kind switch
             {
-                Disks.DiskUsageSegmentKind.Volume    => Color.Parse(Disks.DiskVolumeColorPalette.HexForIndex(seg.VolumeIndex)),
+                Disks.DiskUsageSegmentKind.Volume    => Color.Parse(Disks.DiskVolumeColorPalette.HexForIndex(segments[i].VolumeIndex)),
                 Disks.DiskUsageSegmentKind.Untracked => Color.Parse("#3A3A52"),
                 _                                     => Color.Parse("#1E1E2E"), // Free — dim/neutral
             };
-            var width = seg.Weight * BarWidth;
-            if (seg.Kind != Disks.DiskUsageSegmentKind.Free)
-                width = Math.Max(MinSegPx, width);   // free stays a true sliver; volumes stay proportional
-            panel.Children.Add(new Border
+            var cell = new Border
             {
-                Width      = width,
-                Height     = 17,
-                Background = new SolidColorBrush(color),
-            });
+                Height              = 17,
+                Background          = new SolidColorBrush(color),
+                HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+            };
+            Grid.SetColumn(cell, i);
+            grid.Children.Add(cell);
         }
 
-        DiskSegmentBar.Child = panel;
+        DiskSegmentBar.Child = grid;
     }
 
     /// <summary>
