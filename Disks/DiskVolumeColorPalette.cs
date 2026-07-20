@@ -35,6 +35,16 @@ internal static class DiskVolumeColorPalette
         "#FF7043", // coral
     };
 
+    /// <summary>Dim/neutral colour for used-but-untracked disk space (not assigned to a volume).</summary>
+    internal const string UntrackedHex = "#3A3A52";
+
+    /// <summary>
+    /// Soft-white colour for FREE space. White/near-white is deliberately reserved from the
+    /// volume palette, so free space reads unambiguously and stays clearly distinct from every
+    /// volume colour and from untracked space — while not being pure harsh white on the dark UI.
+    /// </summary>
+    internal const string FreeSpaceHex = "#F5F5F5";
+
     /// <summary>
     /// Hex colour for a volume at <paramref name="index"/>. Cycles after the palette is
     /// exhausted; negative indices are normalised so the result is always a valid entry.

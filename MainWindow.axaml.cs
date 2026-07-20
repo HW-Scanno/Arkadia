@@ -2453,51 +2453,15 @@ public partial class MainWindow : Window
 
         long trackedBytes   = trackedVolumes.Sum(v => v.ActualSizeBytes);
         long untrackedBytes = Math.Max(0L, entry.UsedBytes - trackedBytes);
+        long freeBytes      = Math.Max(0L, entry.DeclaredCapacityBytes - entry.UsedBytes);
 
-        for (int vi = 0; vi < trackedVolumes.Count; vi++)
-        {
-            var v = trackedVolumes[vi];
-            var volColor = Color.Parse(Disks.DiskVolumeColorPalette.HexForIndex(vi));
-            DiskVolumeList.Children.Add(new Grid
-            {
-                ColumnDefinitions = new Avalonia.Controls.ColumnDefinitions("Auto,*,Auto"),
-                Margin = new Avalonia.Thickness(0, 0, 0, 4),
-                Children =
-                {
-                    new Border
-                    {
-                        [Grid.ColumnProperty] = 0,
-                        Width             = 12,
-                        Height            = 12,
-                        CornerRadius      = new Avalonia.CornerRadius(2),
-                        Background        = new SolidColorBrush(volColor),
-                        BorderBrush       = new SolidColorBrush(Color.FromArgb(70, 0, 0, 0)),
-                        BorderThickness   = new Avalonia.Thickness(1),
-                        Margin            = new Avalonia.Thickness(0, 0, 9, 0),
-                        VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                    },
-                    new TextBlock
-                    {
-                        [Grid.ColumnProperty] = 1,
-                        Text         = v.Label,
-                        FontSize     = 12,
-                        Foreground   = new SolidColorBrush(Color.Parse("#CCCCDD")),
-                        TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
-                    },
-                    new TextBlock
-                    {
-                        [Grid.ColumnProperty] = 2,
-                        Text       = FormatBytes(v.ActualSizeBytes),
-                        FontSize   = 12,
-                        Foreground = new SolidColorBrush(Color.Parse("#888899")),
-                    },
-                },
-            });
-        }
+        // Legend rows are built from the shared model so they cannot drift from the bar:
+        // volumes (index-coloured) → untracked (dim) → Free Space (soft-white).
+        var legendRows = Disks.DiskVolumeLegend.Build(
+            trackedVolumes.Select(v => (v.Label, v.ActualSizeBytes)).ToList(),
+            untrackedBytes, freeBytes);
 
-        // Untracked usage: disk.UsedBytes exceeds the sum of tracked volume sizes.
-        // This covers filesystem overhead, partition tables, non-volume files, etc.
-        if (untrackedBytes > 0)
+        void AddLegendRow(string colorHex, string label, long sizeBytes, bool dimLabel)
         {
             DiskVolumeList.Children.Add(new Grid
             {
@@ -2511,7 +2475,7 @@ public partial class MainWindow : Window
                         Width             = 12,
                         Height            = 12,
                         CornerRadius      = new Avalonia.CornerRadius(2),
-                        Background        = new SolidColorBrush(Color.Parse("#3A3A52")),
+                        Background        = new SolidColorBrush(Color.Parse(colorHex)),
                         BorderBrush       = new SolidColorBrush(Color.FromArgb(70, 0, 0, 0)),
                         BorderThickness   = new Avalonia.Thickness(1),
                         Margin            = new Avalonia.Thickness(0, 0, 9, 0),
@@ -2520,15 +2484,15 @@ public partial class MainWindow : Window
                     new TextBlock
                     {
                         [Grid.ColumnProperty] = 1,
-                        Text         = "Other disk usage",
+                        Text         = label,
                         FontSize     = 12,
-                        Foreground   = new SolidColorBrush(Color.Parse("#888899")),
+                        Foreground   = new SolidColorBrush(Color.Parse(dimLabel ? "#888899" : "#CCCCDD")),
                         TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
                     },
                     new TextBlock
                     {
                         [Grid.ColumnProperty] = 2,
-                        Text       = FormatBytes(untrackedBytes),
+                        Text       = FormatBytes(sizeBytes),
                         FontSize   = 12,
                         Foreground = new SolidColorBrush(Color.Parse("#888899")),
                     },
@@ -2536,7 +2500,11 @@ public partial class MainWindow : Window
             });
         }
 
-        if (volumes.Count == 0)
+        foreach (var row in legendRows)
+            AddLegendRow(row.ColorHex, row.Label, row.SizeBytes,
+                         dimLabel: row.Kind == Disks.DiskUsageSegmentKind.Untracked);
+
+        if (legendRows.Count == 0)
             DiskVolumeList.Children.Add(new TextBlock
             {
                 Text = "No volumes assigned",
@@ -2574,8 +2542,8 @@ public partial class MainWindow : Window
             var color = segments[i].Kind switch
             {
                 Disks.DiskUsageSegmentKind.Volume    => Color.Parse(Disks.DiskVolumeColorPalette.HexForIndex(segments[i].VolumeIndex)),
-                Disks.DiskUsageSegmentKind.Untracked => Color.Parse("#3A3A52"),
-                _                                     => Color.Parse("#1E1E2E"), // Free — dim/neutral
+                Disks.DiskUsageSegmentKind.Untracked => Color.Parse(Disks.DiskVolumeColorPalette.UntrackedHex),
+                _                                     => Color.Parse(Disks.DiskVolumeColorPalette.FreeSpaceHex), // Free — soft white
             };
             var cell = new Border
             {

@@ -178,6 +178,100 @@ public sealed class DiskVolumeUsageTests
     }
 
     [Fact]
+    public void DiskVolumeUsageSegments_FreeSpace_IsTrailingSegment()
+    {
+        var segs = DiskVolumeUsageSegments.Build(Cap, Used, new[] { V, V, V, V });
+        Assert.Equal(DiskUsageSegmentKind.Free, segs[^1].Kind);   // free is the LAST segment
+    }
+
+    [Fact]
+    public void DiskVolumeUsageSegments_FreeSpace_UsesOwnWeight()
+    {
+        // Free weight = free/capacity (≈23/1863 ≈ 0.0124), not a leftover remainder.
+        var segs = DiskVolumeUsageSegments.Build(Cap, Used, new[] { V, V, V, V });
+        long free = Cap - Used;
+        Assert.Equal((double)free / Cap, segs[^1].Weight, 4);
+    }
+
+    [Fact]
+    public void DiskVolumeUsageSegments_NoVolumes_AllFree_ProducesFreeSegment()
+    {
+        // Empty disk (nothing used) → exactly one Free segment filling the bar.
+        var segs = DiskVolumeUsageSegments.Build(Cap, 0, System.Array.Empty<long>());
+        var single = Assert.Single(segs);
+        Assert.Equal(DiskUsageSegmentKind.Free, single.Kind);
+        Assert.Equal(1.0, single.Weight, 3);
+    }
+
+    [Fact]
+    public void DiskVolumeUsageSegments_UntrackedAndFreeRemainDistinct()
+    {
+        // Used exceeds tracked volumes AND capacity exceeds used → both segments exist, distinct.
+        long used = Used + 10 * GB;
+        var segs = DiskVolumeUsageSegments.Build(Cap, used, new[] { V, V, V, V });
+
+        Assert.Contains(segs, s => s.Kind == DiskUsageSegmentKind.Untracked);
+        Assert.Contains(segs, s => s.Kind == DiskUsageSegmentKind.Free);
+        var untracked = segs.First(s => s.Kind == DiskUsageSegmentKind.Untracked);
+        var free      = segs.First(s => s.Kind == DiskUsageSegmentKind.Free);
+        Assert.NotEqual(untracked.Kind, free.Kind);
+        Assert.NotEqual(DiskVolumeColorPalette.UntrackedHex, DiskVolumeColorPalette.FreeSpaceHex);
+    }
+
+    // ── legend (shared model) ───────────────────────────────────────────────────
+
+    [Fact]
+    public void DiskVolumeLegend_IncludesFreeSpaceEntry()
+    {
+        var rows = DiskVolumeLegend.Build(
+            new[] { ("vol-1", V), ("vol-2", V), ("vol-3", V), ("vol-4", V) },
+            untrackedBytes: 0, freeBytes: Cap - Used);
+
+        var free = Assert.Single(rows, r => r.Kind == DiskUsageSegmentKind.Free);
+        Assert.Equal("Free Space", free.Label);
+        Assert.Equal(Cap - Used, free.SizeBytes);
+        Assert.Equal(DiskUsageSegmentKind.Free, rows[^1].Kind);   // trailing entry
+    }
+
+    [Fact]
+    public void DiskVolumeLegend_FreeSpaceColorMatchesBar()
+    {
+        // The legend's free swatch and the bar's free segment both use the one constant.
+        var rows = DiskVolumeLegend.Build(
+            new[] { ("vol-1", V) }, untrackedBytes: 0, freeBytes: Cap - Used);
+        var free = rows.First(r => r.Kind == DiskUsageSegmentKind.Free);
+        Assert.Equal(DiskVolumeColorPalette.FreeSpaceHex, free.ColorHex);
+    }
+
+    [Fact]
+    public void DiskVolumeLegend_VolumeColorsMatchIndexPalette_AndOrderIsBarOrder()
+    {
+        var rows = DiskVolumeLegend.Build(
+            new[] { ("a", V), ("b", V) }, untrackedBytes: 5 * GB, freeBytes: Cap - Used);
+
+        Assert.Equal(DiskVolumeColorPalette.HexForIndex(0), rows[0].ColorHex);
+        Assert.Equal(DiskVolumeColorPalette.HexForIndex(1), rows[1].ColorHex);
+        Assert.Equal(DiskUsageSegmentKind.Untracked, rows[2].Kind);   // untracked before free
+        Assert.Equal(DiskUsageSegmentKind.Free,      rows[3].Kind);
+        Assert.Equal(DiskVolumeColorPalette.UntrackedHex, rows[2].ColorHex);
+    }
+
+    [Fact]
+    public void DiskVolumeLegend_NoFreeWhenDiskFull()
+    {
+        var rows = DiskVolumeLegend.Build(new[] { ("a", Cap) }, untrackedBytes: 0, freeBytes: 0);
+        Assert.DoesNotContain(rows, r => r.Kind == DiskUsageSegmentKind.Free);
+    }
+
+    [Fact]
+    public void DiskVolumeColorPalette_FreeSpace_IsSoftWhite_NotAVolumeColor()
+    {
+        var (r, g, b) = Parse(DiskVolumeColorPalette.FreeSpaceHex.ToUpperInvariant());
+        Assert.True(r > 0xE0 && g > 0xE0 && b > 0xE0);   // near-white / soft-white
+        Assert.DoesNotContain(DiskVolumeColorPalette.FreeSpaceHex, DiskVolumeColorPalette.Colors);
+    }
+
+    [Fact]
     public void DiskVolumeUsageSegments_ZeroCapacity_ReturnsNoSegments()
         => Assert.Empty(DiskVolumeUsageSegments.Build(0, 0, new[] { V }));
 
