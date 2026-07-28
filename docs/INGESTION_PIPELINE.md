@@ -95,6 +95,7 @@ Each step emits an `IngestionOperation` with an action key. Current action keys:
 | `hash` | Incoming file hashed and matched against the DB |
 | `copy` / `stage-moved` | File copied or moved into `staging` for wanted processing |
 | `staging-resumed` | A wanted release with complete staging residue (interrupted run) routed back into the normal transform flow |
+| `present-without-artifact` | Inconsistent DB state — a `present` release with no `derived_artifacts` row; not treated as satisfied, so it is allowed to stage and rebuild (logged for visibility) |
 | `unwanted-classified` | Matched an unwanted release — will not be staged (Phase 6) |
 | `unwanted-moved` | Physical file moved to `incoming-skip\<platform>` (Phase 8) |
 | `unwanted-move-failed` | Could not move an unwanted file to `incoming-skip` |
@@ -188,6 +189,25 @@ At the **start of each ingestion run** (before scan, so it applies even to an em
 **Counters:** `StaleStagingMoved` and `StaleSourceMoved` are surfaced in the dialog summary and final log **only when non-zero**, so ordinary runs keep the standard counter set.
 
 > This is a **narrow, veto-scoped** cleanup — Arkadia does **not** perform a broad `staging`/`source` sweep. Residue for **wanted** releases (including failed-transform recovery material) is intentionally left untouched.
+
+---
+
+## Staging admission is DB-authoritative
+
+For deciding whether incoming material should be **staged**, Arkadia trusts the database. It does **not** probe the filesystem to make this decision.
+
+`Ingestion.RedundantIncomingPolicy.Locate(status, derivedArtifactRowCount)` (Phase 4b) classifies each candidate release:
+
+| DB state | Result | Staging admission |
+|---|---|---|
+| `present` **and** ≥1 `derived_artifacts` row | `Satisfied` | **not stageable** — incoming constituent is redundant (Phase 8 → `duplicate-deleted`) |
+| `present` **and** no `derived_artifacts` row | `PresentWithoutArtifact` | **stageable** — inconsistent state; stage so a real artifact can be rebuilt (logged `present-without-artifact`) |
+| `unwanted` | (handled by UNWANTED-WINS) | **never stageable** |
+| `missing` / `pending` / anything else | `NotSatisfied` | **stageable** if the incoming material is useful |
+
+Satisfaction is decided from DB state **alone** — a `present` release with an artifact row is satisfied regardless of where that artifact is recorded: local archive, reachable volume, **offline assigned volume**, legacy `relative_path`, or any other DB-tracked durable location. Ingestion no longer performs disk-existence or volume-reachability probes for staging admission (the former `assigned-volume-unavailable` quarantine path is gone).
+
+> **Reconciliation belongs to Verify, not ingest.** If the DB says a release is `present` but the file is actually missing or corrupt (disk failure, manual deletion, filesystem drift), that is discovered and repaired by **Verify Archive** / **Verify Volume** — not by normal ingestion. Ingestion is deliberately **not** an integrity-verification workflow, so a good incoming copy of a release the DB already calls satisfied is treated as a duplicate. The only per-file physical hash check that survives (`DerivedArtifactSatisfactionChecker`, Phase 7) applies to a release that is actually being (re)assembled, not to admission.
 
 ---
 
@@ -285,7 +305,7 @@ This is distinct from **Verify Archive** (physical local-archive filesystem veri
 
 - **Complete wanted staging IS now resumed** (see [Resuming interrupted wanted staging](#resuming-interrupted-wanted-staging)). What remains deferred:
   - **Source-complete / derived-missing is not auto-retried.** A wanted release whose files sit in `source` (not `staging`) with no derived artifact is **not** automatically re-transformed. `source` residue can represent failed-transform recovery material, so retrying it is ambiguous — this remains a separate future workflow. The raw files are retained (no data loss).
-  - **`present` in DB but derived physically deleted from `archive`.** If a release is marked `present` but its derived artifact was manually removed from `archive`, it is treated as complete and not resumed. This is a pre-existing edge and remains out of scope; a normal re-ingest of the raw file still repairs it via `DerivedArtifactSatisfactionChecker`.
+  - **`present` in DB but derived physically deleted/corrupt in `archive` or on a volume.** Because staging admission is [DB-authoritative](#staging-admission-is-db-authoritative), a `present` release with a `derived_artifacts` row is treated as satisfied and is **not** re-staged — even by a fresh re-ingest of the raw file (the incoming copy is `duplicate-deleted`). Reconciling filesystem drift is the job of **Verify Archive** / **Verify Volume**, which detect the missing/mismatched file and update DB state so a subsequent ingest can rebuild. Ingestion is intentionally not an integrity check.
 - **Stale cleanup is scoped to unwanted releases only** (see below). Stale `staging`/`source` residue for wanted releases (e.g. failed-transform recovery material) is intentionally left in place and is **not** swept.
 - **Legacy `unknown` DAT lines are not gated yet.** A DAT line never configured/validated under the archive-output policy (no stored structural fingerprint) is **allowed** to ingest as-is until it is reconfigured — this avoids blocking existing users. Its writers still apply the runtime no-overwrite guard.
 - **Restore of an excluded release** in a `valid_with_exclusions` line can re-introduce a collision. The **ingestion gate catches it** (`collision_unresolved` → blocked), but a proactive UI hook that flags it at restore time is future UX work.

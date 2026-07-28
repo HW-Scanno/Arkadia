@@ -7,17 +7,16 @@ namespace Arkadia.Ingestion;
 
 /// <summary>
 /// Conservative cleanup of leftover <c>staging</c> release folders that contain ONLY
-/// cuesheet(s) (<c>.cue</c>) and whose release is already satisfied by a durable copy
-/// (local archive or a reachable assigned volume). These are residue from earlier
-/// cue-only runs — a release whose derived artifact already exists elsewhere, so a lone
-/// staged <c>.cue</c> can never complete anything.
+/// cuesheet(s) (<c>.cue</c>) and whose release is already satisfied per the DB
+/// (status <c>present</c> with a derived_artifacts row). These are residue from earlier
+/// cue-only runs — a release whose derived artifact already exists, so a lone staged
+/// <c>.cue</c> can never complete anything.
 ///
 /// Safety rules (never delete silently, never touch useful work):
 ///   • Only folders whose files are ALL <c>.cue</c> are considered — a folder with a
 ///     <c>.bin</c> (or any non-cue file) is left untouched (it may still complete a release).
 ///   • Only when the folder's release(s) are satisfied — the caller supplies the predicate,
-///     which must require local-archive or reachable-volume satisfaction (never a merely
-///     assigned-but-unavailable release).
+///     which is DB-authoritative (present + derived artifact row), not a filesystem probe.
 ///   • Files are MOVED to <c>incoming-skip\&lt;platform&gt;</c> (collision-safe), never deleted;
 ///     the empty folder is removed only after every file moved.
 /// </summary>
@@ -26,7 +25,7 @@ public static class StaleCueOnlyStagingCleanup
     /// <param name="stagingRoot"><c>staging\&lt;platform&gt;\&lt;datLine&gt;</c>.</param>
     /// <param name="skipDir"><c>incoming-skip\&lt;platform&gt;</c> quarantine root.</param>
     /// <param name="isReleaseFolderSatisfied">safeFolder → true when its release(s) are satisfied
-    ///   by local archive or a reachable assigned volume (ambiguous/unsatisfied folders return false).</param>
+    ///   per the DB (present + derived artifact row); ambiguous/unsatisfied folders return false.</param>
     public static StaleCueOnlyCleanupResult Run(
         string stagingRoot,
         string skipDir,

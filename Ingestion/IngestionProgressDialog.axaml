@@ -122,22 +122,31 @@
 
         <!-- Row 3: Operations table — header + rows share one horizontal scroll.
              Outer ScrollViewer scrolls horizontally (both header and rows move together);
-             the inner ScrollViewer handles vertical row overflow. Columns are fixed pixel
-             widths so the content is wider than the viewport, revealing the horizontal bar.
-             Total content width = 420 + 200 + 440 (columns) + 24 (12+12 border padding). -->
+             the inner ScrollViewer handles vertical row overflow. Columns are star-sized
+             with per-column minimums, and the table grid width is synced in code-behind to
+             max(viewport width, minimum table width): it fills a wide dialog with no empty
+             side margins, and falls back to the minimum (revealing the horizontal bar) when
+             the dialog is narrower than readable. Minimum table width = 420 + 220 + 440
+             (column minimums) + 24 (12+12 border padding) = 1104. -->
         <ScrollViewer Grid.Row="3"
                       x:Name="OpsHScrollViewer"
                       HorizontalScrollBarVisibility="Auto"
                       VerticalScrollBarVisibility="Disabled"
                       Margin="0,0,0,10">
-            <Grid RowDefinitions="Auto,*" Width="1084">
+            <Grid x:Name="OpsTableGrid" RowDefinitions="Auto,*" MinWidth="1104">
 
-                <!-- Column headers — scroll horizontally with the rows, fixed vertically -->
+                <!-- Column headers — scroll horizontally with the rows, fixed vertically.
+                     Columns must match the row template exactly to stay aligned. -->
                 <Border Grid.Row="0"
                         Padding="12,6,12,6"
                         Background="#141420"
                         BorderBrush="#242433" BorderThickness="0,1,0,1">
-                    <Grid ColumnDefinitions="420,200,440">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"  MinWidth="420"/>
+                            <ColumnDefinition Width="220"/>
+                            <ColumnDefinition Width="2*" MinWidth="440"/>
+                        </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Classes="col-header" Text="FILE"/>
                         <TextBlock Grid.Column="1" Classes="col-header" Text="ACTION"/>
                         <TextBlock Grid.Column="2" Classes="col-header" Text="DESTINATION"/>
@@ -155,7 +164,12 @@
                                 <DataTemplate x:DataType="ing:IngestionOperation">
                                     <Border Padding="12,3,12,3"
                                             BorderBrush="#0D0D13" BorderThickness="0,0,0,1">
-                                        <Grid ColumnDefinitions="420,200,440">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"  MinWidth="420"/>
+                                                <ColumnDefinition Width="220"/>
+                                                <ColumnDefinition Width="2*" MinWidth="440"/>
+                                            </Grid.ColumnDefinitions>
                                             <TextBlock Grid.Column="0"
                                                        Text="{Binding Object}"
                                                        FontSize="11"

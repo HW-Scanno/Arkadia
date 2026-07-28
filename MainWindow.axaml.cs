@@ -9094,57 +9094,21 @@ public partial class MainWindow : Window
             .Where(r => r.Status != "outdated")
             .ToDictionary(r => r.Id, StringComparer.Ordinal);
 
-        // ── Release satisfaction (durable-copy) infrastructure ─────────────────
-        // A 'present' release whose derived artifact lives in the local archive OR on a
-        // reachable assigned volume is already satisfied; its incoming constituent files
+        // ── Release satisfaction (DB-authoritative) ────────────────────────────
+        // Staging admission trusts the DB — it does NOT probe the filesystem. A release is
+        // satisfied when the DB says it is 'present' AND has >=1 derived_artifacts row,
+        // regardless of where that artifact is recorded (local archive, reachable volume,
+        // offline assigned volume, legacy relative_path). Its incoming constituent files
         // (e.g. a lone .cue for an already-built CHD) are redundant and must not create
-        // staging clutter. Volume assignments are resolved once here and reused by the
-        // stale-cue cleanup below and by the Phase 4b satisfaction guard.
-        var assignmentsByDa = new Dictionary<string, List<(string Label, string? DiskId)>>(StringComparer.Ordinal);
-        foreach (var (daId, _, label, diskId) in _catalog.GetAllAssignmentsForDatLine(datLineId))
-        {
-            if (!assignmentsByDa.TryGetValue(daId, out var lst)) assignmentsByDa[daId] = lst = new();
-            lst.Add((label, diskId));
-        }
-        IReadOnlyDictionary<string, string>? mountedDisks = null;
-        if (assignmentsByDa.Count > 0)   // only pay for a disk scan when volumes are actually assigned
-            mountedDisks = Data.DiskDiscoveryService.DiscoverAll()
-                .Where(d => d.DiskId.Length > 0)
-                .ToDictionary(d => d.DiskId, d => d.Mountpoint, StringComparer.Ordinal);
-
-        var volumeRootCache = new Dictionary<string, string?>(StringComparer.Ordinal);
-        Ingestion.VolumeProbeResult ProbeVolume(Ingestion.VolumeAssignmentRef v)
-        {
-            var cacheKey = $"{v.VolumeLabel} {v.DiskId}";
-            if (!volumeRootCache.TryGetValue(cacheKey, out var root))
-                volumeRootCache[cacheKey] = root =
-                    Data.VolumePathResolver.Resolve(v.VolumeLabel, v.DiskId, appRoot, mountedDisks);
-            if (root is null) return Ingestion.VolumeProbeResult.Unreachable;
-            var flat = Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(root, v.FileName);
-            return File.Exists(flat) ? Ingestion.VolumeProbeResult.FilePresent
-                                     : Ingestion.VolumeProbeResult.FileMissing;
-        }
-
+        // staging clutter. Physical existence/integrity (missing/corrupt-but-present) is
+        // out of scope here — reconciled by Verify Archive / Verify Volume, not ingestion.
         var releaseSatCache = new Dictionary<string, Ingestion.ReleaseSatisfaction>(StringComparer.Ordinal);
         Ingestion.ReleaseSatisfaction ReleaseSat(string releaseId)
         {
             if (releaseSatCache.TryGetValue(releaseId, out var cached)) return cached;
-            var status = releases.TryGetValue(releaseId, out var r) ? r.Status : "";
-            var arts = store.GetDerivedArtifactsByReleaseId(releaseId)
-                .Select(a => new Ingestion.ArtifactAvailability(
-                    a.RelativePath,
-                    assignmentsByDa.TryGetValue(a.Id, out var vs)
-                        ? vs.Select(v => new Ingestion.VolumeAssignmentRef(v.Label, v.DiskId, a.FileName)).ToList()
-                        : (IReadOnlyList<Ingestion.VolumeAssignmentRef>)Array.Empty<Ingestion.VolumeAssignmentRef>()))
-                .ToList();
-            var sat = Ingestion.RedundantIncomingPolicy.Locate(
-                status, arts,
-                rel =>
-                {
-                    var full = Path.Combine(appRoot, rel.Replace('/', Path.DirectorySeparatorChar));
-                    return File.Exists(full) || Directory.Exists(full);
-                },
-                ProbeVolume);
+            var status  = releases.TryGetValue(releaseId, out var r) ? r.Status : "";
+            var daCount = store.GetDerivedArtifactsByReleaseId(releaseId).Count;
+            var sat     = Ingestion.RedundantIncomingPolicy.Locate(status, daCount);
             releaseSatCache[releaseId] = sat;
             return sat;
         }
@@ -9161,10 +9125,11 @@ public partial class MainWindow : Window
                 if (!releasesByFolder.TryGetValue(sf, out var lst)) releasesByFolder[sf] = lst = new();
                 lst.Add(r.Id);
             }
+            // DB-authoritative: a folder is satisfied when every release mapping to it is
+            // 'present' with a derived_artifacts row (regardless of physical location).
             bool FolderSatisfied(string safeFolder) =>
                 releasesByFolder.TryGetValue(safeFolder, out var ids) && ids.Count > 0 &&
-                ids.All(id => ReleaseSat(id) is Ingestion.ReleaseSatisfaction.LocalArchive
-                                             or Ingestion.ReleaseSatisfaction.ReachableVolume);
+                ids.All(id => ReleaseSat(id) is Ingestion.ReleaseSatisfaction.Satisfied);
 
             var cueCleanup = Ingestion.StaleCueOnlyStagingCleanup.Run(stagingRoot, skipDir, FolderSatisfied);
             foreach (var op in cueCleanup.Operations)
@@ -9326,30 +9291,36 @@ public partial class MainWindow : Window
         }
 
         var satisfiedTargets = new HashSet<string>(StringComparer.Ordinal);
-        // Targets whose release is assigned to a volume that is currently unavailable: the
-        // incoming file must not stage (no cue-only clutter) but also must not be deleted
-        // (DB is not trusted as filesystem reality) — Phase 8 quarantines it to incoming-skip.
-        var assignedUnavailableTargets = new HashSet<string>(StringComparer.Ordinal);
+        // Releases in an inconsistent DB state (status 'present' but no derived_artifacts row)
+        // encountered while deciding admission — logged once each for visibility (not satisfied).
+        var presentWithoutArtifactLogged = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var destinations in copyPlan.Values)
         {
             foreach (var (releaseId, romName) in destinations)
             {
                 var key        = $"{releaseId}|{romName}";
-                if (satisfiedTargets.Contains(key) || assignedUnavailableTargets.Contains(key)) continue;
+                if (satisfiedTargets.Contains(key)) continue;
 
-                // Release already satisfied by a durable copy (local archive OR reachable
-                // volume) → incoming file is redundant; do not stage (Phase 8 → duplicate-deleted).
-                // Assigned-but-unavailable volume → do not stage either, but quarantine (Phase 8).
+                // DB-authoritative admission. Release 'present' with ≥1 derived_artifacts row →
+                // satisfied; incoming file is redundant; do not stage (Phase 8 → duplicate-deleted).
+                // 'present' with NO artifact row is an inconsistent state → NOT satisfied (allow
+                // staging so a real artifact can be produced); log it once for visibility.
                 switch (ReleaseSat(releaseId))
                 {
-                    case Ingestion.ReleaseSatisfaction.LocalArchive:
-                    case Ingestion.ReleaseSatisfaction.ReachableVolume:
+                    case Ingestion.ReleaseSatisfaction.Satisfied:
                         satisfiedTargets.Add(key);
                         continue;
-                    case Ingestion.ReleaseSatisfaction.AssignedVolumeUnavailable:
-                        assignedUnavailableTargets.Add(key);
-                        continue;
+                    case Ingestion.ReleaseSatisfaction.PresentWithoutArtifact:
+                        if (presentWithoutArtifactLogged.Add(releaseId))
+                        {
+                            var relNm = releases.TryGetValue(releaseId, out var pr) ? pr.Name : releaseId;
+                            var incOp = new IngestionOperation(relNm, "present-without-artifact",
+                                "status 'present' but no derived_artifacts row — staging to rebuild");
+                            result.Operations.Add(incOp);
+                            progress.Report(new IngestionProgress { NewOperation = incOp });
+                        }
+                        break;   // fall through to staging/source work-area dedup
                 }
 
                 var relName    = releases.TryGetValue(releaseId, out var rel) ? rel.Name : releaseId;
@@ -9393,12 +9364,12 @@ public partial class MainWindow : Window
             }
         }
 
-        // A target is stageable only when it is neither already satisfied nor pinned to an
-        // unavailable volume (the latter is quarantined, not staged).
+        // A target is stageable only when it is not already satisfied (DB present + artifact,
+        // or already sitting in the staging/source work area).
         bool IsStageable(string releaseId, string romName)
         {
             var k = $"{releaseId}|{romName}";
-            return !satisfiedTargets.Contains(k) && !assignedUnavailableTargets.Contains(k);
+            return !satisfiedTargets.Contains(k);
         }
 
         // ── Phase 5: Space preflight ──────────────────────────────────────────
@@ -9451,9 +9422,6 @@ public partial class MainWindow : Window
         var movedFromIncoming       = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allTargetsSatisfied     = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var allTargetsUnwanted      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        // Source files whose only non-satisfied targets are pinned to an unavailable volume →
-        // quarantine to incoming-skip in Phase 8 (never staged, never deleted).
-        var allTargetsAssignedUnavailable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var affectedReleaseIds      = new HashSet<string>(StringComparer.Ordinal);
         var transformFailedReleases = new HashSet<string>(StringComparer.Ordinal);
         var unwantedSkippedReleases = new HashSet<string>(StringComparer.Ordinal);
@@ -9466,20 +9434,15 @@ public partial class MainWindow : Window
         {
             var srcInfo = new FileInfo(srcPath);
 
-            // Filter to stageable targets (not satisfied, not pinned to an unavailable volume).
+            // Filter to stageable targets (not already satisfied).
             var pending = destinations
                 .Where(d => IsStageable(d.ReleaseId, d.RomName))
                 .ToList();
 
             if (pending.Count == 0)
             {
-                // No stageable target. If any target is pinned to an unavailable volume,
-                // quarantine the source (cannot confirm the durable copy — don't delete);
-                // otherwise every target was already satisfied → duplicate.
-                if (destinations.Any(d => assignedUnavailableTargets.Contains($"{d.ReleaseId}|{d.RomName}")))
-                    allTargetsAssignedUnavailable.Add(srcPath);
-                else
-                    allTargetsSatisfied.Add(srcPath);
+                // No stageable target → every target was already satisfied → duplicate.
+                allTargetsSatisfied.Add(srcPath);
                 continue;
             }
 
@@ -9840,29 +9803,6 @@ public partial class MainWindow : Window
                 catch
                 {
                     var op = new IngestionOperation(fileName, "duplicate-delete-failed", "duplicate source file could not be removed");
-                    result.Operations.Add(op);
-                    progress.Report(new IngestionProgress { NewOperation = op });
-                }
-            }
-            else if (allTargetsAssignedUnavailable.Contains(srcPath))
-            {
-                // Release is assigned to a volume that is currently unavailable — do not stage
-                // (avoid cue-only clutter) and do not delete (DB is not filesystem truth):
-                // quarantine to incoming-skip\<platform>\ for a later run when the volume is back.
-                result.FilesSkipped++;
-                var destPath = IncomingSkipUniquePath(skipDir, fileName);
-                try
-                {
-                    File.Move(srcPath, destPath, overwrite: false);
-                    var op = new IngestionOperation(fileName, "assigned-volume-unavailable",
-                        $"incoming-skip/{platformId}/{Path.GetFileName(destPath)}");
-                    result.Operations.Add(op);
-                    progress.Report(new IngestionProgress { NewOperation = op });
-                }
-                catch
-                {
-                    var op = new IngestionOperation(fileName, "assigned-volume-unavailable-failed",
-                        "could not move to incoming-skip");
                     result.Operations.Add(op);
                     progress.Report(new IngestionProgress { NewOperation = op });
                 }

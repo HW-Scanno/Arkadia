@@ -1,112 +1,54 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-
 namespace Arkadia.Ingestion;
 
-/// <summary>Where a release's derived artifact was found (or not) during the pre-staging scan.</summary>
+/// <summary>DB-authoritative staging-admission satisfaction for a release.</summary>
 internal enum ReleaseSatisfaction
 {
-    /// <summary>No durable copy found — the incoming files may be needed; stage normally.</summary>
+    /// <summary>Not satisfied — incoming material may be needed; stage normally.
+    /// Covers every status other than <c>present</c> (missing / lost / pending / no derived artifact).</summary>
     NotSatisfied,
-    /// <summary>A derived artifact physically exists in the local archive.</summary>
-    LocalArchive,
-    /// <summary>A derived artifact is on an assigned volume that is reachable and holds the file.</summary>
-    ReachableVolume,
-    /// <summary>A volume assignment exists, but the volume is unreachable or the file is absent —
-    /// the release cannot be confirmed satisfied, and DB must not be trusted as filesystem reality.</summary>
-    AssignedVolumeUnavailable,
+
+    /// <summary>Satisfied — the DB says the release is <c>present</c> AND at least one
+    /// <c>derived_artifacts</c> row exists. The durable artifact is trusted from the DB
+    /// regardless of where it is recorded (local archive, reachable volume, offline volume,
+    /// legacy relative_path). Incoming constituents are redundant and must not create staging.</summary>
+    Satisfied,
+
+    /// <summary>Inconsistent DB state — status is <c>present</c> but NO <c>derived_artifacts</c>
+    /// row exists. The release looks present but ingestion has no durable artifact record to
+    /// trust, so it is NOT satisfied for staging admission (it may be staged so a real artifact
+    /// can be produced) and the case is logged for visibility.</summary>
+    PresentWithoutArtifact,
 }
 
-/// <summary>Result of probing one assigned-volume location for an artifact file.</summary>
-internal enum VolumeProbeResult { Unreachable, FilePresent, FileMissing }
-
-/// <summary>One volume assignment for a derived artifact: the flat file lives at
-/// <c>&lt;resolved volume root&gt;\&lt;FileName&gt;</c>.</summary>
-internal readonly record struct VolumeAssignmentRef(string VolumeLabel, string? DiskId, string FileName);
-
-/// <summary>A release's derived artifact and every durable location it may live in.</summary>
-internal readonly record struct ArtifactAvailability(
-    string RelativePath,
-    IReadOnlyList<VolumeAssignmentRef> VolumeAssignments);
-
 /// <summary>
-/// Pre-staging guard: decides whether a release is already satisfied by a durable
-/// Arkadia-managed copy, so re-ingesting its constituent source files (e.g. a lone
-/// <c>.cue</c> for a CD release whose CHD already exists) is REDUNDANT and must not
-/// create a new staging folder.
+/// Pre-staging admission guard — decides whether re-ingesting a release's constituent
+/// source files (e.g. a lone <c>.cue</c> for a CD release whose CHD already exists) is
+/// REDUNDANT and must not create a new staging folder.
 ///
-/// A release is considered satisfied only when its status is "present" AND at least one
-/// derived artifact is found in a durable location:
-///   • local archive (<c>derived_artifacts.relative_path</c>), or
-///   • an assigned volume that is reachable and actually holds the file.
+/// <para><b>DB-authoritative (product decision).</b> Ingestion trusts the database for
+/// staging admission and does NOT probe the filesystem to decide whether incoming material
+/// should be staged. A release is satisfied when the DB says it is <c>present</c> AND has at
+/// least one <c>derived_artifacts</c> row — regardless of where that artifact is currently
+/// recorded (local archive, reachable volume, <b>offline assigned volume</b>, legacy
+/// relative_path, or any other DB-tracked durable location).</para>
 ///
-/// If the ONLY location is an assigned volume that is unreachable (or the file is
-/// missing there), the result is <see cref="ReleaseSatisfaction.AssignedVolumeUnavailable"/>:
-/// the incoming file must NOT create staging clutter, but must NOT be deleted either
-/// (DB is not trusted as filesystem reality) — it is quarantined to incoming-skip.
-///
-/// This is deliberately lighter than <see cref="DerivedArtifactSatisfactionChecker"/>
-/// (existence only, no hashing): it only prevents staging clutter. The authoritative
-/// per-release transform/skip decision still runs later in Phase 7.
+/// <para>Physical existence/integrity is deliberately out of scope here. If the DB says a
+/// release is present but the file is actually missing or corrupt (disk failure, manual
+/// deletion, filesystem drift), that is discovered and reconciled by <b>Verify Archive</b> /
+/// <b>Verify Volume</b> — not by normal ingestion. Ingestion is not an integrity-verification
+/// workflow.</para>
 /// </summary>
 internal static class RedundantIncomingPolicy
 {
-    /// <summary>
-    /// Locates the strongest durable satisfaction for a release across its artifacts.
-    /// Local archive wins over volume; a reachable volume wins over an unavailable one.
-    /// </summary>
     /// <param name="releaseStatus">Release.Status as loaded from the DB at run start.</param>
-    /// <param name="artifacts">Derived artifacts for the release with their durable locations.</param>
-    /// <param name="localExists">Existence probe for a local relative_path (file OR folder).</param>
-    /// <param name="volumeProbe">Probe for one assigned-volume location.</param>
-    internal static ReleaseSatisfaction Locate(
-        string releaseStatus,
-        IReadOnlyList<ArtifactAvailability> artifacts,
-        Func<string, bool> localExists,
-        Func<VolumeAssignmentRef, VolumeProbeResult> volumeProbe)
+    /// <param name="derivedArtifactRowCount">Number of <c>derived_artifacts</c> rows for the release.</param>
+    internal static ReleaseSatisfaction Locate(string releaseStatus, int derivedArtifactRowCount)
     {
         if (releaseStatus != "present")
             return ReleaseSatisfaction.NotSatisfied;
 
-        bool anyReachableVolume     = false;
-        bool anyAssignedUnavailable = false;
-
-        foreach (var art in artifacts)
-        {
-            if (!string.IsNullOrEmpty(art.RelativePath) && localExists(art.RelativePath))
-                return ReleaseSatisfaction.LocalArchive;   // strongest — short-circuit
-
-            foreach (var v in art.VolumeAssignments)
-            {
-                switch (volumeProbe(v))
-                {
-                    case VolumeProbeResult.FilePresent: anyReachableVolume     = true; break;
-                    case VolumeProbeResult.Unreachable:
-                    case VolumeProbeResult.FileMissing: anyAssignedUnavailable = true; break;
-                }
-            }
-        }
-
-        if (anyReachableVolume)     return ReleaseSatisfaction.ReachableVolume;
-        if (anyAssignedUnavailable) return ReleaseSatisfaction.AssignedVolumeUnavailable;
-        return ReleaseSatisfaction.NotSatisfied;
-    }
-
-    /// <summary>
-    /// Local-archive-only convenience: true when a 'present' release has a derived artifact
-    /// physically present in the local archive. Retained for the existing callers/tests;
-    /// volume-aware callers use <see cref="Locate"/>.
-    /// </summary>
-    internal static bool IsReleaseAlreadyComplete(
-        string releaseStatus,
-        IReadOnlyList<string> artifactRelativePaths,
-        Func<string, bool> physicalExists)
-    {
-        var artifacts = artifactRelativePaths
-            .Select(rp => new ArtifactAvailability(rp, Array.Empty<VolumeAssignmentRef>()))
-            .ToList();
-        return Locate(releaseStatus, artifacts, physicalExists, _ => VolumeProbeResult.Unreachable)
-               == ReleaseSatisfaction.LocalArchive;
+        return derivedArtifactRowCount > 0
+            ? ReleaseSatisfaction.Satisfied
+            : ReleaseSatisfaction.PresentWithoutArtifact;
     }
 }

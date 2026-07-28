@@ -11,6 +11,10 @@ public partial class IngestionProgressDialog : Window
 {
     private bool _isRunning = true;
 
+    // Minimum readable table width: column minimums (420 + 220 + 440) + border padding (12+12).
+    // Below this the horizontal scrollbar appears; above it the table fills the viewport.
+    private const double MinTableWidth = 1104;
+
     private readonly List<IngestionOperation>              _allOps      = [];
     private readonly ObservableCollection<IngestionOperation> _filteredOps = [];
 
@@ -21,6 +25,17 @@ public partial class IngestionProgressDialog : Window
         InitializeComponent();
         OpTitle.Text        = title;
         OpsList.ItemsSource = _filteredOps;
+
+        // Keep the operations table width = max(viewport width, minimum readable width):
+        // it stretches to fill a wide dialog (no empty side margins) and clamps to the
+        // minimum on narrow dialogs, where the outer horizontal scrollbar takes over.
+        // The outer ScrollViewer has no vertical scrollbar (disabled), so its own width
+        // equals the horizontal viewport width.
+        OpsHScrollViewer.SizeChanged += (_, e) =>
+        {
+            var available = e.NewSize.Width;
+            OpsTableGrid.Width = available > MinTableWidth ? available : MinTableWidth;
+        };
     }
 
     // ── Progress update ───────────────────────────────────────────────────────
