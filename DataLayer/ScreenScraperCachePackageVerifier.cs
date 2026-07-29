@@ -476,4 +476,3 @@ public sealed class ScreenScraperCachePackageVerifier(CatalogService catalog)
         return conn;
     }
 }
-
