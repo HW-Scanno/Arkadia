@@ -28,7 +28,7 @@ Arkadia is being developed toward a complete personal preservation workflow tool
 ```
 Arkadia.sln
 ├── Arkadia.csproj          — Avalonia 11 / .NET 8 desktop app (Windows)
-│   ├── Data/               — DatLineStore, CatalogService, VolumePathResolver, normalizers
+│   ├── DataLayer/          — DatLineStore, CatalogService, VolumePathResolver, normalizers (namespace Arkadia.Data)
 │   ├── Library/            — LibraryEntry, title resolution
 │   ├── Providers/          — scraping provider clients and import services
 │   ├── Ingestion/          — DAT parsing and ingest pipeline

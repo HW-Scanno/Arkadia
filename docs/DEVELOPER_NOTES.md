@@ -7,7 +7,7 @@
 ```
 Arkadia.sln
 ├── Arkadia.csproj                  — main application (Avalonia 11 / .NET 8 / Windows)
-│   ├── Data/                       — all database and storage logic
+│   ├── DataLayer/                  — all database and storage logic (namespace Arkadia.Data)
 │   │   ├── DatLineStore.cs         — per-DAT SQLite store (releases, artifacts, status guards)
 │   │   ├── CatalogService.cs       — global catalog: volumes, assignments, DA map
 │   │   ├── VolumePathResolver.cs   — workspace-first then disk-mount volume root resolution
@@ -38,7 +38,7 @@ Arkadia.sln
 │   └── Catalog/                    — catalog-level services
 │       └── Ark/                    — ARK backup/restore pipeline (writer, verifier, plan, restore)
 └── Arkadia.Tests.csproj            — xUnit tests (1480 tests, no UI dependency)
-    ├── Data/                       — store, proposal, mapping, metadata, status guard tests
+    ├── DataLayer/                  — store, proposal, mapping, metadata, status guard tests
     ├── Volumes/                    — append, fillback, verify volume, diagnostics tests
     ├── LocalArchive/               — verify archive, redundancy, repair tests
     ├── Purge/                      — purge planner, analytics tests
@@ -66,7 +66,7 @@ Global catalog database. Created at `data/catalog.db` on first launch.
 | `catalog_settings` | Key/value settings store |
 | `metadata_value_mappings` | Global normalization rules (field, match_value, replacement, enabled) |
 
-Managed by `CatalogService` in `Data/CatalogService.cs`.
+Managed by `CatalogService` in `DataLayer/CatalogService.cs`.
 
 ### Per-DAT Databases
 
@@ -75,7 +75,7 @@ One SQLite DB per DAT line, stored at:
 data/platforms/<hardwareFamilyId>/<datLineId>/releases.db
 ```
 
-Managed by `DatLineStore` in `Data/DatLineStore.cs`.
+Managed by `DatLineStore` in `DataLayer/DatLineStore.cs`.
 
 ---
 

@@ -169,9 +169,9 @@ Phases 2–7 introduce **no** Single-DAT behavior change.
 
 ## 18. Phase 1 — what is implemented now [IMPLEMENTED]
 
-- `Data/Identifiers/DatTechnicalIdPolicy.cs` — the pure id policy: canonical validation, reserved names, target/hard length, structured `DatTechnicalIdError`, and `NormalizeSuggestion`.
-- `Data/Identifiers/DatGroupId.cs`, `Data/Identifiers/DatLineId.cs` — distinct immutable value objects (`TryCreateNew` strict, `FromPersisted` verbatim, ordinal equality + `CaseInsensitiveComparer`, `ConformsToNewPolicy`).
-- `Arkadia.Tests/Data/Identifiers/` — full unit coverage.
+- `DataLayer/Identifiers/DatTechnicalIdPolicy.cs` — the pure id policy: canonical validation, reserved names, target/hard length, structured `DatTechnicalIdError`, and `NormalizeSuggestion`.
+- `DataLayer/Identifiers/DatGroupId.cs`, `DataLayer/Identifiers/DatLineId.cs` — distinct immutable value objects (`TryCreateNew` strict, `FromPersisted` verbatim, ordinal equality + `CaseInsensitiveComparer`, `ConformsToNewPolicy`).
+- `Arkadia.Tests/DataLayer/Identifiers/` — full unit coverage.
 
 **Not implemented (later phases):** `dat_groups`, `group_id` columns, update-run tables, fingerprint persistence, discovery, the full `DatLineIdSuggester` (abbreviation / generic-word list / short hash), Group DAT dialogs, executors, and any migration. The value objects are **not yet integrated** into existing workflows; existing `string datLineId` usage is unchanged.
 

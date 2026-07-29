@@ -192,11 +192,11 @@ Files inside managed folders are not classified as active volume content during 
 | Concern | File |
 |---|---|
 | Flat volume path | `Volumes/VolumeArtifactPathBuilder.cs` |
-| Volume root resolution | `Data/VolumePathResolver.cs` |
-| Volume assignment map (for redundancy) | `Data/CatalogService.GetAllAssignmentsForDatLine()` |
+| Volume root resolution | `DataLayer/VolumePathResolver.cs` |
+| Volume assignment map (for redundancy) | `DataLayer/CatalogService.GetAllAssignmentsForDatLine()` |
 | Archive verify + repair | `LocalArchive/LocalArchiveVerifyService.cs` |
 | Volume verify + repair | `Volumes/VolumeVerifyService.cs` |
 | Append plan + execution | `Volumes/AppendVolumePlanner.cs`, `AppendVolumeService.cs` |
 | Fillback plan + execution | `Volumes/VolumeFillbackPlanner.cs`, `VolumeFillbackService.cs` |
 | incoming-skip path helper | `MainWindow.axaml.cs:IncomingSkipUniquePath()` |
-| Disk discovery | `Data/DiskDiscoveryService.DiscoverAll()` |
+| Disk discovery | `DataLayer/DiskDiscoveryService.DiscoverAll()` |
