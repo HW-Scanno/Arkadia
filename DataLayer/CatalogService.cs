@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using Arkadia.Data.Identifiers;
 using Microsoft.Data.Sqlite;
 
 namespace Arkadia.Data;
@@ -108,6 +109,25 @@ public sealed class CatalogService
             );
 
             CREATE INDEX IF NOT EXISTS idx_dat_lines_hardware_family_id ON dat_lines(hardware_family_id);
+
+            -- Group DAT (additive, Phase 2). A dat_group is a super-unit grouping many leaf
+            -- dat_lines. Single DAT = dat_lines.group_id IS NULL (see below). current_revision
+            -- bootstraps at 0 and is advanced ONLY by a future finalizer, never by CRUD.
+            -- id is COLLATE NOCASE so case-variant ids collide at the DB level (matches the
+            -- case-insensitive DatGroupId policy). hardware_family_id is ON DELETE RESTRICT
+            -- (non-destructive). Multiple groups may share a (family, authority) pair.
+            CREATE TABLE IF NOT EXISTS dat_groups (
+                id                  TEXT COLLATE NOCASE NOT NULL PRIMARY KEY,
+                display_name        TEXT NOT NULL,
+                hardware_family_id  TEXT NOT NULL REFERENCES hardware_families(id) ON DELETE RESTRICT,
+                authority           TEXT NOT NULL,
+                current_revision    INTEGER NOT NULL DEFAULT 0 CHECK (current_revision >= 0),
+                created_at_utc      TEXT NOT NULL,
+                updated_at_utc      TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_dat_groups_hardware_family_id ON dat_groups(hardware_family_id);
+            CREATE INDEX IF NOT EXISTS idx_dat_groups_family_authority   ON dat_groups(hardware_family_id, authority);
 
             CREATE TABLE IF NOT EXISTS disks (
                 id                       TEXT PRIMARY KEY,
@@ -372,6 +392,27 @@ public sealed class CatalogService
         TryAddColumn(conn, "dat_lines", "archive_output_structural_fingerprint TEXT NULL");
         TryAddColumn(conn, "dat_lines", "archive_output_exclusion_fingerprint  TEXT NULL");
         TryAddColumn(conn, "dat_lines", "archive_output_validated_at_utc       TEXT NULL");
+
+        // ── Migrate dat_lines: Group DAT metadata (Phase 2) ──────────────────
+        // Additive / nullable. Existing rows stay NULL = Single DAT — NO backfill, NO
+        // implicit group, NO revision assigned. group_id is a non-destructive FK to
+        // dat_groups (ON DELETE RESTRICT). These columns are only READ in Phase 2; the
+        // fingerprint/path values are populated by later phases, never here. dat_groups is
+        // created above (same EnsureSchema batch), so it exists before this FK column is added.
+        TryAddColumn(conn, "dat_lines", "group_id                     TEXT NULL REFERENCES dat_groups(id) ON DELETE RESTRICT");
+        TryAddColumn(conn, "dat_lines", "relative_dat_path            TEXT NULL");
+        TryAddColumn(conn, "dat_lines", "source_dat_name              TEXT NULL");
+        TryAddColumn(conn, "dat_lines", "source_dat_sha256            TEXT NULL");
+        TryAddColumn(conn, "dat_lines", "semantic_fingerprint         TEXT NULL");
+        TryAddColumn(conn, "dat_lines", "semantic_fingerprint_version INTEGER NULL CHECK (semantic_fingerprint_version IS NULL OR semantic_fingerprint_version > 0)");
+        TryAddColumn(conn, "dat_lines", "last_seen_group_revision     INTEGER NULL CHECK (last_seen_group_revision IS NULL OR last_seen_group_revision >= 0)");
+
+        using (var groupIdx = conn.CreateCommand())
+        {
+            groupIdx.CommandText =
+                "CREATE INDEX IF NOT EXISTS idx_dat_lines_group_id ON dat_lines(group_id)";
+            groupIdx.ExecuteNonQuery();
+        }
 
         // ── Seed default settings if missing ─────────────────────────────────
         using var settingSeed = conn.CreateCommand();
@@ -1109,6 +1150,180 @@ public sealed class CatalogService
         cmd.Parameters.AddWithValue("$releaseCount", releaseCount);
         cmd.Parameters.AddWithValue("$importedAt",   importedAtUtc.ToString("o"));
         cmd.ExecuteNonQuery();
+    }
+
+    // ── Group DAT (Phase 2) ────────────────────────────────────────────────────
+    // Additive persistence for dat_groups. NO membership/assignment, NO revision
+    // advancement, NO delete API — those belong to later phases. current_revision is
+    // fixed to 0 at creation and only a future finalizer may advance it.
+
+    /// <summary>
+    /// Creates a new Group DAT (pure INSERT, never an upsert). The caller supplies an already
+    /// valid <see cref="DatGroupId"/>; the id is NOT re-normalized. <c>current_revision</c> is
+    /// forced to 0 and timestamps are generated internally. Throws
+    /// <see cref="ArgumentException"/> for an invalid id / empty display name / unknown hardware
+    /// family, and <see cref="InvalidOperationException"/> if the id already exists (including a
+    /// case-variant, rejected by the NOCASE primary key).
+    /// </summary>
+    public DatGroupRecord CreateDatGroup(
+        DatGroupId id, string displayName, string hardwareFamilyId, string authority)
+    {
+        if (!id.ConformsToNewPolicy)
+            throw new ArgumentException("Group id does not satisfy the new-id policy.", nameof(id));
+        if (string.IsNullOrWhiteSpace(displayName))
+            throw new ArgumentException("Display name must be non-empty.", nameof(displayName));
+        if (string.IsNullOrWhiteSpace(hardwareFamilyId))
+            throw new ArgumentException("Hardware family id must be non-empty.", nameof(hardwareFamilyId));
+        if (GetHardwareFamily(hardwareFamilyId) is null)
+            throw new ArgumentException($"Hardware family '{hardwareFamilyId}' does not exist.", nameof(hardwareFamilyId));
+        if (string.IsNullOrWhiteSpace(authority))
+            throw new ArgumentException("Authority must be non-empty.", nameof(authority));
+
+        var now = DateTime.UtcNow;
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        // FK enforcement is per-connection; enable it inline (repo precedent) so the
+        // hardware_family_id FK is honoured even though Open() does not set the pragma.
+        cmd.CommandText = """
+            PRAGMA foreign_keys = ON;
+            INSERT INTO dat_groups(id, display_name, hardware_family_id, authority, current_revision, created_at_utc, updated_at_utc)
+            VALUES($id, $displayName, $hardwareFamilyId, $authority, 0, $now, $now)
+            """;
+        cmd.Parameters.AddWithValue("$id",               id.Value);
+        cmd.Parameters.AddWithValue("$displayName",      displayName);
+        cmd.Parameters.AddWithValue("$hardwareFamilyId", hardwareFamilyId);
+        cmd.Parameters.AddWithValue("$authority",        authority);
+        cmd.Parameters.AddWithValue("$now",              now.ToString("o"));
+        try
+        {
+            cmd.ExecuteNonQuery();
+        }
+        catch (SqliteException ex) when (ex.SqliteErrorCode == 19)   // SQLITE_CONSTRAINT
+        {
+            throw new InvalidOperationException(
+                $"A Group DAT with id '{id.Value}' already exists (ids are case-insensitive).", ex);
+        }
+
+        return new DatGroupRecord
+        {
+            Id               = id,
+            DisplayName      = displayName,
+            HardwareFamilyId = hardwareFamilyId,
+            Authority        = authority,
+            CurrentRevision  = 0,
+            CreatedAtUtc     = now,
+            UpdatedAtUtc     = now,
+        };
+    }
+
+    /// <summary>All Group DATs in a deterministic order (creation time, then id).</summary>
+    public List<DatGroupRecord> LoadDatGroups()
+    {
+        var list = new List<DatGroupRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, display_name, hardware_family_id, authority, current_revision, created_at_utc, updated_at_utc
+            FROM dat_groups
+            ORDER BY created_at_utc, id
+            """;
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+            list.Add(MapDatGroup(reader));
+        return list;
+    }
+
+    /// <summary>The Group DAT with this id, or null. Comparison is case-insensitive.</summary>
+    public DatGroupRecord? GetDatGroup(DatGroupId id)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, display_name, hardware_family_id, authority, current_revision, created_at_utc, updated_at_utc
+            FROM dat_groups
+            WHERE id = $id
+            """;
+        cmd.Parameters.AddWithValue("$id", id.Value ?? "");
+        using var reader = cmd.ExecuteReader();
+        return reader.Read() ? MapDatGroup(reader) : null;
+    }
+
+    /// <summary>True when a Group DAT with this id exists (case-insensitive).</summary>
+    public bool DatGroupExists(DatGroupId id)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM dat_groups WHERE id = $id LIMIT 1";
+        cmd.Parameters.AddWithValue("$id", id.Value ?? "");
+        return cmd.ExecuteScalar() is not null;
+    }
+
+    /// <summary>
+    /// Updates ONLY the display name (and <c>updated_at_utc</c>) of an existing Group DAT.
+    /// Never touches id, hardware family, authority, or current_revision. Throws
+    /// <see cref="ArgumentException"/> for an empty name and
+    /// <see cref="InvalidOperationException"/> if the group does not exist.
+    /// </summary>
+    public void UpdateDatGroupDisplayName(DatGroupId id, string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(displayName))
+            throw new ArgumentException("Display name must be non-empty.", nameof(displayName));
+
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dat_groups
+            SET display_name   = $displayName,
+                updated_at_utc = $now
+            WHERE id = $id
+            """;
+        cmd.Parameters.AddWithValue("$displayName", displayName);
+        cmd.Parameters.AddWithValue("$now",         DateTime.UtcNow.ToString("o"));
+        cmd.Parameters.AddWithValue("$id",          id.Value ?? "");
+        var affected = cmd.ExecuteNonQuery();
+        if (affected == 0)
+            throw new InvalidOperationException($"No Group DAT with id '{id.Value}'.");
+    }
+
+    private static DatGroupRecord MapDatGroup(SqliteDataReader reader) => new()
+    {
+        Id               = DatGroupId.FromPersisted(reader.GetString(0)),
+        DisplayName      = reader.GetString(1),
+        HardwareFamilyId = reader.GetString(2),
+        Authority        = reader.GetString(3),
+        CurrentRevision  = reader.GetInt32(4),
+        CreatedAtUtc     = DateTime.Parse(reader.GetString(5)),
+        UpdatedAtUtc     = DateTime.Parse(reader.GetString(6)),
+    };
+
+    /// <summary>
+    /// Reads the nullable Group DAT metadata columns for a leaf, or null if the leaf row does
+    /// not exist. All fields are NULL for Single DAT / legacy leaves (Phase 2 only reads them).
+    /// </summary>
+    public DatLineGroupMetadataRecord? GetDatLineGroupMetadata(string datLineId)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, group_id, relative_dat_path, source_dat_name, source_dat_sha256,
+                   semantic_fingerprint, semantic_fingerprint_version, last_seen_group_revision
+            FROM dat_lines
+            WHERE id = $id
+            """;
+        cmd.Parameters.AddWithValue("$id", datLineId);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new DatLineGroupMetadataRecord
+        {
+            DatLineId                  = reader.GetString(0),
+            GroupId                    = reader.IsDBNull(1) ? null : reader.GetString(1),
+            RelativeDatPath            = reader.IsDBNull(2) ? null : reader.GetString(2),
+            SourceDatName              = reader.IsDBNull(3) ? null : reader.GetString(3),
+            SourceDatSha256            = reader.IsDBNull(4) ? null : reader.GetString(4),
+            SemanticFingerprint        = reader.IsDBNull(5) ? null : reader.GetString(5),
+            SemanticFingerprintVersion = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+            LastSeenGroupRevision      = reader.IsDBNull(7) ? null : reader.GetInt32(7),
+        };
     }
 
     // ── Transform Strategy ────────────────────────────────────────────────────

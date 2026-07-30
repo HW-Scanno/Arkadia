@@ -1,8 +1,8 @@
 # Arkadia Group DAT v1 — Specification
 
-**Status:** Milestone started. **Phase 1 implemented** (technical-id policy + value objects + this document). Everything beyond Phase 1 is **approved design, not yet implemented**.
+**Status:** Milestone in progress. **Phase 1 implemented** (technical-id policy + value objects). **Phase 2 implemented** (additive catalog schema + Group model + minimal persistence). Everything beyond Phase 2 is **approved design, not yet implemented**.
 
-**Last updated:** 2026-07-29 (Phase 1)
+**Last updated:** 2026-07-30 (Phase 2)
 
 > This document records the **approved baseline** of the Group DAT / Nested DAT / TOSEC milestone — not only Phase 1. It is the authoritative reference for the milestone. Sections are marked:
 > **[APPROVED]** decision is binding · **[DEFERRED]** approved but scheduled later · **[NOT IMPLEMENTED]** no code yet · **[OPEN]** still to be decided.
@@ -173,7 +173,23 @@ Phases 2–7 introduce **no** Single-DAT behavior change.
 - `DataLayer/Identifiers/DatGroupId.cs`, `DataLayer/Identifiers/DatLineId.cs` — distinct immutable value objects (`TryCreateNew` strict, `FromPersisted` verbatim, ordinal equality + `CaseInsensitiveComparer`, `ConformsToNewPolicy`).
 - `Arkadia.Tests/DataLayer/Identifiers/` — full unit coverage.
 
-**Not implemented (later phases):** `dat_groups`, `group_id` columns, update-run tables, fingerprint persistence, discovery, the full `DatLineIdSuggester` (abbreviation / generic-word list / short hash), Group DAT dialogs, executors, and any migration. The value objects are **not yet integrated** into existing workflows; existing `string datLineId` usage is unchanged.
+**Not implemented at Phase 1:** everything below except what Phase 2 (§18a) adds.
+
+---
+
+## 18a. Phase 2 — what is implemented now [IMPLEMENTED]
+
+Additive catalog schema and the persistent Group model — **no workflow behavior**, no membership assignment, no revision advancement.
+
+- **Schema (`DataLayer/CatalogService.cs`, `EnsureSchema`).** New table **`dat_groups`** `(id TEXT COLLATE NOCASE PRIMARY KEY, display_name TEXT NOT NULL, hardware_family_id TEXT NOT NULL → hardware_families ON DELETE RESTRICT, authority TEXT NOT NULL, current_revision INTEGER NOT NULL DEFAULT 0, created_at_utc, updated_at_utc)` with indexes on `hardware_family_id` and `(hardware_family_id, authority)`. New **nullable** `dat_lines` columns via idempotent `TryAddColumn`: `group_id` (→ `dat_groups(id)` ON DELETE RESTRICT), `relative_dat_path`, `source_dat_name`, `source_dat_sha256`, `semantic_fingerprint`, `semantic_fingerprint_version` (INT), `last_seen_group_revision` (INT), plus index `idx_dat_lines_group_id`. Migration is additive/idempotent, no backfill, no implicit groups, `data/` runtime untouched.
+
+**DB-enforced numeric CHECK constraints** (added with the columns): `dat_groups.current_revision >= 0`; `semantic_fingerprint_version IS NULL OR > 0`; `last_seen_group_revision IS NULL OR >= 0`. Enforced by the DB regardless of the (absent) revision-advancement API. Modern SQLite **does** evaluate a CHECK added via `ALTER TABLE ADD COLUMN` against pre-existing rows; the migration is compatible because the new nullable columns are NULL on every legacy row and NULL satisfies both `IS NULL OR …` predicates, so **no table rebuild is needed**.
+- **Model.** `DataLayer/DatGroupRecord.cs` (`Id` is a `DatGroupId`); `DataLayer/DatLineGroupMetadataRecord.cs` (a **companion** read record so `DatLineRecord` and its call sites are untouched — chosen over extending `DatLineRecord`).
+- **Catalog APIs.** `CreateDatGroup` (pure INSERT; validates id policy / non-empty display name / existing hardware family; `current_revision = 0`; rejects duplicate incl. case-variant), `LoadDatGroups`, `GetDatGroup`, `DatGroupExists`, `UpdateDatGroupDisplayName` (name + `updated_at_utc` only), `GetDatLineGroupMetadata` (nullable leaf metadata read). **No** delete, generic upsert, id/family/authority change, revision change, or leaf-membership API.
+- **Preservation.** `SaveDatLines` already writes only the original columns, so Group metadata is preserved on upsert and NULL on new inserts — **no change was needed**; a regression test locks this.
+- Tests: `Arkadia.Tests/DataLayer/DatGroupCatalogSchemaTests.cs`.
+
+**Still not implemented (later phases):** `dat_group_update_runs` / `dat_group_update_actions` (run/action journal), `pending_revision`, fingerprint calculator, semantic/exact fingerprint population, discovery, import/reconciliation/frozen plan, executors, finalizer, revision advancement, the full `DatLineIdSuggester`, Group DAT UI, recursive import, Group update, and manual association of existing Single DATs. The value objects and Group model are **not yet wired** into existing workflows; Single DAT import/update/ingestion/archive/verify/volumes are unchanged.
 
 ---
 
