@@ -1,8 +1,8 @@
 # Arkadia Group DAT v1 — Specification
 
-**Status:** Milestone in progress. **Phase 1 implemented** (technical-id policy + value objects). **Phase 2 implemented** (additive catalog schema + Group model + minimal persistence). Everything beyond Phase 2 is **approved design, not yet implemented**.
+**Status:** Milestone in progress. **Phase 1 implemented** (technical-id policy + value objects). **Phase 2 implemented** (additive catalog schema + Group model + minimal persistence). **Phase 3A implemented** (pure, DB-independent source discovery / preview manifest). Everything beyond Phase 3A is **approved design, not yet implemented**.
 
-**Last updated:** 2026-07-30 (Phase 2)
+**Last updated:** 2026-07-30 (Phase 3A)
 
 > This document records the **approved baseline** of the Group DAT / Nested DAT / TOSEC milestone — not only Phase 1. It is the authoritative reference for the milestone. Sections are marked:
 > **[APPROVED]** decision is binding · **[DEFERRED]** approved but scheduled later · **[NOT IMPLEMENTED]** no code yet · **[OPEN]** still to be decided.
@@ -190,6 +190,20 @@ Additive catalog schema and the persistent Group model — **no workflow behavio
 - Tests: `Arkadia.Tests/DataLayer/DatGroupCatalogSchemaTests.cs`.
 
 **Still not implemented (later phases):** `dat_group_update_runs` / `dat_group_update_actions` (run/action journal), `pending_revision`, fingerprint calculator, semantic/exact fingerprint population, discovery, import/reconciliation/frozen plan, executors, finalizer, revision advancement, the full `DatLineIdSuggester`, Group DAT UI, recursive import, Group update, and manual association of existing Single DATs. The value objects and Group model are **not yet wired** into existing workflows; Single DAT import/update/ingestion/archive/verify/volumes are unchanged.
+
+---
+
+## 18b. Phase 3A — what is implemented now [IMPLEMENTED]
+
+Pure, DB-independent **source discovery** producing an in-memory preview manifest. Read-only over the source; **no** DB, CatalogService, leaf DB, filesystem writes, cache, staging, id generation, fingerprint, matching, plan, or UI.
+
+- **`DataLayer/DatGroupSourceDiscoveryService.cs`** — `Discover(string sourceRoot, CancellationToken = default)`. Iterative (non-recursive) traversal; a candidate is any file with extension `.dat` (case-insensitive, matching the existing Single DAT import filter — no new formats); non-`.dat` files are ignored silently. Reuses `DatParser.Parse` unchanged. Directory **reparse points (symlinks/junctions) are not followed** (warning `reparse-point-skipped`). Cancellation is checked before enumeration, between directories, between files, and before parsing → `OperationCanceledException`.
+- **Relative paths** are normalized to `/`, never rooted, never escaping the root, original casing/Unicode preserved, and are **not** ids (no `DatTechnicalIdPolicy`). Ordering is deterministic by relative path (`Ordinal`); physical traversal order is not observable. Case-insensitive relative-path **collisions are a blocking diagnostic** (`relative-path-collision`) — files are never auto-chosen or merged (pure detector `DetectRelativePathCollisions`).
+- **`DataLayer/DatGroupDiscoveryResult.cs`** — `DatGroupDiscoveryResult` (SourceRoot, ordered `Leaves`, `Diagnostics`, derived `CandidateCount`/`ParsedCount`/`FailedCount`/`HasBlockingErrors`/`CanProceedToPlanning`), `DiscoveredDatLeaf` (relative path, filename, `SourcePath` absolute = in-memory only, non-identity, not an ordering key, not persisted; status; parser metadata; `Games` as a **deeply-immutable snapshot** — `DiscoveredDatGame` / `DiscoveredDatRom` records whose game/ROM collections are `ImmutableArray<T>` (truly non-modifiable: no writable indexer, not castable to a mutable array/`List<T>`, `IList<T>` view rejects all mutation); the parser's mutable `ParsedGame`/`ParsedRom` and their `List<T>` are **never exposed** and no reference to them is retained, so mutating the parser result cannot alter the manifest; order/multiplicity/values preserved exactly, no reinterpretation), `DiscoveredDatLeafStatus` (`Parsed`/`ParseFailed`/`ReadFailed`), `DatGroupDiscoveryDiagnostic` (+ `Severity`, stable codes) — diagnostics hold only a code/severity/controlled message/relative path, never an Exception or stack trace or absolute path.
+- **`CanProceedToPlanning`** is true only when the root is valid, there are no relative-path collisions, every candidate parsed, and ≥1 candidate exists — it creates no plan. A malformed/unreadable DAT is represented (not fatal) and makes the scan non-proceedable. An empty-of-DATs valid directory yields zero candidates, no blocking error, and `CanProceedToPlanning = false`.
+- Tests: `Arkadia.Tests/DataLayer/DatGroupSourceDiscoveryServiceTests.cs`.
+
+**Not implemented (Phase 3B+):** exact source SHA-256, semantic fingerprint, overlap evidence, id suggestion/assignment, catalog access, matching with `dat_groups`/`dat_lines`, reconciliation/frozen plan, run/action journal, executors, finalizer, manifest persistence, and UI.
 
 ---
 
