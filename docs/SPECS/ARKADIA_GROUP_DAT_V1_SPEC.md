@@ -2,7 +2,9 @@
 
 **Status:** Milestone in progress. **Phase 1 implemented** (technical-id policy + value objects). **Phase 2 implemented** (additive catalog schema + Group model + minimal persistence). **Phase 3A implemented** (pure, DB-independent source discovery / preview manifest). Everything beyond Phase 3A is **approved design, not yet implemented**.
 
-**Last updated:** 2026-07-30 (Phase 3A)
+**v1 direction (Product Owner):** Group DAT Import/Update **v1 uses manual one-to-one reconciliation** (see §8a), **not** automatic matching or semantic fingerprints. The fingerprints (§7), the automatic matching evidence ladder (§8), and the Phase-3B fingerprint audit are **future research — not v1 prerequisites and not implemented**.
+
+**Last updated:** 2026-07-31 (v1 = manual reconciliation direction)
 
 > This document records the **approved baseline** of the Group DAT / Nested DAT / TOSEC milestone — not only Phase 1. It is the authoritative reference for the milestone. Sections are marked:
 > **[APPROVED]** decision is binding · **[DEFERRED]** approved but scheduled later · **[NOT IMPLEMENTED]** no code yet · **[OPEN]** still to be decided.
@@ -79,7 +81,9 @@ Future short disambiguation hash [DEFERRED]: **8 hex characters**, extendable on
 
 ---
 
-## 7. Fingerprints [APPROVED design / NOT IMPLEMENTED]
+## 7. Fingerprints [FUTURE RESEARCH — NOT a v1 prerequisite / NOT IMPLEMENTED]
+
+> **Not required for Group DAT v1.** v1 import/update is manual one-to-one reconciliation (§8a); fingerprints are neither computed nor required. This section is retained as future research (see the Phase-3B audit). The nullable fingerprint columns already in the schema may remain unused.
 
 Two distinct fingerprints plus overlap signals:
 - **Exact source fingerprint** = SHA-256 of the raw DAT bytes.
@@ -90,7 +94,9 @@ Two distinct fingerprints plus overlap signals:
 
 ---
 
-## 8. Matching evidence ladder [APPROVED design / NOT IMPLEMENTED]
+## 8. Matching evidence ladder [FUTURE RESEARCH — superseded for v1 by §8a / NOT IMPLEMENTED]
+
+> **Not part of Group DAT v1.** The automatic observation/candidate ladder below is deferred future research; v1 uses **manual one-to-one reconciliation** (§8a) with no automatic matching, no candidate classification, and no split/merge detection.
 
 Three independent dimensions: **observation** (`exact`, `strong_candidate`, `possible`, `ambiguous`, `unmatched`, `duplicate`, `parse_error`), **resolved action** (`update_existing_leaf`, `create_new_leaf`, `retain_existing_leaf_without_update`, `ignore_new_discovered_dat`, `retain_leaf_missing_from_source`, `blocked`), **execution state**.
 - Auto **exact** only when a strong signal is unique in both directions with no duplicates/collisions.
@@ -99,6 +105,52 @@ Three independent dimensions: **observation** (`exact`, `strong_candidate`, `pos
 - Relative path, filename, header name, and release count are **never** sufficient alone.
 - An unassociated DAT may become a **new** leaf. An old leaf not found is **retained, not deleted**.
 - Must distinguish a leaf that is **semantically unchanged** from a **different update deliberately not applied**.
+
+---
+
+## 8a. Group DAT Import/Update v1 — manual one-to-one reconciliation [APPROVED — v1 DIRECTION / NOT IMPLEMENTED]
+
+**Product decision.** Group DAT Import and Update **v1** are driven by **manual one-to-one reconciliation**, not by automatic matching or semantic fingerprints. This section is the authoritative v1 workflow; §7 and §8 are future research and **not** prerequisites of the initial import/update.
+
+### Non-mutating preview
+- The selected Group DAT source is analyzed by the pure Phase-3A discovery (§18b) — read-only.
+- The preview presents the discovered DATs (and, for an update, the group's existing leaves) **without** creating or modifying any `dat_group`, `dat_line`, leaf DB, or revision, and without any filesystem write.
+- **Abort before confirmation discards only in-memory state** — nothing is created, modified, deleted, or renamed.
+
+### Two-column reconciliation window
+- **Left — discovered DATs** (new source): relative path, header name, version, date, author, release count, and media type / required fields when available.
+- **Right — existing leaves** of the Group DAT (update only): `DatLineId`, previous DAT metadata, release count, media type, and status relative to the current revision.
+
+### Manual one-to-one reconciliation
+Each **discovered DAT** must be explicitly resolved as: **update an existing leaf**, **new leaf**, or **explicit exclude/skip** *(only if the product authorizes it in that implementation)*.
+Each **existing leaf** must be explicitly resolved as: **associated with a discovered DAT**, or **absent from the new revision** (retained, never deleted).
+- An existing leaf may be associated **at most once**; a discovered DAT may be associated **at most once**.
+- Confirming an association **consumes** both the DAT and the leaf from the available reconciliation sets; **undoing** the association returns both to available.
+- **"Consume" means only removing the item from the temporary reconciliation sets** — it never deletes a file or a record.
+
+### Completion gating
+Final confirmation is available **only** when: all discovered DATs are resolved; all existing leaves are resolved; there are no duplicate associations; there are no parse failures or blocking conflicts; all new `DatLineId`s are valid; and the required media types are present.
+
+### Folder tokens (leaf-id proposal)
+The source directory hierarchy is part of the preview. Each folder may receive a **manual technical token**:
+- the token may contribute to the proposed `DatLineId` of new leaves;
+- an **empty** token excludes that folder from the id;
+- editing a token updates the proposed ids of its descendants;
+- the source path stays **metadata, never permanent identity**;
+- **existing leaves are never renamed** when the folder structure changes;
+- **no DB table for folders in v1.**
+
+Conceptual proposal:
+```
+new_leaf_id = group_id + included-folder tokens + DAT token
+```
+The proposal is editable and must satisfy `DatLineId` rules and case-insensitive collision checks (Phase 1 policy, §6).
+
+### Separate execution
+After confirmation: the manual plan is **frozen**; import/update run in a **separate phase** that **reuses the existing Single DAT workflows**; the revision is **finalized only after all actions complete**. A **minimal journal** may later be introduced **only** for resume/consistency after confirmation — **not designed in this task**.
+
+### Deferred / not required for v1
+Explicitly **not needed** for Group DAT v1: semantic fingerprint; canonical semantic encoder; overlap evidence; automatic matching; strong/ambiguous candidate classification; automatic split/merge detection; automatic reconciliation; unattended updates. The Phase-3B fingerprint audit remains **future research** — not an implemented feature and not a v1 prerequisite. The nullable fingerprint columns already present in the schema (Phase 2) may remain **unused** and require **no rollback**; Phases 1–3A require no cleanup or revert.
 
 ---
 
@@ -159,6 +211,8 @@ The future per-leaf executor must explicitly handle: a catalog row without a lea
 ---
 
 ## 17. Progressive roadmap [APPROVED sequence / mostly NOT IMPLEMENTED]
+
+> **v1 note:** Group DAT Import/Update **v1 is the manual one-to-one reconciliation workflow (§8a)**. The steps below that assume a **fingerprint library (4)** and a **reconciliation matcher (10)** are **future research, not v1 prerequisites**; v1 replaces automatic matching with manual reconciliation and reuses the existing Single-DAT import/update executors.
 
 1. **ID value objects & invariants** — **DONE (Phase 1).**
 2. Additive schema. 3. Group record + repository. 4. Fingerprint library. 5. Read-only discovery. 6. Import-plan preview. 7. Frozen plan + journal. 8. Import executor + recovery (extract `RunImportWork` core). 9. Create Group DAT UI. 10. Reconciliation matcher. 11. Update executor (wrap `ReconciliationEngine`). 12. Revision finalizer. 13. Group update UI. 14. Hardening + real TOSEC data.
