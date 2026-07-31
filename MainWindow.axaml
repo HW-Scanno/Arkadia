@@ -683,6 +683,8 @@
                                 Margin="10,2" VerticalAlignment="Stretch"/>
                         <Button x:Name="SysActImportDat"    Classes="view-toggle"
                                 Content="Import DAT"    Click="OnImportDat"/>
+                        <Button x:Name="SysActPreviewGroupDat" Classes="view-toggle"
+                                Content="Preview Group DAT…" Click="OnPreviewGroupDat"/>
                         <Button x:Name="SysActConfigureDat" Classes="view-toggle"
                                 Content="Configure DAT" Click="OnSysConfigureDat"/>
                         <Button x:Name="SysActVerifyDat"    Classes="view-toggle"

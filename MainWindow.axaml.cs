@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -10,6 +11,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using Arkadia.Data;
+using Arkadia.GroupDats;
 using Arkadia.Ingestion;
 using Arkadia.Library;
 using Arkadia.Providers;
@@ -11153,6 +11155,60 @@ public partial class MainWindow : Window
             ResolveFlagImages();
             RefreshSystemsKeepSelection(platformId);
         }
+    }
+
+    // ── Group DAT: non-mutating manual reconciliation preview ─────────────────
+    // Builds an immutable catalog snapshot from the live _catalog (read-only SELECTs only —
+    // no leaf DB open, no schema write) and hands ONLY that snapshot to the preview window.
+    // The window never receives _catalog and performs no DB/filesystem writes; producing a
+    // plan does not execute it (execution is a later phase).
+    private async void OnPreviewGroupDat(object? sender, RoutedEventArgs e)
+    {
+        var preview = BuildGroupDatPreviewSnapshot();
+        var dialog  = new GroupDatReconciliationDialog(preview);
+        var ok      = await dialog.ShowDialog<bool>(this);
+        if (ok && dialog.Plan is { } plan)
+            await new InfoDialog("Group DAT",
+                $"Plan validated ({plan.NewLeaves.Length} new, {plan.Updates.Length} update, " +
+                $"{plan.AbsentLeaves.Length} absent). Execution will be enabled in a later phase.")
+                .ShowDialog(this);
+    }
+
+    private GroupDatCatalogPreviewData BuildGroupDatPreviewSnapshot()
+    {
+        var allLines = _catalog.LoadDatLines();
+
+        // Leaf → group id (per-leaf metadata read; read-only).
+        var groupOf = new Dictionary<string, DatLineGroupMetadataRecord?>(StringComparer.Ordinal);
+        foreach (var l in allLines)
+            groupOf[l.Id] = _catalog.GetDatLineGroupMetadata(l.Id);
+
+        var groups = _catalog.LoadDatGroups().Select(g =>
+        {
+            var leaves = allLines
+                .Where(l => string.Equals(groupOf[l.Id]?.GroupId, g.Id.Value, StringComparison.OrdinalIgnoreCase))
+                .Select(l =>
+                {
+                    var m = groupOf[l.Id];
+                    return new GroupDatExistingLeaf(
+                        l.Id, g.Id.Value, m?.RelativeDatPath, m?.SourceDatName,
+                        l.Version, l.ReleaseCount, l.MediaTypeId, l.HardwareFamilyId, l.Authority,
+                        m?.LastSeenGroupRevision);
+                })
+                .OrderBy(x => x.DatLineId, StringComparer.Ordinal)
+                .ToImmutableArray();
+            return new GroupDatExistingGroup(
+                g.Id.Value, g.DisplayName, g.HardwareFamilyId, g.Authority, g.CurrentRevision, leaves);
+        }).ToImmutableArray();
+
+        return new GroupDatCatalogPreviewData
+        {
+            ExistingGroups   = groups,
+            HardwareFamilies = _catalog.GetHardwareFamilies().Select(h => new GroupDatOption(h.Id, h.Name)).ToImmutableArray(),
+            MediaTypes       = _catalog.GetMediaTypes().Select(m => new GroupDatOption(m.Id, m.Name)).ToImmutableArray(),
+            Authorities      = _catalog.LoadAuthorities().Select(a => new GroupDatOption(a.Id, a.Name)).ToImmutableArray(),
+            OccupiedLeafIds  = allLines.Select(l => l.Id).ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),
+        };
     }
 
     private int RunImportWork(

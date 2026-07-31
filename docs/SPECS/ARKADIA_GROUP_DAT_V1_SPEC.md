@@ -2,9 +2,9 @@
 
 **Status:** Milestone in progress. **Phase 1 implemented** (technical-id policy + value objects). **Phase 2 implemented** (additive catalog schema + Group model + minimal persistence). **Phase 3A implemented** (pure, DB-independent source discovery / preview manifest). Everything beyond Phase 3A is **approved design, not yet implemented**.
 
-**v1 direction (Product Owner):** Group DAT Import/Update **v1 uses manual one-to-one reconciliation** (see §8a), **not** automatic matching or semantic fingerprints. The fingerprints (§7), the automatic matching evidence ladder (§8), and the Phase-3B fingerprint audit are **future research — not v1 prerequisites and not implemented**.
+**v1 direction (Product Owner):** Group DAT Import/Update **v1 uses manual one-to-one reconciliation** (see §8a), **not** automatic matching or semantic fingerprints. The fingerprints (§7), the automatic matching evidence ladder (§8), and the Phase-3B fingerprint audit are **future research — not v1 prerequisites and not implemented**. The **non-mutating reconciliation preview** (model + window) is implemented — see §18c; **execution is not yet implemented**.
 
-**Last updated:** 2026-07-31 (v1 = manual reconciliation direction)
+**Last updated:** 2026-07-31 (manual reconciliation preview implemented)
 
 > This document records the **approved baseline** of the Group DAT / Nested DAT / TOSEC milestone — not only Phase 1. It is the authoritative reference for the milestone. Sections are marked:
 > **[APPROVED]** decision is binding · **[DEFERRED]** approved but scheduled later · **[NOT IMPLEMENTED]** no code yet · **[OPEN]** still to be decided.
@@ -258,6 +258,21 @@ Pure, DB-independent **source discovery** producing an in-memory preview manifes
 - Tests: `Arkadia.Tests/DataLayer/DatGroupSourceDiscoveryServiceTests.cs`.
 
 **Not implemented (Phase 3B+):** exact source SHA-256, semantic fingerprint, overlap evidence, id suggestion/assignment, catalog access, matching with `dat_groups`/`dat_lines`, reconciliation/frozen plan, run/action journal, executors, finalizer, manifest persistence, and UI.
+
+---
+
+## 18c. Manual reconciliation preview (model + window) — what is implemented now [IMPLEMENTED]
+
+The **non-mutating manual reconciliation preview** for §8a. Pure logic + a code-behind window; **no execution**, no DB/filesystem writes.
+
+- **Pure layer (`GroupDats/Reconciliation/`, namespace `Arkadia.GroupDats`):** `GroupDatCatalogPreviewData` (+ `GroupDatOption`/`GroupDatExistingGroup`/`GroupDatExistingLeaf`) — the immutable catalog snapshot handed to the window; `GroupDatReconciliationSession` (the view-model logic: available sets, decisions, consume/undo, id proposal, completion gating, `BuildPlan`); `IncomingDatCandidate`/`ExistingGroupLeafCandidate`/`GroupDatDecision`; `FolderTokenTree` (in-memory folder tree from Phase-3A relative paths — no DB table); `DatLineIdComposer` (`group-id + non-empty folder tokens + DAT token`, joined `-`, validated by Phase-1 `DatTechnicalIdPolicy`, case-insensitive collisions; **no media/authority/hash/truncation/silent-normalization**); `GroupDatReconciliationPlan` (deeply-immutable frozen plan holding updates/new-leaves/absent-leaves + the immutable discovery snapshot — no CatalogService/DatLineStore/parser-mutable models/execution state).
+- **Window (`GroupDats/GroupDatReconciliationDialog.axaml(.cs)`, `namespace Arkadia`):** two-column reconciliation preview (discovered DATs ↔ existing leaves), source-folder picker driving the pure Phase-3A discovery, one-to-one associate/new-leaf/absent/undo, editable DAT/folder tokens + final leaf id, a side-by-side comparison panel, completion-gated **Continue** producing the frozen plan, and **Abort** that discards only in-memory state.
+- **Entry point:** `MainWindow.OnPreviewGroupDat` ("Preview Group DAT…") builds `GroupDatCatalogPreviewData` from the **live `_catalog`** (read-only SELECTs only — no leaf DB open, no schema write) and passes **only that snapshot** to the window (never `CatalogService`). Producing a plan does not execute it.
+- **Non-mutation:** the window/session receive no CatalogService/DatLineStore/connection string/data dir/write callback; before execution they call none of `CreateDatGroup`/`SaveDatLines`/`UpdateDatLineMetadata`/`RunImportWork`/`RunUpdateWork`/`DatLineStore`. Previous DAT `date`/`author` are not persisted → shown as "not available" (no leaf DB opened).
+- **Source stability (future execution):** the frozen plan carries the immutable discovery snapshot; execution (a later phase) must reparse all source DATs, rebuild snapshots, compare fully, and block **before any write** if any DAT changed. Not implemented here.
+- Tests: `Arkadia.Tests/GroupDats/GroupDatReconciliationTests.cs`.
+
+**Still not implemented:** import/update execution, executor extraction, `CreateDatGroup`/`SaveDatLines` wiring, revision advancement/finalization, run/action journal, resume, fingerprints, automatic matching/overlap, split/merge.
 
 ---
 
