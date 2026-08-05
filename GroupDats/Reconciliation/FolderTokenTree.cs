@@ -61,7 +61,7 @@ public sealed class FolderTokenTree
                 if (!tree._byPath.TryGetValue(pathSoFar, out var node))
                 {
                     node = new FolderTokenNode(seg, pathSoFar, isRoot: false,
-                        token: DatTechnicalIdPolicy.NormalizeSuggestion(seg));
+                        token: SuggestFolderToken(seg));
                     tree._byPath[pathSoFar] = node;
                     current.Children.Add(node);
                 }
@@ -106,4 +106,17 @@ public sealed class FolderTokenTree
         var idx = relativeFilePath.LastIndexOf('/');
         return idx < 0 ? "" : relativeFilePath[..idx];
     }
+
+    /// <summary>
+    /// The suggested technical token for a <b>single</b> folder segment. A folder name is one level,
+    /// so its token must be one <b>atomic</b> component: the hyphen is already the separator between
+    /// the id's components, and a single composite folder name must not look like several levels
+    /// ("Test Disks" → <c>testdisks</c>, not <c>test-disks</c>). Reuses the shared
+    /// <see cref="DatTechnicalIdPolicy.NormalizeSuggestion"/> (which lowercases, strips accents, and
+    /// maps spaces/underscores/punctuation to hyphens) and then <b>compacts the internal separators</b>
+    /// of that one segment. Only the Group-DAT folder-token suggestion behaves this way; the global
+    /// policy and final <c>DatLineId</c> validation are unchanged. The token remains fully editable.
+    /// </summary>
+    public static string SuggestFolderToken(string folderSegment) =>
+        DatTechnicalIdPolicy.NormalizeSuggestion(folderSegment).Replace("-", "");
 }

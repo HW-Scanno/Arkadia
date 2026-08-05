@@ -29,6 +29,12 @@ public sealed class IncomingDatCandidate
 
     public bool IsFinalIdManual => FinalIdOverride is not null;
 
+    /// <summary>
+    /// In New-Group mode every parsed DAT is an automatic new-leaf <b>draft</b>; this holds the
+    /// media type chosen for it, or null until the user picks one. Purely in-memory — no DB write.
+    /// </summary>
+    public string? DraftMediaTypeId { get; internal set; }
+
     internal IncomingDatCandidate(string candidateId, DiscoveredDatLeaf leaf, string datToken)
     {
         CandidateId = candidateId; Leaf = leaf; DatToken = datToken;

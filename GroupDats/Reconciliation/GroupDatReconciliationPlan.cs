@@ -34,11 +34,12 @@ public sealed record GroupDatAbsentLeafPlan(string ExistingLeafId);
 public sealed record GroupDatReconciliationPlan(
     GroupDatReconciliationMode                  Mode,
     string                                      SourceRoot,
-    string?                                     NewGroupId,
-    string?                                     NewGroupDisplayName,
-    string?                                     NewGroupHardwareFamilyId,
-    string?                                     NewGroupAuthority,
-    string?                                     ExistingGroupId,
+    string                                      SystemId,
+    string                                      SystemName,
+    string                                      Authority,
+    string                                      GroupId,          // stable technical key + leaf-id prefix
+    string                                      GroupName,        // human-readable display_name (distinct from GroupId)
+    string                                      HardwareFamilyId,
     ImmutableArray<GroupDatUpdateActionPlan>    Updates,
     ImmutableArray<GroupDatNewLeafPlan>         NewLeaves,
     ImmutableArray<GroupDatAbsentLeafPlan>      AbsentLeaves,

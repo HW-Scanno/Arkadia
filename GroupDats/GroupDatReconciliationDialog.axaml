@@ -1,8 +1,8 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="Arkadia.GroupDatReconciliationDialog"
-        Title="Preview Group DAT — Manual Reconciliation"
-        Width="1040" Height="760" MinWidth="880" MinHeight="600"
+        Title="Group DAT — Manual Reconciliation"
+        Width="1060" Height="820" MinWidth="900" MinHeight="640"
         CanResize="True"
         WindowStartupLocation="CenterOwner"
         Background="#0F0F14"
@@ -20,99 +20,153 @@
             <Setter Property="CornerRadius" Value="6"/>
             <Setter Property="Padding" Value="12"/>
         </Style>
+        <Style Selector="TextBlock.k">
+            <Setter Property="Foreground" Value="#7788AA"/>
+            <Setter Property="FontSize" Value="11"/>
+        </Style>
     </Window.Styles>
 
-    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto" Margin="20,16,20,14">
+    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto" Margin="18,14,18,12">
 
-        <!-- Row 0: title + non-mutating note -->
-        <StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,10">
-            <TextBlock Text="Preview Group DAT" FontSize="15" FontWeight="SemiBold" Foreground="#F0F0F0"/>
+        <!-- Row 0: title -->
+        <StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,8">
+            <TextBlock x:Name="TitleText" Text="Create Group DAT" FontSize="15" FontWeight="SemiBold" Foreground="#F0F0F0"/>
             <TextBlock Text="Read-only preview — nothing is imported or modified until execution is enabled in a later phase."
                        FontSize="11" Foreground="#888899"/>
         </StackPanel>
 
-        <!-- Row 1: source + target -->
-        <Border Grid.Row="1" Classes="card" Margin="0,0,0,10">
+        <!-- Row 1: identity (System read-only) + authority / group name / group id + source -->
+        <Border Grid.Row="1" Classes="card" Margin="0,0,0,8">
             <StackPanel Spacing="8">
+                <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto,Auto" >
+                    <!-- System (always read-only) -->
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="System:" Classes="k" VerticalAlignment="Center" Margin="0,0,8,4"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" x:Name="SystemContextText" FontSize="12" Foreground="#F0F0F0"
+                               VerticalAlignment="Center" Margin="0,0,16,4"/>
+
+                    <!-- Authority: combo (Create) / text (Update) -->
+                    <TextBlock Grid.Row="0" Grid.Column="2" Text="Authority:" Classes="k" VerticalAlignment="Center" Margin="0,0,8,4"/>
+                    <StackPanel Grid.Row="0" Grid.Column="3" Orientation="Horizontal" Margin="0,0,0,4">
+                        <ComboBox x:Name="AuthorityCombo" MinWidth="150" SelectionChanged="OnAuthorityChanged"/>
+                        <TextBlock x:Name="AuthorityText" FontSize="12" Foreground="#AAAACC" VerticalAlignment="Center" IsVisible="False"/>
+                    </StackPanel>
+
+                    <!-- Group Name -->
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Group Name:" Classes="k" VerticalAlignment="Center" Margin="0,4,8,0"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" x:Name="GroupNameField" Margin="0,4,16,0"
+                             HorizontalAlignment="Stretch" TextChanged="OnGroupNameChanged"/>
+
+                    <!-- Group ID -->
+                    <TextBlock Grid.Row="1" Grid.Column="2" Text="Group ID:" Classes="k" VerticalAlignment="Center" Margin="0,4,8,0"/>
+                    <TextBox Grid.Row="1" Grid.Column="3" x:Name="GroupIdField" Margin="0,4,0,0"
+                             HorizontalAlignment="Stretch" TextChanged="OnGroupIdChanged"/>
+                </Grid>
+
+                <TextBlock x:Name="IdentityHint" FontSize="10" Foreground="#666677" TextWrapping="Wrap"
+                           Text="Group Name — displayed in the System view.   ·   Group ID — permanent technical identifier and leaf-id prefix (set now, immutable after creation)."/>
+                <TextBlock x:Name="GroupIdStatusText" FontSize="11" Foreground="#888899"/>
+
                 <StackPanel Orientation="Horizontal" Spacing="10">
                     <Button x:Name="PickSourceButton" Content="Select source folder…" Click="OnPickSource"
                             Background="#7B68EE" Foreground="#FFFFFF" Padding="14,6" CornerRadius="6" BorderThickness="0"/>
                     <TextBlock x:Name="SourcePathText" Text="No source selected" VerticalAlignment="Center" Foreground="#AAAACC"/>
                 </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                    <TextBlock Text="Target:" VerticalAlignment="Center" Foreground="#AAAACC"/>
-                    <ComboBox x:Name="ModeCombo" MinWidth="240" SelectionChanged="OnModeChanged"/>
-                </StackPanel>
-                <StackPanel x:Name="NewGroupPanel" Orientation="Horizontal" Spacing="8">
-                    <TextBox x:Name="NewGroupIdField"      Watermark="group id"     Width="150" TextChanged="OnAnyChanged"/>
-                    <TextBox x:Name="NewGroupDisplayField" Watermark="display name" Width="180" TextChanged="OnAnyChanged"/>
-                    <ComboBox x:Name="NewGroupFamilyCombo" MinWidth="150" SelectionChanged="OnAnyChangedSel"/>
-                    <ComboBox x:Name="NewGroupAuthorityCombo" MinWidth="130" SelectionChanged="OnAnyChangedSel"/>
-                </StackPanel>
             </StackPanel>
         </Border>
 
-        <!-- Row 2: dual pane -->
-        <Grid Grid.Row="2" ColumnDefinitions="*,*" >
-            <!-- Left: discovered DATs + new-leaf editor -->
+        <!-- Row 2: two panes -->
+        <Grid Grid.Row="2" ColumnDefinitions="1.1*,*">
+
+            <!-- Left: discovered DATs available for resolution (sequential) -->
             <Border Grid.Column="0" Classes="card" Margin="0,0,6,0">
-                <Grid RowDefinitions="Auto,*,Auto">
-                    <TextBlock Grid.Row="0" Classes="h" Text="DISCOVERED DATS (AVAILABLE)"/>
-                    <ListBox Grid.Row="1" x:Name="DatsList" Margin="0,6,0,6" SelectionChanged="OnDatSelected"/>
-                    <StackPanel Grid.Row="2" Spacing="6">
-                        <TextBlock Classes="h" Text="NEW-LEAF EDITOR"/>
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <TextBox x:Name="DatTokenField" Watermark="DAT token" Width="150" TextChanged="OnDatTokenChanged"/>
-                            <ComboBox x:Name="MediaTypeCombo" MinWidth="120"/>
+                <Grid RowDefinitions="Auto,*">
+                    <TextBlock Grid.Row="0" x:Name="LeftHeader" Classes="h" Text="DISCOVERED DATS (AVAILABLE)"/>
+                    <ListBox Grid.Row="1" x:Name="DatsList" Margin="0,6,0,0" SelectionChanged="OnDatSelected"/>
+                </Grid>
+            </Border>
+
+            <!-- Right: selected-item detail + leaf-id builder + actions + decisions -->
+            <Border Grid.Column="1" Classes="card" Margin="6,0,0,0">
+                <ScrollViewer>
+                    <StackPanel Spacing="10">
+
+                        <!-- Selected DAT detail -->
+                        <StackPanel Spacing="3">
+                            <TextBlock Classes="h" Text="SELECTED DAT"/>
+                            <TextBlock x:Name="DetailText" FontSize="11" Foreground="#CCCCDD" TextWrapping="Wrap"
+                                       Text="Select a DAT on the left."/>
                         </StackPanel>
-                        <TextBox x:Name="FinalIdField" Watermark="final leaf id" TextChanged="OnFinalIdChanged"/>
-                        <TextBlock x:Name="IdStatusText" FontSize="11" Foreground="#888899"/>
+
+                        <!-- Leaf ID builder -->
+                        <StackPanel x:Name="IdBuilderPanel" Spacing="6">
+                            <TextBlock Classes="h" Text="LEAF ID"/>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Classes="k" Text="Group:"/>
+                                <TextBlock x:Name="GroupIdText" FontSize="11" Foreground="#CCCCDD"/>
+                            </StackPanel>
+                            <TextBlock Classes="k" Text="Folder segments (editable tokens):"/>
+                            <StackPanel x:Name="FolderTokensPanel" Spacing="4"/>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Classes="k" Text="Dat Suffix:" VerticalAlignment="Center"/>
+                                <TextBox x:Name="DatTokenField" Watermark="(optional)" Width="140" TextChanged="OnDatTokenChanged"/>
+                            </StackPanel>
+                            <TextBlock Classes="k" TextWrapping="Wrap"
+                                       Text="Optional — use only to distinguish DATs with the same proposed ID."/>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Classes="k" Text="Media type:" VerticalAlignment="Center"/>
+                                <ComboBox x:Name="MediaTypeCombo" MinWidth="120" SelectionChanged="OnMediaTypeChanged"/>
+                            </StackPanel>
+                            <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+                                <TextBlock Grid.Column="0" Classes="k" Text="Final id:"
+                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <TextBox Grid.Column="1" x:Name="FinalIdField"
+                                         HorizontalAlignment="Stretch" MinWidth="180"
+                                         AcceptsReturn="False" TextWrapping="NoWrap"
+                                         TextChanged="OnFinalIdChanged"/>
+                                <Button Grid.Column="2" x:Name="ResetIdButton" Content="Auto"
+                                        Click="OnResetId" Margin="8,0,0,0"/>
+                            </Grid>
+                            <TextBlock x:Name="IdStatusText" FontSize="11" Foreground="#888899"/>
+                        </StackPanel>
+
+                        <!-- Primary action: create leaf (both modes) -->
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <Button x:Name="CreateLeafButton" Content="Create leaf from selected DAT" Click="OnCreateNewLeaf"/>
+                        </StackPanel>
+
+                        <!-- Update-only: existing leaves + associate/absent + comparison -->
+                        <StackPanel x:Name="UpdateActionsPanel" Spacing="8">
+                            <TextBlock Classes="h" Text="EXISTING LEAVES"/>
+                            <ListBox x:Name="LeavesList" Height="140" SelectionChanged="OnLeafSelected"/>
+                            <TextBlock x:Name="ComparisonText" FontFamily="Consolas,monospace" FontSize="11"
+                                       Foreground="#CCCCDD" Text="Select a DAT and a leaf to compare."/>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <Button x:Name="AssociateButton" Content="Associate as update" Click="OnAssociate"/>
+                                <Button x:Name="AbsentButton"    Content="Mark leaf absent"   Click="OnMarkAbsent"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <!-- Decisions + Undo (both modes) -->
+                        <StackPanel Spacing="6">
+                            <TextBlock Classes="h" Text="DECISIONS"/>
+                            <ListBox x:Name="DecisionsList" Height="90"/>
+                            <Button x:Name="UndoButton" Content="Undo selected decision" Click="OnUndo" HorizontalAlignment="Left"/>
+                        </StackPanel>
                     </StackPanel>
-                </Grid>
-            </Border>
-            <!-- Right: existing leaves -->
-            <Border Grid.Column="1" Classes="card" Margin="6,0,0,0">
-                <Grid RowDefinitions="Auto,*">
-                    <TextBlock Grid.Row="0" Classes="h" Text="EXISTING LEAVES (AVAILABLE)"/>
-                    <ListBox Grid.Row="1" x:Name="LeavesList" Margin="0,6,0,0" SelectionChanged="OnLeafSelected"/>
-                </Grid>
+                </ScrollViewer>
             </Border>
         </Grid>
 
-        <!-- Row 3: comparison + actions -->
-        <Border Grid.Row="3" Classes="card" Margin="0,10,0,10">
-            <StackPanel Spacing="8">
-                <TextBlock x:Name="ComparisonText" FontFamily="Consolas,monospace" FontSize="11" Foreground="#CCCCDD"
-                           Text="Select a DAT (left) and a leaf (right) to compare."/>
-                <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button x:Name="AssociateButton" Content="Associate as update" Click="OnAssociate"/>
-                    <Button x:Name="NewLeafButton"   Content="Create new leaf"    Click="OnCreateNewLeaf"/>
-                    <Button x:Name="AbsentButton"    Content="Mark leaf absent"   Click="OnMarkAbsent"/>
-                    <Button x:Name="UndoButton"      Content="Undo decision"      Click="OnUndo"/>
-                </StackPanel>
+        <!-- Row 3: validation -->
+        <Border Grid.Row="3" Classes="card" Margin="0,8,0,8">
+            <StackPanel Spacing="2">
+                <TextBlock Classes="h" Text="VALIDATION"/>
+                <TextBlock x:Name="SummaryText" FontSize="11" Foreground="#FFA726" TextWrapping="Wrap"/>
             </StackPanel>
         </Border>
 
-        <!-- Row 4: decisions + summary -->
-        <Grid Grid.Row="4" ColumnDefinitions="*,*" Height="150" Margin="0,0,0,10">
-            <Border Grid.Column="0" Classes="card" Margin="0,0,6,0">
-                <Grid RowDefinitions="Auto,*">
-                    <TextBlock Grid.Row="0" Classes="h" Text="DECISIONS"/>
-                    <ListBox Grid.Row="1" x:Name="DecisionsList" Margin="0,6,0,0"/>
-                </Grid>
-            </Border>
-            <Border Grid.Column="1" Classes="card" Margin="6,0,0,0">
-                <Grid RowDefinitions="Auto,*">
-                    <TextBlock Grid.Row="0" Classes="h" Text="VALIDATION"/>
-                    <ScrollViewer Grid.Row="1" Margin="0,6,0,0">
-                        <TextBlock x:Name="SummaryText" FontSize="11" Foreground="#FFA726" TextWrapping="Wrap"/>
-                    </ScrollViewer>
-                </Grid>
-            </Border>
-        </Grid>
-
-        <!-- Row 5: footer -->
-        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+        <!-- Row 4: footer -->
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
             <Button x:Name="AbortButton" Content="Abort" Click="OnAbort" Padding="20,8"/>
             <Button x:Name="ContinueButton" Content="Continue" Click="OnContinue" IsEnabled="False"
                     Background="#7B68EE" Foreground="#FFFFFF" Padding="24,8" CornerRadius="6" BorderThickness="0"/>

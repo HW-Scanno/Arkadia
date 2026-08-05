@@ -3658,14 +3658,16 @@ public partial class MainWindow : Window
     /// Free space check, destination-exists guard, and log writing are all handled internally.
     /// Returns (Success=false, ...) when any pre-flight check fails (InfoDialog already shown).
     /// </summary>
-    private async Task<(bool Success, int FileCount, long CopiedBytes, string? CleanupError, TimeSpan Elapsed)>
+    private async Task<(bool Success, int FileCount, long CopiedBytes, string? CleanupError, TimeSpan Elapsed,
+                        int CatalogVerified, int LegacyVerified)>
         RunCopyMoveAsync(
             string operationTitle,
             string srcFolder,
             string dstFolder,
             string dialogHeader,
             string logSubdir,
-            string logLabel)
+            string logLabel,
+            IReadOnlyDictionary<string, string>? expectedSha1ByFileName = null)
     {
         // ── Pre-enumerate source files ────────────────────────────────────
         var files = Directory
@@ -3684,7 +3686,7 @@ public partial class MainWindow : Window
             await new InfoDialog("Empty Volume Folder",
                 $"No files found in:\n{srcFolder}")
                 .ShowDialog(this);
-            return (false, 0, 0, null, TimeSpan.Zero);
+            return (false, 0, 0, null, TimeSpan.Zero, 0, 0);
         }
 
         // ── Destination must not already exist ────────────────────────────
@@ -3694,7 +3696,7 @@ public partial class MainWindow : Window
                 $"The destination folder already exists:\n{dstFolder}\n\n" +
                 "Remove it manually before proceeding.")
                 .ShowDialog(this);
-            return (false, 0, 0, null, TimeSpan.Zero);
+            return (false, 0, 0, null, TimeSpan.Zero, 0, 0);
         }
 
         // ── Free space check ──────────────────────────────────────────────
@@ -3709,7 +3711,7 @@ public partial class MainWindow : Window
                     $"Available: {FormatBytes(dstDrive.AvailableFreeSpace)}\n\n" +
                     "Free up space on the destination and try again.")
                     .ShowDialog(this);
-                return (false, 0, 0, null, TimeSpan.Zero);
+                return (false, 0, 0, null, TimeSpan.Zero, 0, 0);
             }
         }
         catch { /* DriveInfo unavailable — copy will fail naturally if space is truly exhausted */ }
@@ -3738,6 +3740,8 @@ public partial class MainWindow : Window
         string? errorMessage  = null;
         long copiedBytes = 0, verifiedBytes = 0;
         int  filesProcessed   = 0;
+        int  catalogVerified  = 0;   // verified against authoritative catalog SHA1 (no source re-read)
+        int  legacyVerified   = 0;   // verified with historical source-vs-destination fallback
 
         try
         {
@@ -3776,32 +3780,37 @@ public partial class MainWindow : Window
                     throw new InvalidOperationException(
                         "Verify failed — destination file count does not match source file count.");
 
-                // Verify phase — Phase 2: SHA1 authoritative verification
+                // Verify phase — Phase 2: SHA1 verification.
+                // Authoritative path: verify the destination against the catalog SHA1 without
+                // re-reading the source. Per-file legacy fallback (source-vs-destination) only for
+                // files that have no authoritative hash (untracked / marker / empty-hash).
                 log?.AppendLine();
                 log?.AppendLine("Verify (SHA1):");
                 foreach (var (srcPath, dstPath, relPath, size) in files)
                 {
                     var sizeLabel = FormatBytes(size);
-                    log?.AppendLine($"VERIFY {relPath}  ({sizeLabel})");
+                    var fileName  = Path.GetFileName(relPath);
+                    string? expectedSha1 = null;
+                    expectedSha1ByFileName?.TryGetValue(fileName, out expectedSha1);
 
-                    var srcSha1 = ComputeFileSha1(srcPath);
-                    var dstSha1 = ComputeFileSha1(dstPath);
-
-                    if (!string.Equals(srcSha1, dstSha1, StringComparison.OrdinalIgnoreCase))
+                    if (!Volumes.VolumeMoveFileVerifier.VerifyFile(
+                            srcPath, dstPath, size, expectedSha1,
+                            out var method, out var verifyFail))
                     {
-                        log?.AppendLine($"VERIFY FAILED  src={srcSha1}  dst={dstSha1}");
-                        throw new InvalidOperationException(
-                            $"Verify failed — SHA1 mismatch: {relPath}\n" +
-                            $"  src: {srcSha1}\n" +
-                            $"  dst: {dstSha1}");
+                        log?.AppendLine($"VERIFY FAILED  {relPath}  {verifyFail}");
+                        throw new InvalidOperationException($"Verify failed — {verifyFail}: {relPath}");
                     }
 
-                    log?.AppendLine($"VERIFY OK  sha1={dstSha1}");
+                    bool viaCatalog = method == Volumes.VolumeMoveVerifyMethod.CatalogSha1;
+                    if (viaCatalog) catalogVerified++; else legacyVerified++;
+                    var methodLabel = viaCatalog ? "catalog-sha1" : "legacy-src-dst";
+
+                    log?.AppendLine($"VERIFY OK  {relPath}  [{methodLabel}]");
                     verifiedBytes += size;
                     var elapsed   = DateTime.UtcNow - startTime;
                     await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                     {
-                        progDialog.AppendRow("verify", relPath, sizeLabel);
+                        progDialog.AppendRow("verify", relPath, $"{sizeLabel} · {methodLabel}");
                         progDialog.UpdateStats(copiedBytes, verifiedBytes, filesProcessed, elapsed);
                     });
                 }
@@ -3838,6 +3847,8 @@ public partial class MainWindow : Window
             log.AppendLine($"Completed:   {endTime:o}");
             log.AppendLine($"Duration:    {(endTime - startTime).TotalSeconds:F1}s");
             log.AppendLine($"Result:      {(errorMessage is null ? "OK (SHA1 verified)" : "FAILED")}");
+            log.AppendLine($"Verified (catalog SHA1):        {catalogVerified}");
+            log.AppendLine($"Verified (legacy src/dst):      {legacyVerified}");
             if (errorMessage is not null)
                 log.AppendLine($"Error:       {errorMessage}");
             try
@@ -3853,10 +3864,13 @@ public partial class MainWindow : Window
         // ── Finalize dialog ───────────────────────────────────────────────
         if (errorMessage is null)
         {
-            var completionText = cleanupError is null
+            var verifyBreakdown = legacyVerified > 0
+                ? $" Verified: {catalogVerified} against catalog SHA1, {legacyVerified} via legacy source/destination fallback."
+                : $" Verified: {catalogVerified} against catalog SHA1.";
+            var completionText = (cleanupError is null
                 ? $"Completed — {files.Count} file(s) copied, verified, and source removed."
                 : $"Completed — {files.Count} file(s) copied and verified. " +
-                  $"Source cleanup failed: {cleanupError}";
+                  $"Source cleanup failed: {cleanupError}") + verifyBreakdown;
             progDialog.SetCompleted(files.Count, copiedBytes, dstFolder, completionText);
         }
         else
@@ -3864,7 +3878,8 @@ public partial class MainWindow : Window
 
         await dlgTask;
 
-        return (errorMessage is null, files.Count, copiedBytes, cleanupError, DateTime.UtcNow - startTime);
+        return (errorMessage is null, files.Count, copiedBytes, cleanupError,
+                DateTime.UtcNow - startTime, catalogVerified, legacyVerified);
     }
 
     /// <summary>
@@ -4338,11 +4353,61 @@ public partial class MainWindow : Window
                 : DiskDesc(dstDiskLabel, dstDiskId, dstMountpoint);
             var header = $"Volume: {entry.Label}  —  Source: {srcDesc}  —  Destination: {dstDesc}";
 
+            // ── Build authoritative expected-SHA1 snapshot BEFORE any copy ────
+            // Move Volume verifies each destination against the catalog SHA1
+            // (derived_artifacts.hashed_derived_sha1) instead of re-reading the source. The snapshot
+            // is built once, up front, so no DB read happens during the transfer. If the volume DB is
+            // unavailable or the assigned-artifact snapshot cannot be built, the move is blocked here
+            // — before any copy — rather than silently degrading the whole volume to source-vs-dst.
+            IReadOnlyDictionary<string, string> expectedSha1ByFileName;
+            {
+                if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath))
+                {
+                    await new InfoDialog("Move Volume Blocked",
+                        $"The catalog database for volume \"{entry.Label}\" is not available, so the " +
+                        "authoritative artifact hashes cannot be read.\n\n" +
+                        "No files were copied.")
+                        .ShowDialog(this);
+                    return;
+                }
+
+                try
+                {
+                    var assignedVas = _catalog.GetVolumeArtifacts(entry.Id);
+                    var daIds       = assignedVas.Select(va => va.DerivedArtifactId).ToList();
+                    var volStore    = new DatLineStore(entry.DbPath);
+                    var buildInfos  = volStore.GetArtifactBuildInfos(daIds);
+
+                    var (map, duplicateFileName) = Volumes.VolumeMoveFileVerifier.BuildExpectedSha1Map(
+                        buildInfos.Select(i => (i.FileName, i.ExpectedSha1)));
+
+                    if (duplicateFileName is not null)
+                    {
+                        await new InfoDialog("Move Volume Blocked",
+                            $"Two assigned artifacts share the same filename:\n\n\"{duplicateFileName}\"\n\n" +
+                            "Resolve this ambiguity before moving the volume. No files were copied.")
+                            .ShowDialog(this);
+                        return;
+                    }
+
+                    expectedSha1ByFileName = map;
+                }
+                catch (Exception ex)
+                {
+                    await new InfoDialog("Move Volume Blocked",
+                        $"Could not build the authoritative artifact-hash snapshot for volume " +
+                        $"\"{entry.Label}\":\n\n{ex.Message}\n\nNo files were copied.")
+                        .ShowDialog(this);
+                    return;
+                }
+            }
+
             // ── Execute copy → verify → cleanup source ────────────────────────
-            var (success, fileCount, copiedBytes, cleanupError, elapsed) =
+            var (success, fileCount, copiedBytes, cleanupError, elapsed, catalogVerified, legacyVerified) =
                 await RunCopyMoveAsync(
                     "Move Volume", srcFolder, dstFolder, header,
-                    "volume-move", SafeFileName(entry.Label));
+                    "volume-move", SafeFileName(entry.Label),
+                    expectedSha1ByFileName);
 
             if (!success) return;
 
@@ -4418,6 +4483,8 @@ public partial class MainWindow : Window
                 sb.AppendLine($"Total Elapsed:        {elapsedStr}");
                 sb.AppendLine();
                 sb.AppendLine($"Verification:   OK");
+                sb.AppendLine($"  Catalog SHA1:  {catalogVerified}");
+                sb.AppendLine($"  Legacy src/dst: {legacyVerified}");
                 sb.AppendLine($"Source Removal: {srcRemoval}");
 
                 File.WriteAllText(logFile, sb.ToString());
@@ -11164,8 +11231,20 @@ public partial class MainWindow : Window
     // plan does not execute it (execution is a later phase).
     private async void OnPreviewGroupDat(object? sender, RoutedEventArgs e)
     {
+        if (string.IsNullOrEmpty(_selectedPlatformId))
+        {
+            await new InfoDialog("Group DAT", "Select a system first.").ShowDialog(this);
+            return;
+        }
+
+        // The System context is fixed by the current selection: its id (immutable, from the caller)
+        // plus the chosen authority derive the group identity inside the window. It is never chosen or
+        // edited there.
+        var systemId   = _selectedPlatformId;
+        var systemName = _selectedPlatform?.Name ?? systemId;
+
         var preview = BuildGroupDatPreviewSnapshot();
-        var dialog  = new GroupDatReconciliationDialog(preview);
+        var dialog  = new GroupDatReconciliationDialog(preview, systemId, systemName);
         var ok      = await dialog.ShowDialog<bool>(this);
         if (ok && dialog.Plan is { } plan)
             await new InfoDialog("Group DAT",

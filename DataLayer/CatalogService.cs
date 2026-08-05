@@ -470,19 +470,47 @@ public sealed class CatalogService
         ecoSeed.ExecuteNonQuery();
 
         // ── Seed media_types (INSERT OR IGNORE — safe to re-run) ─────────────
+        // Adds any missing official media type without ever rewriting an existing row (INSERT OR
+        // IGNORE), so a legacy catalog gains new rows (e.g. tape/bluray) on next start.
         using var mtSeed = conn.CreateCommand();
         mtSeed.CommandText = """
             INSERT OR IGNORE INTO media_types(id, name, sort_order, is_seeded) VALUES
-                ('rom',       'ROM',       10, 1),
-                ('cartridge', 'Cartridge', 20, 1),
-                ('cd',        'CD',        30, 1),
-                ('dvd',       'DVD',       40, 1),
-                ('floppy',    'Floppy',    50, 1),
-                ('hdd',       'HDD',       60, 1),
-                ('digital',   'Digital',   70, 1),
-                ('other',     'Other',     99, 1);
+                ('rom',       'ROM',       10,  1),
+                ('cartridge', 'Cartridge', 20,  1),
+                ('tape',      'Tape',      30,  1),
+                ('floppy',    'Floppy',    40,  1),
+                ('cd',        'CD',        50,  1),
+                ('dvd',       'DVD',       60,  1),
+                ('bluray',    'Blu-ray',   70,  1),
+                ('hdd',       'HDD',       80,  1),
+                ('digital',   'Digital',   90,  1),
+                ('other',     'Other',     100, 1);
             """;
         mtSeed.ExecuteNonQuery();
+
+        // Realign the display order of the KNOWN official seeded media types only. INSERT OR IGNORE
+        // never updates a pre-existing row, so a legacy catalog would keep its old sort_order — this
+        // reasserts the canonical order. Scope guard: matches on the explicit official id AND
+        // is_seeded = 1, touches sort_order ONLY (never id/name/is_seeded), and never a custom or
+        // non-seeded media type. No dat_line is affected and no media_type_id is changed.
+        using var mtOrder = conn.CreateCommand();
+        mtOrder.CommandText = """
+            UPDATE media_types SET sort_order = CASE id
+                WHEN 'rom'       THEN 10
+                WHEN 'cartridge' THEN 20
+                WHEN 'tape'      THEN 30
+                WHEN 'floppy'    THEN 40
+                WHEN 'cd'        THEN 50
+                WHEN 'dvd'       THEN 60
+                WHEN 'bluray'    THEN 70
+                WHEN 'hdd'       THEN 80
+                WHEN 'digital'   THEN 90
+                WHEN 'other'     THEN 100
+            END
+            WHERE is_seeded = 1
+              AND id IN ('rom','cartridge','tape','floppy','cd','dvd','bluray','hdd','digital','other');
+            """;
+        mtOrder.ExecuteNonQuery();
 
         // ── Seed content_categories (INSERT OR IGNORE — safe to re-run) ──────
         using var ccSeed = conn.CreateCommand();

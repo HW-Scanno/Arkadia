@@ -10,9 +10,19 @@ namespace Arkadia.GroupDats;
 /// <summary>
 /// Pure, DB-independent working state of the manual Group-DAT reconciliation (the "view-model
 /// logic"). It never touches CatalogService, DatLineStore, the filesystem, or any DB — it operates
-/// only on the immutable catalog snapshot and the pure Phase-3A discovery result. All consume/undo
-/// invariants and completion gating live here, not in the UI. Producing the frozen plan is the only
-/// output; nothing is executed.
+/// only on the immutable catalog snapshot and the pure Phase-3A discovery result.
+///
+/// <para><b>Identity model (explicit, no longer inferred).</b> The <b>mode is fixed by the caller</b>
+/// via <see cref="ForNewGroup"/> / <see cref="ForExistingGroup"/> — it is never derived from
+/// System + authority. <b>System id</b> is caller-supplied and immutable. <b>Group Name</b>
+/// (persists as <c>display_name</c>) and <b>Group ID</b> (the stable technical key and leaf-id
+/// prefix) are two distinct fields. In Create mode Authority / Group Name / Group ID are editable
+/// (Group ID validated + case-insensitively collision-checked before creation); in Update mode all
+/// identity comes from the catalog snapshot and is read-only. Multiple groups per System and per
+/// authority are allowed.</para>
+///
+/// All consume/undo invariants and completion gating live here, not in the UI. Producing the frozen
+/// plan is the only output; nothing is executed.
 /// </summary>
 public sealed class GroupDatReconciliationSession
 {
@@ -20,11 +30,27 @@ public sealed class GroupDatReconciliationSession
     public GroupDatCatalogPreviewData Catalog { get; }
     public GroupDatExistingGroup?     TargetGroup { get; }
 
-    // ── New-group fields (NewGroup mode) ──────────────────────────────────────
-    public string NewGroupId               { get; set; } = "";
-    public string NewGroupDisplayName       { get; set; } = "";
-    public string NewGroupHardwareFamilyId  { get; set; } = "";
-    public string NewGroupAuthority         { get; set; } = "";
+    // ── System context (from the caller; never editable in the window) ──────────
+    public string SystemId         { get; }
+    public string SystemName       { get; }
+    public string HardwareFamilyId { get; }
+
+    // ── Group identity ──────────────────────────────────────────────────────────
+    private string  _authority;
+    private string  _groupName;
+    private string  _groupId;
+    private bool    _groupNameManual;
+    private bool    _groupIdManual;
+
+    /// <summary>Group authority (metadata). Editable in Create mode, read-only in Update mode.</summary>
+    public string Authority => _authority;
+    /// <summary>Human-readable Group Name shown in the System view (persists as display_name).</summary>
+    public string GroupName => _groupName;
+    /// <summary>Stable technical Group ID (the leaf-id prefix). Immutable once the group exists.</summary>
+    public string GroupId   => _groupId;
+
+    /// <summary>True when identity is fixed by an existing group (Update mode).</summary>
+    public bool IsIdentityLocked => Mode == GroupDatReconciliationMode.UpdateGroup;
 
     // ── Discovery-derived state ───────────────────────────────────────────────
     public string?                  SourceRoot { get; private set; }
@@ -38,20 +64,111 @@ public sealed class GroupDatReconciliationSession
     private readonly HashSet<string> _consumedLeaves = new(StringComparer.Ordinal);  // DatLineId
 
     private GroupDatReconciliationSession(
-        GroupDatReconciliationMode mode, GroupDatCatalogPreviewData catalog, GroupDatExistingGroup? group)
+        GroupDatReconciliationMode mode, GroupDatCatalogPreviewData catalog,
+        string systemId, string systemName, string hardwareFamilyId,
+        string authority, string groupName, string groupId, GroupDatExistingGroup? targetGroup)
     {
-        Mode = mode; Catalog = catalog; TargetGroup = group;
-        if (group is not null)
-            foreach (var leaf in group.Leaves)
+        Mode             = mode;
+        Catalog          = catalog          ?? throw new ArgumentNullException(nameof(catalog));
+        SystemId         = systemId         ?? throw new ArgumentNullException(nameof(systemId));
+        SystemName       = string.IsNullOrWhiteSpace(systemName) ? systemId : systemName;
+        HardwareFamilyId = hardwareFamilyId ?? systemId;
+        _authority       = authority ?? "";
+        _groupName       = groupName ?? "";
+        _groupId         = groupId   ?? "";
+        TargetGroup      = targetGroup;
+
+        if (targetGroup is not null)
+            foreach (var leaf in targetGroup.Leaves)
                 _leaves.Add(new ExistingGroupLeafCandidate(leaf));
     }
 
-    public static GroupDatReconciliationSession ForNewGroup(GroupDatCatalogPreviewData catalog)
-        => new(GroupDatReconciliationMode.NewGroup, catalog, null);
+    /// <summary>
+    /// Create mode: a brand-new group under the given System context. The caller supplies the initial
+    /// suggestions (<paramref name="groupName"/> from the authority display name, <paramref name="proposedGroupId"/>
+    /// = <see cref="SuggestGroupId"/>); all three of Authority / Group Name / Group ID remain editable
+    /// until the group is created.
+    /// </summary>
+    public static GroupDatReconciliationSession ForNewGroup(
+        GroupDatCatalogPreviewData catalog, string systemId, string systemName,
+        string authority, string groupName, string proposedGroupId)
+        => new(GroupDatReconciliationMode.NewGroup, catalog, systemId, systemName,
+               hardwareFamilyId: systemId, authority, groupName, proposedGroupId, targetGroup: null);
 
+    /// <summary>
+    /// Update mode: bound to one specific already-existing Group ID. System / Authority / Group Name /
+    /// Group ID and the existing leaves are all loaded from the catalog snapshot and are read-only —
+    /// nothing here is taken from alternative UI values.
+    /// </summary>
     public static GroupDatReconciliationSession ForExistingGroup(
-        GroupDatCatalogPreviewData catalog, GroupDatExistingGroup group)
-        => new(GroupDatReconciliationMode.UpdateGroup, catalog, group ?? throw new ArgumentNullException(nameof(group)));
+        GroupDatCatalogPreviewData catalog, string existingGroupId)
+    {
+        var group = catalog.ExistingGroups.FirstOrDefault(
+                        g => string.Equals(g.Id, existingGroupId, StringComparison.OrdinalIgnoreCase))
+                    ?? throw new InvalidOperationException($"No existing group '{existingGroupId}' in the catalog snapshot.");
+
+        var systemName = catalog.HardwareFamilies
+            .FirstOrDefault(h => string.Equals(h.Id, group.HardwareFamilyId, StringComparison.OrdinalIgnoreCase))?.Name
+            ?? group.HardwareFamilyId;
+
+        return new(GroupDatReconciliationMode.UpdateGroup, catalog,
+                   systemId: group.HardwareFamilyId, systemName, hardwareFamilyId: group.HardwareFamilyId,
+                   group.Authority, group.DisplayName, group.Id, targetGroup: group);
+    }
+
+    /// <summary>The initial Group ID suggestion for a new group: <c>&lt;systemId&gt;-&lt;authority&gt;</c>.</summary>
+    public static string SuggestGroupId(string systemId, string authority) => $"{systemId}-{authority}";
+
+    /// <summary>The initial Group Name suggestion for a new group: the authority's display name.</summary>
+    public string SuggestGroupName(string authority) =>
+        Catalog.Authorities.FirstOrDefault(a => string.Equals(a.Id, authority, StringComparison.OrdinalIgnoreCase))?.Name
+        ?? authority;
+
+    // ── Create-mode identity edits ──────────────────────────────────────────────
+
+    private void RequireCreatable()
+    {
+        if (Mode != GroupDatReconciliationMode.NewGroup)
+            throw new InvalidOperationException("Group identity is read-only for an existing group.");
+    }
+
+    /// <summary>Sets the authority (Create only); re-suggests Group ID / Group Name when not manually overridden.</summary>
+    public void SetAuthority(string authority)
+    {
+        RequireCreatable();
+        _authority = authority ?? "";
+        if (!_groupIdManual)   _groupId   = SuggestGroupId(SystemId, _authority);
+        if (!_groupNameManual) _groupName = SuggestGroupName(_authority);
+    }
+
+    /// <summary>Sets the Group Name (Create only); marks it manually overridden.</summary>
+    public void SetGroupName(string groupName)
+    {
+        RequireCreatable();
+        _groupName = groupName ?? "";
+        _groupNameManual = true;
+    }
+
+    /// <summary>Sets the Group ID (Create only); marks it manual so authority changes stop re-suggesting it.</summary>
+    public void SetGroupId(string groupId)
+    {
+        RequireCreatable();
+        _groupId = groupId ?? "";
+        _groupIdManual = true;
+    }
+
+    /// <summary>True when the Group ID is a valid, collision-free new id (Create-mode gate).</summary>
+    public string? GroupIdBlockingReason()
+    {
+        if (string.IsNullOrWhiteSpace(_groupId)) return "Group id is required.";
+        if (!DatGroupId.TryCreateNew(_groupId, out _, out _, out _)) return $"Group id '{_groupId}' is invalid.";
+        if (GroupIdCollides(_groupId)) return $"Group id '{_groupId}' already exists — choose a different id.";
+        return null;
+    }
+
+    /// <summary>Case-insensitive collision of a candidate Group ID against existing group ids.</summary>
+    public bool GroupIdCollides(string id) =>
+        Catalog.ExistingGroups.Any(g => string.Equals(g.Id, id, StringComparison.OrdinalIgnoreCase));
 
     // ── Discovery ─────────────────────────────────────────────────────────────
 
@@ -68,9 +185,9 @@ public sealed class GroupDatReconciliationSession
 
         foreach (var leaf in discovery.Leaves.Where(l => l.Status == DiscoveredDatLeafStatus.Parsed))
         {
-            var token = DatTechnicalIdPolicy.NormalizeSuggestion(
-                System.IO.Path.GetFileNameWithoutExtension(leaf.FileName));
-            _incoming.Add(new IncomingDatCandidate(Guid.NewGuid().ToString("N"), leaf, token));
+            // DAT suffix starts EMPTY — ids are proposed from the folder hierarchy, not the (long
+            // TOSEC) filename. A suffix is only added manually to disambiguate.
+            _incoming.Add(new IncomingDatCandidate(Guid.NewGuid().ToString("N"), leaf, datToken: ""));
         }
 
         FolderTree = FolderTokenTree.Build(_incoming.Select(c => c.RelativePath));
@@ -88,17 +205,21 @@ public sealed class GroupDatReconciliationSession
 
     // ── Id proposal & collision ───────────────────────────────────────────────
 
-    /// <summary>The proposed (composed) new-leaf id for a candidate, from folder tokens + its DAT token.</summary>
+    /// <summary>
+    /// The proposed new-leaf id: <c>&lt;group-id&gt;-&lt;folder tokens&gt;-&lt;optional DAT suffix&gt;</c>.
+    /// The Group ID is the prefix; media type, hardware family, filename, TOSEC version/date, hashes,
+    /// and random suffixes are never added automatically.
+    /// </summary>
     public string ProposeIdFor(IncomingDatCandidate candidate)
     {
-        var groupId = Mode == GroupDatReconciliationMode.NewGroup ? NewGroupId : TargetGroup!.Id;
         var folderTokens = FolderTree?.FolderTokensForFile(candidate.RelativePath) ?? Array.Empty<string>();
-        return DatLineIdComposer.Compose(groupId, folderTokens, candidate.DatToken);
+        return DatLineIdComposer.Compose(GroupId, folderTokens, candidate.DatToken);
     }
 
     /// <summary>
     /// The effective new-leaf id for a candidate: the manual override when set, otherwise the live
-    /// automatic proposal. An auto id recomputes as folder/DAT tokens change; a manual id does not.
+    /// automatic proposal. An auto id recomputes as the Group ID / folder / DAT tokens change; a
+    /// manual id does not.
     /// </summary>
     public string EffectiveIdFor(IncomingDatCandidate candidate) =>
         candidate.FinalIdOverride ?? ProposeIdFor(candidate);
@@ -119,7 +240,15 @@ public sealed class GroupDatReconciliationSession
         c.FinalIdOverride = null;
     }
 
-    /// <summary>Case-insensitive collision against occupied catalog ids and other new-leaf ids in this session.</summary>
+    /// <summary>Remembers the media type chosen for a not-yet-confirmed DAT (builder scratch state).</summary>
+    public void SetDraftMediaType(string candidateId, string mediaTypeId)
+    {
+        var c = _incoming.FirstOrDefault(x => x.CandidateId == candidateId)
+            ?? throw new InvalidOperationException("DAT candidate is not part of this session.");
+        c.DraftMediaTypeId = mediaTypeId;
+    }
+
+    /// <summary>Case-insensitive collision against occupied catalog leaf ids and other new-leaf ids in this session.</summary>
     public bool Collides(string id)
     {
         if (Catalog.OccupiedLeafIds.Contains(id)) return true;
@@ -129,11 +258,18 @@ public sealed class GroupDatReconciliationSession
 
     public DatLineIdEvaluation EvaluateNewLeafId(string id) => DatLineIdComposer.Evaluate(id, Collides);
 
-    // ── Decisions ─────────────────────────────────────────────────────────────
+    // ── Decisions (sequential: one DAT at a time in BOTH modes) ─────────────────
 
-    /// <summary>Associate a discovered DAT with an existing leaf (update). Consumes both.</summary>
+    private void RequireUpdateMode()
+    {
+        if (Mode == GroupDatReconciliationMode.NewGroup)
+            throw new InvalidOperationException("Associate/absent apply only when updating an existing group.");
+    }
+
+    /// <summary>Associate a discovered DAT with an existing leaf (update). Consumes both. Update mode only.</summary>
     public GroupDatDecision AssociateUpdate(string datCandidateId, string leafDatLineId)
     {
+        RequireUpdateMode();
         var dat  = RequireAvailableDat(datCandidateId);
         var leaf = RequireAvailableLeaf(leafDatLineId);
         var decision = new GroupDatDecision(GroupDatDecisionKind.Update, dat, leaf, null, leaf.Leaf.MediaTypeId);
@@ -143,7 +279,11 @@ public sealed class GroupDatReconciliationSession
         return decision;
     }
 
-    /// <summary>Create a new leaf from a discovered DAT with a final id and media type. Consumes only the DAT.</summary>
+    /// <summary>
+    /// Create a new leaf from a discovered DAT with a final id and media type. Consumes only the DAT.
+    /// This is the primary Create-mode action and is also available while updating a group; new leaves
+    /// are prefixed by the (existing or new) Group ID.
+    /// </summary>
     public GroupDatDecision CreateNewLeaf(string datCandidateId, string finalId, string mediaTypeId)
     {
         var dat = RequireAvailableDat(datCandidateId);
@@ -163,6 +303,7 @@ public sealed class GroupDatReconciliationSession
     /// <summary>Mark an existing leaf absent from the new revision (retained, never deleted). Consumes the leaf.</summary>
     public GroupDatDecision MarkLeafAbsent(string leafDatLineId)
     {
+        RequireUpdateMode();
         var leaf = RequireAvailableLeaf(leafDatLineId);
         var decision = new GroupDatDecision(GroupDatDecisionKind.Absent, null, leaf, null, null);
         _decisions.Add(decision);
@@ -209,22 +350,22 @@ public sealed class GroupDatReconciliationSession
         if (Discovery.HasBlockingErrors) reasons.Add("Discovery has blocking errors (parse failures / path collisions).");
         if (Discovery.CandidateCount == 0) reasons.Add("No DAT files found under the source.");
 
-        var incoming = AvailableIncoming.Count;
-        var leaves   = AvailableLeaves.Count;
-        if (incoming > 0) reasons.Add($"{incoming} discovered DAT(s) not yet resolved.");
-        if (leaves   > 0) reasons.Add($"{leaves} existing leaf(s) not yet resolved.");
-
         if (Mode == GroupDatReconciliationMode.NewGroup)
         {
-            if (!DatGroupId.TryCreateNew(NewGroupId, out _, out _, out _))
-                reasons.Add("Group id is invalid.");
-            else if (Catalog.ExistingGroups.Any(g => string.Equals(g.Id, NewGroupId, StringComparison.OrdinalIgnoreCase)))
-                reasons.Add("Group id already exists.");
-            if (string.IsNullOrWhiteSpace(NewGroupDisplayName)) reasons.Add("Group display name is required.");
-            if (string.IsNullOrWhiteSpace(NewGroupHardwareFamilyId) ||
-                (!Catalog.HardwareFamilies.IsEmpty && !Catalog.HardwareFamilies.Any(h => h.Id == NewGroupHardwareFamilyId)))
-                reasons.Add("A valid hardware family is required.");
-            if (string.IsNullOrWhiteSpace(NewGroupAuthority)) reasons.Add("An authority is required.");
+            // Create mode requires an explicit, valid Group Name and Group ID.
+            if (string.IsNullOrWhiteSpace(_groupName)) reasons.Add("Group name is required.");
+            if (GroupIdBlockingReason() is { } gidReason) reasons.Add(gidReason);
+
+            // Every discovered DAT must be resolved into a new leaf (sequential, one at a time).
+            var incoming = AvailableIncoming.Count;
+            if (incoming > 0) reasons.Add($"{incoming} discovered DAT(s) not yet resolved.");
+        }
+        else
+        {
+            var incoming = AvailableIncoming.Count;
+            var leaves   = AvailableLeaves.Count;
+            if (incoming > 0) reasons.Add($"{incoming} discovered DAT(s) not yet resolved.");
+            if (leaves   > 0) reasons.Add($"{leaves} existing leaf(s) not yet resolved.");
         }
 
         return reasons;
@@ -247,6 +388,7 @@ public sealed class GroupDatReconciliationSession
             .OrderBy(u => u.ExistingLeafId, StringComparer.Ordinal)
             .ToImmutableArray();
 
+        // New leaves come from explicit new-leaf decisions in BOTH modes (no global auto-draft).
         var newLeaves = _decisions.Where(d => d.Kind == GroupDatDecisionKind.NewLeaf)
             .Select(d => new GroupDatNewLeafPlan(
                 d.FinalId!, d.MediaTypeId!, d.Dat!.RelativePath, d.Dat.SourcePath,
@@ -262,11 +404,8 @@ public sealed class GroupDatReconciliationSession
         return new GroupDatReconciliationPlan(
             Mode,
             Discovery!.SourceRoot,
-            Mode == GroupDatReconciliationMode.NewGroup ? NewGroupId : null,
-            Mode == GroupDatReconciliationMode.NewGroup ? NewGroupDisplayName : null,
-            Mode == GroupDatReconciliationMode.NewGroup ? NewGroupHardwareFamilyId : null,
-            Mode == GroupDatReconciliationMode.NewGroup ? NewGroupAuthority : null,
-            Mode == GroupDatReconciliationMode.UpdateGroup ? TargetGroup!.Id : null,
+            SystemId, SystemName, Authority,
+            GroupId, GroupName, HardwareFamilyId,
             updates, newLeaves, absent,
             Discovery.Leaves.ToImmutableArray());
     }
