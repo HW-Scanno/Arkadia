@@ -2796,4 +2796,28 @@ public sealed class DatLineStore
         conn.Open();
         return conn;
     }
+
+    /// <summary>
+    /// Folds the write-ahead log back into the main database file and releases pooled connections so
+    /// the <c>.db</c> can be published by a plain file rename — no open handle, no dependency on a
+    /// <c>-wal</c>/<c>-shm</c> sidecar. Additive helper for the leaf-DB builder; does not change the
+    /// database's journal mode. Deletes/modifies no files other than consolidating the WAL.
+    /// </summary>
+    public void ConsolidateForPublish()
+    {
+        using (var conn = Open())
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            cmd.ExecuteNonQuery();
+        }
+        ReleaseConnections();
+    }
+
+    /// <summary>
+    /// Releases any pooled SQLite connection to this database so the underlying file is unlocked
+    /// (e.g. so a caller may rename or delete it). Never opens, deletes, or modifies a file.
+    /// </summary>
+    public void ReleaseConnections()
+        => SqliteConnection.ClearPool(new SqliteConnection(_connectionString));
 }

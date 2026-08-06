@@ -11305,24 +11305,15 @@ public partial class MainWindow : Window
             IsIndeterminate = true,
         });
 
-        var releases         = new List<ReleaseRecord>(parsedGames.Count);
-        var filesByReleaseId = new List<(string ReleaseId, List<Data.ReleaseFileRecord> Files)>(parsedGames.Count);
+        // 1. Prepare (pure, in-memory mapping) — completed in full BEFORE any catalog write, so no
+        //    mapping exception can occur after the first catalog mutation (historical ordering).
+        var prepared = Data.LeafDatDatabaseBuilder.Prepare(
+            datLineId, parsedGames, System.Threading.CancellationToken.None);
 
-        foreach (var game in parsedGames)
-        {
-            var releaseId = System.Guid.NewGuid().ToString("N");
-            releases.Add(new ReleaseRecord
-            {
-                Id         = releaseId,
-                DatLineId  = datLineId,
-                Name       = game.Name,
-                Status     = "missing",
-                Region     = game.Region,
-                Languages  = game.Languages,
-                ReleaseContentKey = game.ContentKey,
-            });
-            filesByReleaseId.Add((releaseId, ToReleaseFiles(releaseId, game.Roms)));
-        }
+        // 2. Catalog dat_line write — same relative point as before (after mapping, before the leaf
+        //    build). The historical orphan window is intentionally left as-is (neither widened nor fixed).
+        existingDatLines.Add(newDatLineRecord);
+        _catalog.SaveDatLines(existingDatLines);
 
         progress.Report(new DatOperationProgress
         {
@@ -11330,47 +11321,45 @@ public partial class MainWindow : Window
             IsIndeterminate = true,
         });
 
-        existingDatLines.Add(newDatLineRecord);
-        _catalog.SaveDatLines(existingDatLines);
+        // 3. Leaf DB persistence via the catalog-free primitive (create + save + verify +
+        //    WAL-consolidate). It touches ONLY the leaf database at absPath — no catalog writes.
+        var buildResult = Data.LeafDatDatabaseBuilder.Build(
+            absPath, prepared,
+            new LeafImportProgressAdapter(progress),
+            System.Threading.CancellationToken.None);
 
-        var store = new DatLineStore(absPath);
-        store.SaveReleases(releases);
-
-        var count = filesByReleaseId.Count;
-
-        progress.Report(new DatOperationProgress
-        {
-            PhaseText       = "Importing DAT entries…",
-            IsIndeterminate = false,
-            Total           = count,
-            Processed       = 0,
-            Accepted        = 0,
-            Rejected        = 0,
-        });
-
-        for (int i = 0; i < count; i++)
-        {
-            var (rid, files) = filesByReleaseId[i];
-            store.SaveReleaseFiles(rid, files);
-
-            if (i % 25 == 0 || i == count - 1)
-                progress.Report(new DatOperationProgress
-                {
-                    PhaseText       = "Importing DAT entries…",
-                    IsIndeterminate = false,
-                    Total           = count,
-                    Processed       = i + 1,
-                    Accepted        = i + 1,
-                    Rejected        = 0,
-                    CurrentItem     = releases[i].Name,
-                });
-        }
-
+        // 4. Working state catalog writes — unchanged, after the leaf build.
         foreach (var game in parsedGames)
             if (game.WorkingState.Length > 0)
                 _catalog.SetWorkingStateIfNotManual(game.Name, game.WorkingState);
 
-        return releases.Count;
+        return buildResult.ReleaseCount;
+    }
+
+    /// <summary>
+    /// Adapts the leaf builder's progress to the historical "Importing DAT entries…" phase of the
+    /// Import DAT dialog, preserving the same bar (total/processed) and per-item label. Calls the
+    /// UI-bound <see cref="IProgress{T}"/> directly (no new <c>Progress&lt;T&gt;</c> context capture).
+    /// </summary>
+    private sealed class LeafImportProgressAdapter : IProgress<Data.LeafDatBuildProgress>
+    {
+        private readonly IProgress<DatOperationProgress> _inner;
+        public LeafImportProgressAdapter(IProgress<DatOperationProgress> inner) => _inner = inner;
+
+        public void Report(Data.LeafDatBuildProgress p)
+        {
+            if (p.Phase != Data.LeafDatBuildPhase.SavingFiles) return;
+            _inner.Report(new DatOperationProgress
+            {
+                PhaseText       = "Importing DAT entries…",
+                IsIndeterminate = false,
+                Total           = p.Total,
+                Processed       = p.Processed,
+                Accepted        = p.Processed,
+                Rejected        = 0,
+                CurrentItem     = p.CurrentItem ?? "",
+            });
+        }
     }
 
     private static void SetHwRow(Grid row, TextBlock valueBlock, string? value)
