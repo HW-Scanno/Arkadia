@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using Arkadia.Data;
 using Arkadia.Data.Identifiers;
 using Arkadia.GroupDats;
@@ -55,7 +56,10 @@ public sealed class GroupDatReconciliationTests
         ExistingGroups   = (groups ?? Array.Empty<GroupDatExistingGroup>()).ToImmutableArray(),
         HardwareFamilies = ImmutableArray.Create(
             new GroupDatOption("c64", "C64"), new GroupDatOption("nes", "NES"), new GroupDatOption("capcom", "Capcom")),
-        MediaTypes       = ImmutableArray.Create(new GroupDatOption("other", "Other"), new GroupDatOption("cd", "CD")),
+        MediaTypes       = ImmutableArray.Create(
+            new GroupDatOption("other", "Other"), new GroupDatOption("cd", "CD"),
+            new GroupDatOption("floppy", "Floppy"), new GroupDatOption("tape", "Tape"),
+            new GroupDatOption("cartridge", "Cartridge")),
         Authorities      = ImmutableArray.Create(new GroupDatOption("tosec", "TOSEC"), new GroupDatOption("nointro", "No-Intro")),
         OccupiedLeafIds  = (occupied ?? Array.Empty<string>()).ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),
     };
@@ -75,12 +79,9 @@ public sealed class GroupDatReconciliationTests
         return s;
     }
 
-    // Sequentially resolve every remaining incoming DAT into a new leaf (uses the live proposal).
+    // Create mode: make every implicit proposal valid by giving them all a media type.
     private static void ResolveAllNew(GroupDatReconciliationSession s, string media = "other")
-    {
-        foreach (var c in s.AvailableIncoming.ToList())
-            s.CreateNewLeaf(c.CandidateId, s.EffectiveIdFor(c), media);
-    }
+        => s.ApplyDefaultMediaTypeToUnresolved(media);
 
     // Update-mode session bound to the existing group "c64-tosec" and its leaves.
     private static GroupDatReconciliationSession UpdateGroup(DatGroupDiscoveryResult disc, params string[] leafIds)
@@ -145,25 +146,26 @@ public sealed class GroupDatReconciliationTests
     }
 
     [Fact]
-    public void IdProposal_SameChainCollision_BlockedAtConfirm_NoAutoHashOrFilename()
+    public void IdProposal_SameChainCollision_BlocksContinue_NoAutoHashOrFilename()
     {
         var s = NewGroup(Discovery("/src", new[]
         {
             Leaf("Animations/[D64]/Commodore C64 - Animations - [D64] (a).dat"),
             Leaf("Animations/[D64]/Commodore C64 - Animations - [D64] (b).dat"),
         }));
-        var list = s.AvailableIncoming.ToList();
+        s.ApplyDefaultMediaTypeToUnresolved("other");
+        var list = s.Proposals.ToList();
         Assert.All(list, c => Assert.Equal("c64-tosec-animations-d64", s.EffectiveIdFor(c)));
 
-        s.CreateNewLeaf(list[0].CandidateId, s.EffectiveIdFor(list[0]), "other");
-        // second DAT proposes the same id → collision at confirm, no automatic hash/filename/truncation
-        Assert.True(s.Collides("c64-tosec-animations-d64"));
-        Assert.Throws<InvalidOperationException>(
-            () => s.CreateNewLeaf(list[1].CandidateId, s.EffectiveIdFor(list[1]), "other"));
-        // resolvable by a short manual Dat Suffix
+        // Both proposals share the id ⇒ duplicate; no automatic hash/filename/truncation resolves it.
+        var summary = s.SummarizeProposals();
+        Assert.Equal(2, summary.DuplicateFinalId);
+        Assert.False(s.CanBuildPlan);
+
+        // Resolvable by a short manual Dat Suffix on one of them.
         list[1].DatToken = "b";
-        var nl = s.CreateNewLeaf(list[1].CandidateId, s.EffectiveIdFor(list[1]), "other");
-        Assert.Equal("c64-tosec-animations-d64-b", nl.FinalId);
+        Assert.Equal("c64-tosec-animations-d64-b", s.EffectiveIdFor(list[1]));
+        Assert.Equal(0, s.SummarizeProposals().DuplicateFinalId);
     }
 
     [Fact]
@@ -380,37 +382,258 @@ public sealed class GroupDatReconciliationTests
         Assert.Equal("TOSEC", s.GroupName);
 
         s.SetAuthority("nointro");
-        Assert.Equal("c64-nointro", s.GroupId);     // re-suggested from new authority
-        Assert.Equal("No-Intro", s.GroupName);      // re-suggested from authority display name
+        Assert.Equal("c64-nointro", s.GroupId);       // re-suggested from new authority
+        Assert.Equal("C64 No-Intro", s.GroupName);    // re-suggested: model (SystemName) + authority
 
         s.SetGroupId("custom-id");                  // manual override
         s.SetAuthority("tosec");
         Assert.Equal("custom-id", s.GroupId);       // manual id not overwritten
     }
 
-    // ── New-Group sequential flow ────────────────────────────────────────────────
+    // ── Group Name suggestion (Manufacturer + Model + Authority) ─────────────────
 
-    [Fact]
-    public void NewGroup_SequentialCreate_OneLeafConsumesOneDat()
+    private static GroupDatReconciliationSession NewGroupCtx(
+        string systemId, string systemName, string manufacturer, string authority)
     {
-        var s = NewGroup(Discovery("/src", new[] { Leaf("A/1.dat"), Leaf("B/2.dat"), Leaf("C/3.dat") }));
-        Assert.Equal(3, s.AvailableIncoming.Count);
-        Assert.Empty(s.AvailableLeaves);                 // no existing leaves in a new group
-        // associate/absent are update-only
-        Assert.Throws<InvalidOperationException>(() => s.MarkLeafAbsent("x"));
-
-        var first = s.AvailableIncoming.First();
-        s.CreateNewLeaf(first.CandidateId, s.EffectiveIdFor(first), "other");
-        Assert.Equal(2, s.AvailableIncoming.Count);      // one consumed
-        Assert.Single(s.Decisions);
+        var cat = Catalog();
+        var authDisplay = cat.Authorities.FirstOrDefault(a => a.Id == authority)?.Name ?? authority;
+        var gid   = GroupDatReconciliationSession.SuggestGroupId(systemId, authority);
+        var gname = GroupDatReconciliationSession.ComposeGroupName(manufacturer, systemName, authDisplay);
+        return GroupDatReconciliationSession.ForNewGroup(cat, systemId, systemName, authority, gname, gid, manufacturer);
     }
 
-    [Fact]
-    public void NewGroup_PlanBlockedUntilAllResolved()
+    [Fact]  // (1) Commodore + 64 + TOSEC → "Commodore 64 TOSEC"
+    public void ComposeGroupName_ManufacturerModelAuthority()
+        => Assert.Equal("Commodore 64 TOSEC",
+            GroupDatReconciliationSession.ComposeGroupName("Commodore", "64", "TOSEC"));
+
+    [Fact]  // (2) system id + authority id → group id
+    public void SuggestGroupId_SystemAndAuthority()
+        => Assert.Equal("c64-tosec", GroupDatReconciliationSession.SuggestGroupId("c64", "tosec"));
+
+    [Fact]  // (3) manufacturer absent → Model + Authority
+    public void ComposeGroupName_NoManufacturer_UsesModelAndAuthority()
+        => Assert.Equal("Amiga 500 TOSEC",
+            GroupDatReconciliationSession.ComposeGroupName("", "Amiga 500", "TOSEC"));
+
+    [Fact]  // (4) descriptive data absent → Authority only
+    public void ComposeGroupName_NoDescriptiveData_UsesAuthority()
+        => Assert.Equal("TOSEC", GroupDatReconciliationSession.ComposeGroupName("", "", "TOSEC"));
+
+    [Fact]  // (5) model already carries the manufacturer → no double manufacturer
+    public void ComposeGroupName_NoDoubleManufacturer()
+        => Assert.Equal("Commodore 64 TOSEC",
+            GroupDatReconciliationSession.ComposeGroupName("Commodore", "Commodore 64", "TOSEC"));
+
+    [Fact]  // (6) whitespace normalized
+    public void ComposeGroupName_NormalizesWhitespace()
+        => Assert.Equal("Commodore 64 TOSEC",
+            GroupDatReconciliationSession.ComposeGroupName("  Commodore ", "  64  ", " TOSEC "));
+
+    [Fact]  // (7) changing authority re-suggests both non-overridden values
+    public void GroupNameSuggestion_ChangingAuthority_UpdatesNonOverridden()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        Assert.Equal("Commodore 64 TOSEC", s.GroupName);
+        Assert.Equal("c64-tosec", s.GroupId);
+
+        s.SetAuthority("nointro");
+        Assert.Equal("Commodore 64 No-Intro", s.GroupName);
+        Assert.Equal("c64-nointro", s.GroupId);
+    }
+
+    [Fact]  // (8) manual Group Name preserved across authority change
+    public void GroupNameSuggestion_ManualNamePreserved()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetGroupName("My Custom Collection");
+        s.SetAuthority("nointro");
+        Assert.Equal("My Custom Collection", s.GroupName);   // manual name kept
+        Assert.Equal("c64-nointro", s.GroupId);              // id still auto
+    }
+
+    [Fact]  // (9) manual Group ID preserved; name still re-suggested
+    public void GroupIdSuggestion_ManualIdPreserved()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetGroupId("c64-custom");
+        s.SetAuthority("nointro");
+        Assert.Equal("c64-custom", s.GroupId);                 // manual id kept
+        Assert.Equal("Commodore 64 No-Intro", s.GroupName);    // name re-suggested
+    }
+
+    [Fact]  // (10) Update mode shows persisted identity, never regenerated
+    public void UpdateMode_KeepsPersistedIdentity_NoRegeneration()
+    {
+        var group = new GroupDatExistingGroup("c64-tosec", "Persisted Group Name", "c64", "tosec", 0,
+            ImmutableArray.Create(ExLeaf("c64-tosec-keep")));
+        var s = GroupDatReconciliationSession.ForExistingGroup(
+            Catalog(new[] { "c64-tosec-keep" }, new[] { group }), "c64-tosec");
+        Assert.Equal("Persisted Group Name", s.GroupName);   // persisted display_name, not composed
+        Assert.Equal("c64-tosec", s.GroupId);
+        Assert.Equal("tosec", s.Authority);
+        Assert.Equal("", s.Manufacturer);                    // manufacturer not sourced in Update mode
+    }
+
+    [Fact]  // (11) Group Name never affects leaf ids
+    public void GroupName_DoesNotAffectLeafIds_WithManufacturerContext()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetDiscovery(Discovery("/src", new[] { Leaf("Animations/[D64]/x.dat") }));
+        var c = s.AvailableIncoming.Single();
+        var before = s.EffectiveIdFor(c);
+        s.SetGroupName("Whatever New Name");
+        Assert.Equal(before, s.EffectiveIdFor(c));
+        Assert.Equal("c64-tosec-animations-d64", s.EffectiveIdFor(c));
+    }
+
+    [Fact]  // (12) Group ID prefixes the leaf ids
+    public void GroupId_PrefixesLeafIds_WithManufacturerContext()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetDiscovery(Discovery("/src", new[] { Leaf("Animations/[D64]/x.dat") }));
+        Assert.StartsWith("c64-tosec-", s.EffectiveIdFor(s.AvailableIncoming.Single()));
+    }
+
+    // ── Identity suggestion lifecycle + explicit reset ───────────────────────────
+
+    [Fact]  // (1)(2) initial suggestion applied and NOT marked manual
+    public void Init_AppliesSuggestion_NotMarkedManual()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        Assert.Equal("Commodore 64 TOSEC", s.GroupName);
+        Assert.Equal("c64-tosec", s.GroupId);
+        Assert.False(s.IsGroupNameManual);
+        Assert.False(s.IsGroupIdManual);
+        Assert.False(s.IsIdentityCustom);
+    }
+
+    [Fact]  // (3)(6) auto authority change updates both auto-managed fields and does not mark manual
+    public void AuthorityChange_UpdatesAutoManaged_WithoutMarkingManual()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetAuthority("nointro");
+        Assert.Equal("Commodore 64 No-Intro", s.GroupName);
+        Assert.Equal("c64-nointro", s.GroupId);
+        Assert.False(s.IsIdentityCustom);   // programmatic re-suggestion is not a user override
+    }
+
+    [Fact]  // (4)(5) manual edits set the flags and survive an authority change
+    public void ManualEdits_MarkCustom_AndSurviveAuthorityChange()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetGroupName("My Custom Name");
+        s.SetGroupId("c64-custom");
+        Assert.True(s.IsGroupNameManual);
+        Assert.True(s.IsGroupIdManual);
+        Assert.True(s.IsIdentityCustom);
+
+        s.SetAuthority("nointro");
+        Assert.Equal("My Custom Name", s.GroupName);   // preserved
+        Assert.Equal("c64-custom", s.GroupId);         // preserved
+    }
+
+    [Fact]  // (7) Apply suggested identity replaces both overrides and returns to auto-managed
+    public void ResetIdentity_ReplacesBothOverrides()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetGroupName("My Custom Name");
+        s.SetGroupId("c64-custom");
+
+        s.ResetIdentityToSuggested();
+        Assert.Equal("Commodore 64 TOSEC", s.GroupName);
+        Assert.Equal("c64-tosec", s.GroupId);
+        Assert.False(s.IsIdentityCustom);
+    }
+
+    [Fact]  // (8) after reset, a further authority change re-suggests both again
+    public void ResetIdentity_ThenAuthorityChange_UpdatesBothAgain()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetGroupId("c64-custom");
+        s.ResetIdentityToSuggested();
+        s.SetAuthority("nointro");
+        Assert.Equal("Commodore 64 No-Intro", s.GroupName);
+        Assert.Equal("c64-nointro", s.GroupId);
+    }
+
+    [Fact]  // (9) reset re-prefixes leaf proposals that have no manual Final ID
+    public void ResetIdentity_UpdatesNonOverriddenLeafProposals()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetDiscovery(Discovery("/src", new[] { Leaf("Animations/[D64]/x.dat") }));
+        s.SetGroupId("c64-custom");
+        var c = s.AvailableIncoming.Single();
+        Assert.Equal("c64-custom-animations-d64", s.EffectiveIdFor(c));
+
+        s.ResetIdentityToSuggested();
+        Assert.Equal("c64-tosec-animations-d64", s.EffectiveIdFor(c));   // re-prefixed to the suggestion
+    }
+
+    [Fact]  // (10) reset never overwrites a manual Final ID
+    public void ResetIdentity_PreservesManualFinalId()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetDiscovery(Discovery("/src", new[] { Leaf("Animations/[D64]/x.dat") }));
+        s.SetGroupId("c64-custom");
+        var c = s.AvailableIncoming.Single();
+        s.SetManualFinalId(c.CandidateId, "c64-hand-picked-id");
+
+        s.ResetIdentityToSuggested();
+        Assert.Equal("c64-hand-picked-id", s.EffectiveIdFor(c));   // manual Final ID untouched
+    }
+
+    [Fact]  // (15) Create mode has no decisions, so identity stays editable/resettable until Continue
+    public void CreateMode_IdentityStaysEditable_WithProposals()
+    {
+        var s = NewGroupCtx("c64", "Commodore 64", "Commodore", "tosec");
+        s.SetDiscovery(Discovery("/src", new[] { Leaf("A/1.dat"), Leaf("B/2.dat") }));
+        s.ApplyDefaultMediaTypeToUnresolved("other");   // proposals fully configured
+
+        Assert.Empty(s.Decisions);          // Create never produces decisions
+        Assert.True(s.CanResetIdentity);    // identity never locked by proposal configuration
+        s.SetGroupId("c64-custom");         // still editable
+        Assert.Equal("c64-custom", s.GroupId);
+    }
+
+    [Fact]  // (12) Update mode: identity read-only, no reset
+    public void ResetIdentity_UpdateMode_NotAvailable_AndThrows()
+    {
+        var group = new GroupDatExistingGroup("c64-tosec", "Persisted Name", "c64", "tosec", 0,
+            ImmutableArray.Create(ExLeaf("c64-tosec-keep")));
+        var s = GroupDatReconciliationSession.ForExistingGroup(
+            Catalog(new[] { "c64-tosec-keep" }, new[] { group }), "c64-tosec");
+        Assert.False(s.CanResetIdentity);
+        Assert.Throws<InvalidOperationException>(() => s.ResetIdentityToSuggested());
+    }
+
+    // ── New-Group sequential flow ────────────────────────────────────────────────
+
+    [Fact]  // (1)(3)(4) every discovered DAT is an implicit proposal; nothing consumed; no decisions
+    public void CreateMode_EveryDatIsImplicitProposal_NothingConsumed_NoDecisions()
+    {
+        var s = NewGroup(Discovery("/src", new[] { Leaf("A/1.dat"), Leaf("B/2.dat"), Leaf("C/3.dat") }));
+        Assert.Equal(3, s.Proposals.Count);
+        Assert.Empty(s.AvailableLeaves);                 // no existing leaves in a new group
+        Assert.Empty(s.Decisions);                       // no per-DAT decisions in Create mode
+
+        // Create mode has no per-DAT create/associate/absent actions.
+        var first = s.Proposals.First();
+        Assert.Throws<InvalidOperationException>(() => s.CreateNewLeaf(first.CandidateId, s.EffectiveIdFor(first), "other"));
+        Assert.Throws<InvalidOperationException>(() => s.MarkLeafAbsent("x"));
+
+        // Selecting/editing a proposal never removes it from the list.
+        first.DatToken = "z";
+        Assert.Equal(3, s.Proposals.Count);
+        Assert.Empty(s.Decisions);
+    }
+
+    [Fact]  // (7)(8)(9) blocked until all proposals valid; then one NewLeaf per proposal
+    public void CreateMode_BlockedUntilAllProposalsValid_ThenPlanHasAllLeaves()
     {
         var s = NewGroup(Discovery("/src", new[] { Leaf("A/1.dat"), Leaf("B/2.dat") }));
         Assert.False(s.CanBuildPlan);
-        Assert.Contains(s.BlockingReasons(), r => r.Contains("not yet resolved"));
+        Assert.Contains(s.BlockingReasons(), r => r.Contains("require attention"));
 
         ResolveAllNew(s, "other");
         Assert.True(s.CanBuildPlan);
@@ -420,6 +643,21 @@ public sealed class GroupDatReconciliationTests
         Assert.All(plan.NewLeaves, n => Assert.Equal("other", n.MediaTypeId));
         Assert.Contains(plan.NewLeaves, n => n.LeafId == "c64-tosec-a");
         Assert.Contains(plan.NewLeaves, n => n.LeafId == "c64-tosec-b");
+    }
+
+    [Fact]  // (1)(9) 410 discovered DATs → 410 proposals → 410 NewLeaf plan entries
+    public void CreateMode_ManyDats_ProduceOneLeafPerDat()
+    {
+        var leaves = Enumerable.Range(0, 410).Select(i => Leaf($"Set{i:D3}/[D64]/game.dat")).ToArray();
+        var s = NewGroup(Discovery("/src", leaves));
+        Assert.Equal(410, s.Proposals.Count);
+
+        s.ApplyDefaultMediaTypeToUnresolved("floppy");   // one bulk action makes every proposal valid
+        Assert.True(s.CanBuildPlan);
+
+        var plan = s.BuildPlan();
+        Assert.Equal(410, plan.NewLeaves.Length);
+        Assert.All(plan.NewLeaves, n => Assert.Equal("floppy", n.MediaTypeId));
     }
 
     [Fact]
@@ -433,28 +671,16 @@ public sealed class GroupDatReconciliationTests
         Assert.Contains(s.BlockingReasons(), r => r.Contains("blocking errors"));
     }
 
-    [Fact]  // (14) sequential flow + Undo unchanged
-    public void NewGroup_SequentialFlow_UndoRestoresIncoming()
-    {
-        var s = NewGroup(Discovery("/src", new[] { Leaf("A/1.dat"), Leaf("B/2.dat") }));
-        var first = s.AvailableIncoming.First();
-        var d = s.CreateNewLeaf(first.CandidateId, s.EffectiveIdFor(first), "other");
-        Assert.Single(s.Decisions);
-        Assert.Single(s.AvailableIncoming);
-        s.Undo(d.DecisionId);
-        Assert.Empty(s.Decisions);
-        Assert.Equal(2, s.AvailableIncoming.Count);
-    }
-
-    [Fact]
-    public void NewGroup_OccupiedCatalogId_CaseInsensitive_BlocksCreate()
+    [Fact]  // (12) catalog collision (case-insensitive) marks the proposal and blocks Continue
+    public void CreateMode_OccupiedCatalogId_CaseInsensitive_BlocksContinue()
     {
         var s = NewGroup(Discovery("/src", new[] { Leaf("Animations/[D64]/x.dat") }),
             cat: Catalog(new[] { "C64-TOSEC-Animations-D64" }));   // legacy mixed-case occupied leaf id
-        var c = s.AvailableIncoming.Single();
-        Assert.True(s.Collides(s.EffectiveIdFor(c)));
-        Assert.Throws<InvalidOperationException>(
-            () => s.CreateNewLeaf(c.CandidateId, s.EffectiveIdFor(c), "other"));
+        s.ApplyDefaultMediaTypeToUnresolved("other");
+        var c = s.Proposals.Single();
+        Assert.Equal(GroupDatReconciliationSession.LeafProposalIssue.CatalogCollision, s.EvaluateProposal(c));
+        Assert.Equal(1, s.SummarizeProposals().CatalogCollision);
+        Assert.False(s.CanBuildPlan);
     }
 
     // ── Update-Group one-to-one flow ─────────────────────────────────────────────
@@ -642,5 +868,152 @@ public sealed class GroupDatReconciliationTests
         s.FolderTree!.NodeForFolder("Commodore")!.Token = "";
         Assert.Equal("c64-tosec-c64", s.EffectiveIdFor(d));
         Assert.NotNull(s.FolderTree.NodeForFolder("Commodore"));
+    }
+
+    // ── Apply default media type to remaining DATs ───────────────────────────────
+
+    [Fact]  // (1) no separate default-media combo/state; single leaf combo + adjacent apply button
+    public void Dialog_HasNoSeparateDefaultMediaCombo_ButtonSitsWithLeafCombo()
+    {
+        var fields = typeof(GroupDatReconciliationDialog)
+            .GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
+            .Select(f => f.Name).ToHashSet(StringComparer.Ordinal);
+
+        Assert.DoesNotContain("DefaultMediaTypeCombo", fields);   // redundant second combo removed
+        Assert.DoesNotContain("DefaultMediaStatusText", fields);  // left-column status line removed
+        Assert.Null(typeof(GroupDatReconciliationDialog).GetMethod(
+            "OnDefaultMediaTypeChanged", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public));
+
+        Assert.Contains("MediaTypeCombo", fields);                // the leaf editor combo (value source)
+        Assert.Contains("ApplyDefaultMediaButton", fields);       // apply button lives beside it
+    }
+
+    [Fact]  // (5)(6) apply propagates the selected leaf's value to OTHER proposals; source kept; no decision/consume
+    public void Apply_FromSelectedLeaf_PropagatesToOthers_SourceKept_NoDecision()
+    {
+        var s = NewGroup(Discovery("/src", new[] { Leaf("A/1.dat"), Leaf("B/2.dat"), Leaf("C/3.dat") }));
+        var source = s.Proposals.Single(c => c.RelativePath == "A/1.dat");
+        s.SetDraftMediaType(source.CandidateId, "floppy");   // value shown in the selected leaf's combo
+
+        var (updated, preserved) = s.ApplyDefaultMediaTypeToUnresolved("floppy", source.CandidateId);
+
+        Assert.Equal(2, updated);      // B and C — the source is NOT counted
+        Assert.Equal(0, preserved);
+        Assert.Equal("floppy", source.DraftMediaTypeId);   // source leaf keeps its value
+        foreach (var other in s.Proposals.Where(c => c.CandidateId != source.CandidateId))
+            Assert.Equal("floppy", other.DraftMediaTypeId);
+        Assert.Empty(s.Decisions);                 // no decision created
+        Assert.Equal(3, s.Proposals.Count);        // nothing consumed
+        Assert.True(s.CanBuildPlan);               // all proposals now valid ⇒ Continue enabled
+    }
+
+    [Fact]  // (7)(16) other manual overrides preserved; source excluded from both counts (PO example)
+    public void Apply_PreservesOtherManualOverrides_ExcludesSourceFromCounts()
+    {
+        var s = NewGroup(Discovery("/src", new[] { Leaf("A/1.dat"), Leaf("B/2.dat"), Leaf("C/3.dat") }));
+        var a = s.AvailableIncoming.Single(c => c.RelativePath == "A/1.dat");   // selected source
+        var b = s.AvailableIncoming.Single(c => c.RelativePath == "B/2.dat");
+        var c = s.AvailableIncoming.Single(x => x.RelativePath == "C/3.dat");
+        s.SetDraftMediaType(a.CandidateId, "floppy");   // source value
+        s.SetDraftMediaType(b.CandidateId, "tape");     // manual override on another leaf
+
+        var (updated, preserved) = s.ApplyDefaultMediaTypeToUnresolved("floppy", a.CandidateId);
+
+        Assert.Equal(1, updated);            // only C
+        Assert.Equal(1, preserved);          // only B (source A not counted)
+        Assert.Equal("floppy", a.DraftMediaTypeId);   // source kept
+        Assert.Equal("tape",   b.DraftMediaTypeId);   // manual override preserved
+        Assert.Equal("floppy", c.DraftMediaTypeId);   // re-defaulted
+    }
+
+    [Fact]  // media type flows from the proposal into the plan (no per-DAT decision in Create)
+    public void CreateMode_MediaType_EntersPlanFromProposal()
+    {
+        var s = NewGroup(Discovery("/src", new[] { Leaf("A/1.dat"), Leaf("B/2.dat") }));
+        s.ApplyDefaultMediaTypeToUnresolved("floppy");   // all proposals
+        Assert.Empty(s.Decisions);              // no decisions in Create mode
+
+        var plan = s.BuildPlan();
+        Assert.All(plan.NewLeaves, n => Assert.Equal("floppy", n.MediaTypeId));
+        Assert.Contains(plan.NewLeaves, n => n.LeafId == "c64-tosec-b");
+    }
+
+    [Fact]  // Update mode: a confirmed new-leaf decision does not change after a later apply
+    public void UpdateGroup_ConfirmedDecision_UnchangedByLaterApply()
+    {
+        var s = UpdateGroup(Discovery("/src", new[] { Leaf("New.dat"), Leaf("Extra.dat") }), "c64-tosec-keep");
+        var newDat = s.AvailableIncoming.Single(c => c.RelativePath == "New.dat");
+        var decision = s.CreateNewLeaf(newDat.CandidateId, "c64-tosec-new", "floppy");
+
+        var extra = s.AvailableIncoming.Single(c => c.RelativePath == "Extra.dat");
+        s.ApplyDefaultMediaTypeToUnresolved("cartridge", extra.CandidateId);
+        Assert.Equal("floppy", decision.MediaTypeId);       // confirmed decision unchanged
+    }
+
+    [Fact]  // Update mode: Undo restores the decision's media type as a preserved manual choice
+    public void UpdateGroup_Undo_RestoresMediaType_ProtectedAsManual()
+    {
+        var s = UpdateGroup(Discovery("/src", new[] { Leaf("New.dat"), Leaf("Extra.dat") }), "c64-tosec-keep");
+        var newDat = s.AvailableIncoming.Single(c => c.RelativePath == "New.dat");
+        var d = s.CreateNewLeaf(newDat.CandidateId, "c64-tosec-new", "tape");
+
+        s.Undo(d.DecisionId);
+        var restored = s.AvailableIncoming.Single(c => c.RelativePath == "New.dat");
+        Assert.Equal("tape", restored.DraftMediaTypeId);    // media preserved from the undone decision
+        Assert.True(restored.IsMediaTypeManual);
+
+        var extra = s.AvailableIncoming.Single(c => c.RelativePath == "Extra.dat");
+        s.ApplyDefaultMediaTypeToUnresolved("floppy", extra.CandidateId);   // must not overwrite the restored value
+        Assert.Equal("tape", restored.DraftMediaTypeId);
+    }
+
+    [Fact]  // Update mode: apply never touches existing-leaf media or associations
+    public void Apply_UpdateMode_DoesNotChangeExistingLeafMedia()
+    {
+        var s = UpdateGroup(Discovery("/src", new[] { Leaf("Keep.dat"), Leaf("New.dat"), Leaf("Extra.dat") }), "c64-tosec-keep");
+        var keep = s.AvailableIncoming.Single(c => c.RelativePath == "Keep.dat");
+        var assoc = s.AssociateUpdate(keep.CandidateId, "c64-tosec-keep");   // existing media = "other"
+
+        var newCand = s.AvailableIncoming.Single(c => c.RelativePath == "New.dat");
+        s.ApplyDefaultMediaTypeToUnresolved("floppy", newCand.CandidateId);
+
+        Assert.Equal("other", assoc.MediaTypeId);            // existing-leaf media stays authoritative
+        var extra = s.AvailableIncoming.Single(c => c.RelativePath == "Extra.dat");
+        Assert.Equal("floppy", extra.DraftMediaTypeId);      // propagated to the other unresolved incoming
+    }
+
+    [Fact]  // apply changes only media — never Final ID, folder tokens, or Dat Suffix
+    public void Apply_DoesNotChangeIdOrTokensOrSuffix()
+    {
+        var s = NewGroup(Discovery("/src", new[] { Leaf("Animations/[D64]/x.dat"), Leaf("B/2.dat") }));
+        var src = s.AvailableIncoming.Single(c => c.RelativePath == "B/2.dat");
+        var c   = s.AvailableIncoming.Single(x => x.RelativePath == "Animations/[D64]/x.dat");
+        var idBefore     = s.EffectiveIdFor(c);
+        var suffixBefore = c.DatToken;
+
+        s.ApplyDefaultMediaTypeToUnresolved("floppy", src.CandidateId);
+
+        Assert.Equal(idBefore, s.EffectiveIdFor(c));
+        Assert.Equal(suffixBefore, c.DatToken);
+        Assert.Equal("c64-tosec-animations-d64", s.EffectiveIdFor(c));
+    }
+
+    [Fact]  // Create mode: apply never creates decisions or consumes proposals
+    public void Apply_CreateMode_KeepsAllProposals_NoDecisions()
+    {
+        var s = NewGroup(Discovery("/src", new[] { Leaf("A/1.dat"), Leaf("B/2.dat") }));
+        var a = s.Proposals.Single(c => c.RelativePath == "A/1.dat");
+        s.ApplyDefaultMediaTypeToUnresolved("floppy", a.CandidateId);
+
+        Assert.Equal(2, s.Proposals.Count);     // all rows retained
+        Assert.Empty(s.Decisions);              // no decisions
+    }
+
+    [Fact]  // guard: an invalid media type is rejected
+    public void Apply_InvalidMediaType_Throws()
+    {
+        var s = NewGroup(Discovery("/src", new[] { Leaf("A/1.dat") }));
+        Assert.Throws<InvalidOperationException>(() => s.ApplyDefaultMediaTypeToUnresolved("not-a-media-type"));
+        Assert.Throws<InvalidOperationException>(() => s.ApplyDefaultMediaTypeToUnresolved(""));
     }
 }

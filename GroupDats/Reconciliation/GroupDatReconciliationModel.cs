@@ -30,10 +30,20 @@ public sealed class IncomingDatCandidate
     public bool IsFinalIdManual => FinalIdOverride is not null;
 
     /// <summary>
-    /// In New-Group mode every parsed DAT is an automatic new-leaf <b>draft</b>; this holds the
-    /// media type chosen for it, or null until the user picks one. Purely in-memory — no DB write.
+    /// Scratch media type shown for this not-yet-confirmed candidate, or null until one is picked.
+    /// It is <b>not</b> a confirmed decision (the decision only records the value at
+    /// <c>Create leaf</c> time) and never re-creates the old global auto-draft model. It can be
+    /// pre-filled by "Apply to remaining DATs" (a default) or set directly on the candidate (a manual
+    /// override). Purely in-memory — no DB write.
     /// </summary>
     public string? DraftMediaTypeId { get; internal set; }
+
+    /// <summary>
+    /// True when <see cref="DraftMediaTypeId"/> was chosen for THIS candidate specifically (user edit
+    /// on the selected leaf, or a value restored by Undo) — as opposed to a value pre-filled by
+    /// "Apply to remaining DATs". A manual override is never overwritten by a later default apply.
+    /// </summary>
+    public bool IsMediaTypeManual { get; internal set; }
 
     internal IncomingDatCandidate(string candidateId, DiscoveredDatLeaf leaf, string datToken)
     {

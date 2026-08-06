@@ -44,12 +44,16 @@
                     <TextBlock Grid.Row="0" Grid.Column="1" x:Name="SystemContextText" FontSize="12" Foreground="#F0F0F0"
                                VerticalAlignment="Center" Margin="0,0,16,4"/>
 
-                    <!-- Authority: combo (Create) / text (Update) -->
+                    <!-- Authority: combo (Create) / text (Update) + "Apply suggested identity" beside it -->
                     <TextBlock Grid.Row="0" Grid.Column="2" Text="Authority:" Classes="k" VerticalAlignment="Center" Margin="0,0,8,4"/>
-                    <StackPanel Grid.Row="0" Grid.Column="3" Orientation="Horizontal" Margin="0,0,0,4">
-                        <ComboBox x:Name="AuthorityCombo" MinWidth="150" SelectionChanged="OnAuthorityChanged"/>
-                        <TextBlock x:Name="AuthorityText" FontSize="12" Foreground="#AAAACC" VerticalAlignment="Center" IsVisible="False"/>
-                    </StackPanel>
+                    <Grid Grid.Row="0" Grid.Column="3" ColumnDefinitions="Auto,Auto,*" Margin="0,0,0,4">
+                        <StackPanel Grid.Column="0" Orientation="Horizontal">
+                            <ComboBox x:Name="AuthorityCombo" MinWidth="150" SelectionChanged="OnAuthorityChanged"/>
+                            <TextBlock x:Name="AuthorityText" FontSize="12" Foreground="#AAAACC" VerticalAlignment="Center" IsVisible="False"/>
+                        </StackPanel>
+                        <Button Grid.Column="1" x:Name="ResetIdentityButton" Content="Apply suggested identity"
+                                Click="OnResetIdentity" IsEnabled="False" Margin="8,0,0,0"/>
+                    </Grid>
 
                     <!-- Group Name -->
                     <TextBlock Grid.Row="1" Grid.Column="0" Text="Group Name:" Classes="k" VerticalAlignment="Center" Margin="0,4,8,0"/>
@@ -61,6 +65,9 @@
                     <TextBox Grid.Row="1" Grid.Column="3" x:Name="GroupIdField" Margin="0,4,0,0"
                              HorizontalAlignment="Stretch" TextChanged="OnGroupIdChanged"/>
                 </Grid>
+
+                <!-- Discreet identity status under Group Name / Group ID (no dedicated button row). -->
+                <TextBlock x:Name="IdentityStateText" FontSize="11" Margin="0,2,0,0"/>
 
                 <TextBlock x:Name="IdentityHint" FontSize="10" Foreground="#666677" TextWrapping="Wrap"
                            Text="Group Name — displayed in the System view.   ·   Group ID — permanent technical identifier and leaf-id prefix (set now, immutable after creation)."/>
@@ -97,42 +104,67 @@
                                        Text="Select a DAT on the left."/>
                         </StackPanel>
 
-                        <!-- Leaf ID builder -->
-                        <StackPanel x:Name="IdBuilderPanel" Spacing="6">
-                            <TextBlock Classes="h" Text="LEAF ID"/>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Classes="k" Text="Group:"/>
-                                <TextBlock x:Name="GroupIdText" FontSize="11" Foreground="#CCCCDD"/>
-                            </StackPanel>
-                            <TextBlock Classes="k" Text="Folder segments (editable tokens):"/>
-                            <StackPanel x:Name="FolderTokensPanel" Spacing="4"/>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Classes="k" Text="Dat Suffix:" VerticalAlignment="Center"/>
-                                <TextBox x:Name="DatTokenField" Watermark="(optional)" Width="140" TextChanged="OnDatTokenChanged"/>
-                            </StackPanel>
-                            <TextBlock Classes="k" TextWrapping="Wrap"
+                        <!-- Leaf ID builder — one shared label/content grid so every editor,
+                             the validation indicator, and the Create-leaf button all line up. -->
+                        <Grid x:Name="IdBuilderPanel" ColumnDefinitions="150,*"
+                              RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+
+                            <TextBlock Grid.Row="0" Grid.ColumnSpan="2" Classes="h" Text="LEAF ID"/>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Classes="k" Text="Group:"
+                                       VerticalAlignment="Center" Margin="0,6,0,0"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" x:Name="GroupIdText" FontSize="11"
+                                       Foreground="#CCCCDD" VerticalAlignment="Center" Margin="0,6,0,0"/>
+
+                            <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Classes="k" Margin="0,8,0,0"
+                                       Text="Folder segments (editable tokens):"/>
+                            <StackPanel Grid.Row="3" Grid.ColumnSpan="2" x:Name="FolderTokensPanel"
+                                        Spacing="4" Margin="0,4,0,0"/>
+
+                            <TextBlock Grid.Row="4" Grid.Column="0" Classes="k" Text="Dat Suffix:"
+                                       VerticalAlignment="Center" Margin="0,8,0,0"/>
+                            <TextBox Grid.Row="4" Grid.Column="1" x:Name="DatTokenField" Watermark="(optional)"
+                                     Width="140" HorizontalAlignment="Left" Margin="0,8,0,0"
+                                     TextChanged="OnDatTokenChanged"/>
+                            <TextBlock Grid.Row="5" Grid.Column="1" Classes="k" TextWrapping="Wrap" Margin="0,4,0,0"
                                        Text="Optional — use only to distinguish DATs with the same proposed ID."/>
-                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                <TextBlock Classes="k" Text="Media type:" VerticalAlignment="Center"/>
-                                <ComboBox x:Name="MediaTypeCombo" MinWidth="120" SelectionChanged="OnMediaTypeChanged"/>
-                            </StackPanel>
-                            <Grid ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
-                                <TextBlock Grid.Column="0" Classes="k" Text="Final id:"
-                                           VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <TextBox Grid.Column="1" x:Name="FinalIdField"
+
+                            <TextBlock Grid.Row="6" Grid.Column="0" Classes="k" Text="Media type:"
+                                       VerticalAlignment="Center" Margin="0,8,0,0"/>
+                            <Grid Grid.Row="6" Grid.Column="1" ColumnDefinitions="180,Auto,*"
+                                  VerticalAlignment="Center" Margin="0,8,0,0">
+                                <ComboBox Grid.Column="0" x:Name="MediaTypeCombo" Width="180"
+                                          HorizontalAlignment="Left" SelectionChanged="OnMediaTypeChanged"/>
+                                <Button Grid.Column="1" x:Name="ApplyDefaultMediaButton"
+                                        Content="Apply to remaining DATs" Click="OnApplyDefaultMedia"
+                                        Margin="8,0,0,0" IsEnabled="False"/>
+                            </Grid>
+
+                            <TextBlock Grid.Row="7" Grid.Column="0" Classes="k" Text="Final id:"
+                                       VerticalAlignment="Center" Margin="0,8,0,0"/>
+                            <Grid Grid.Row="7" Grid.Column="1" ColumnDefinitions="*,Auto"
+                                  VerticalAlignment="Center" Margin="0,8,0,0">
+                                <TextBox Grid.Column="0" x:Name="FinalIdField"
                                          HorizontalAlignment="Stretch" MinWidth="180"
                                          AcceptsReturn="False" TextWrapping="NoWrap"
                                          TextChanged="OnFinalIdChanged"/>
-                                <Button Grid.Column="2" x:Name="ResetIdButton" Content="Auto"
+                                <Button Grid.Column="1" x:Name="ResetIdButton" Content="Auto"
                                         Click="OnResetId" Margin="8,0,0,0"/>
                             </Grid>
-                            <TextBlock x:Name="IdStatusText" FontSize="11" Foreground="#888899"/>
-                        </StackPanel>
 
-                        <!-- Primary action: create leaf (both modes) -->
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <Button x:Name="CreateLeafButton" Content="Create leaf from selected DAT" Click="OnCreateNewLeaf"/>
-                        </StackPanel>
+                            <TextBlock Grid.Row="8" Grid.Column="1" x:Name="IdStatusText"
+                                       FontSize="11" Foreground="#888899" Margin="0,4,0,0"/>
+
+                            <StackPanel Grid.Row="9" Grid.Column="1" Orientation="Horizontal"
+                                        Spacing="6" Margin="0,8,0,0">
+                                <!-- Update-only: explicit per-DAT create decision -->
+                                <Button x:Name="CreateLeafButton" Content="Create leaf from selected DAT"
+                                        Click="OnCreateNewLeaf" HorizontalAlignment="Left"/>
+                                <!-- Create-only: reset the selected implicit proposal to its suggestion -->
+                                <Button x:Name="ResetProposalButton" Content="Reset leaf proposal"
+                                        Click="OnResetProposal" HorizontalAlignment="Left"/>
+                            </StackPanel>
+                        </Grid>
 
                         <!-- Update-only: existing leaves + associate/absent + comparison -->
                         <StackPanel x:Name="UpdateActionsPanel" Spacing="8">
@@ -146,8 +178,8 @@
                             </StackPanel>
                         </StackPanel>
 
-                        <!-- Decisions + Undo (both modes) -->
-                        <StackPanel Spacing="6">
+                        <!-- Decisions + Undo (Update mode only — Create has no per-DAT decisions) -->
+                        <StackPanel x:Name="DecisionsPanel" Spacing="6">
                             <TextBlock Classes="h" Text="DECISIONS"/>
                             <ListBox x:Name="DecisionsList" Height="90"/>
                             <Button x:Name="UndoButton" Content="Undo selected decision" Click="OnUndo" HorizontalAlignment="Left"/>
@@ -166,10 +198,12 @@
         </Border>
 
         <!-- Row 4: footer -->
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
-            <Button x:Name="AbortButton" Content="Abort" Click="OnAbort" Padding="20,8"/>
-            <Button x:Name="ContinueButton" Content="Continue" Click="OnContinue" IsEnabled="False"
+        <Grid Grid.Row="4" ColumnDefinitions="Auto,*,Auto,Auto">
+            <Button Grid.Column="0" x:Name="SelectNextIssueButton" Content="Select next issue"
+                    Click="OnSelectNextIssue" IsEnabled="False" Padding="14,8"/>
+            <Button Grid.Column="2" x:Name="AbortButton" Content="Abort" Click="OnAbort" Padding="20,8" Margin="0,0,10,0"/>
+            <Button Grid.Column="3" x:Name="ContinueButton" Content="Continue" Click="OnContinue" IsEnabled="False"
                     Background="#7B68EE" Foreground="#FFFFFF" Padding="24,8" CornerRadius="6" BorderThickness="0"/>
-        </StackPanel>
+        </Grid>
     </Grid>
 </Window>

@@ -35,6 +35,9 @@ public sealed class GroupDatReconciliationSession
     public string SystemName       { get; }
     public string HardwareFamilyId { get; }
 
+    /// <summary>System manufacturer (from the caller) — a descriptive input for the Group Name suggestion only.</summary>
+    public string Manufacturer { get; }
+
     // ── Group identity ──────────────────────────────────────────────────────────
     private string  _authority;
     private string  _groupName;
@@ -65,7 +68,7 @@ public sealed class GroupDatReconciliationSession
 
     private GroupDatReconciliationSession(
         GroupDatReconciliationMode mode, GroupDatCatalogPreviewData catalog,
-        string systemId, string systemName, string hardwareFamilyId,
+        string systemId, string systemName, string hardwareFamilyId, string manufacturer,
         string authority, string groupName, string groupId, GroupDatExistingGroup? targetGroup)
     {
         Mode             = mode;
@@ -73,6 +76,7 @@ public sealed class GroupDatReconciliationSession
         SystemId         = systemId         ?? throw new ArgumentNullException(nameof(systemId));
         SystemName       = string.IsNullOrWhiteSpace(systemName) ? systemId : systemName;
         HardwareFamilyId = hardwareFamilyId ?? systemId;
+        Manufacturer     = manufacturer ?? "";
         _authority       = authority ?? "";
         _groupName       = groupName ?? "";
         _groupId         = groupId   ?? "";
@@ -91,9 +95,9 @@ public sealed class GroupDatReconciliationSession
     /// </summary>
     public static GroupDatReconciliationSession ForNewGroup(
         GroupDatCatalogPreviewData catalog, string systemId, string systemName,
-        string authority, string groupName, string proposedGroupId)
+        string authority, string groupName, string proposedGroupId, string manufacturer = "")
         => new(GroupDatReconciliationMode.NewGroup, catalog, systemId, systemName,
-               hardwareFamilyId: systemId, authority, groupName, proposedGroupId, targetGroup: null);
+               hardwareFamilyId: systemId, manufacturer, authority, groupName, proposedGroupId, targetGroup: null);
 
     /// <summary>
     /// Update mode: bound to one specific already-existing Group ID. System / Authority / Group Name /
@@ -113,16 +117,44 @@ public sealed class GroupDatReconciliationSession
 
         return new(GroupDatReconciliationMode.UpdateGroup, catalog,
                    systemId: group.HardwareFamilyId, systemName, hardwareFamilyId: group.HardwareFamilyId,
-                   group.Authority, group.DisplayName, group.Id, targetGroup: group);
+                   manufacturer: "", group.Authority, group.DisplayName, group.Id, targetGroup: group);
     }
 
     /// <summary>The initial Group ID suggestion for a new group: <c>&lt;systemId&gt;-&lt;authority&gt;</c>.</summary>
     public static string SuggestGroupId(string systemId, string authority) => $"{systemId}-{authority}";
 
-    /// <summary>The initial Group Name suggestion for a new group: the authority's display name.</summary>
-    public string SuggestGroupName(string authority) =>
-        Catalog.Authorities.FirstOrDefault(a => string.Equals(a.Id, authority, StringComparison.OrdinalIgnoreCase))?.Name
-        ?? authority;
+    /// <summary>
+    /// Best-effort Group Name from the descriptive System fields + authority display name:
+    /// <c>&lt;Manufacturer&gt; &lt;Model&gt; &lt;Authority&gt;</c>, joined by single spaces with whitespace
+    /// normalized. Empty components are dropped (so the fallbacks are Manufacturer+Model+Authority →
+    /// Model+Authority → Authority). When the Model already starts with the Manufacturer
+    /// (case-insensitive) the Manufacturer is not repeated (avoids "Commodore Commodore 64"). No generic
+    /// words (DAT/Group/Collection) are ever added.
+    /// </summary>
+    public static string ComposeGroupName(string? manufacturer, string? model, string? authorityDisplayName)
+    {
+        var mfr  = (manufacturer ?? "").Trim();
+        var mdl  = (model ?? "").Trim();
+        var auth = (authorityDisplayName ?? "").Trim();
+
+        if (mfr.Length > 0 && mdl.Length > 0 && mdl.StartsWith(mfr, StringComparison.OrdinalIgnoreCase))
+            mfr = "";   // model already carries the manufacturer prefix
+
+        var joined = string.Join(" ", new[] { mfr, mdl, auth }.Where(p => p.Length > 0));
+        return System.Text.RegularExpressions.Regex.Replace(joined, @"\s+", " ").Trim();
+    }
+
+    /// <summary>
+    /// The initial Group Name suggestion for a new group, composed from the caller's Manufacturer +
+    /// Model (<see cref="SystemName"/>) and the authority's display name via <see cref="ComposeGroupName"/>.
+    /// </summary>
+    public string SuggestGroupName(string authority)
+    {
+        var authDisplay = Catalog.Authorities
+            .FirstOrDefault(a => string.Equals(a.Id, authority, StringComparison.OrdinalIgnoreCase))?.Name
+            ?? authority;
+        return ComposeGroupName(Manufacturer, SystemName, authDisplay);
+    }
 
     // ── Create-mode identity edits ──────────────────────────────────────────────
 
@@ -155,6 +187,33 @@ public sealed class GroupDatReconciliationSession
         RequireCreatable();
         _groupId = groupId ?? "";
         _groupIdManual = true;
+    }
+
+    /// <summary>True when the Group Name currently carries a manual override.</summary>
+    public bool IsGroupNameManual => _groupNameManual;
+    /// <summary>True when the Group ID currently carries a manual override.</summary>
+    public bool IsGroupIdManual   => _groupIdManual;
+    /// <summary>True when either identity field has a manual override (i.e. no longer auto-managed).</summary>
+    public bool IsIdentityCustom  => _groupNameManual || _groupIdManual;
+
+    /// <summary>
+    /// True when identity may still be reset to the suggestion — Create mode and before any leaf
+    /// decision has locked the Group ID prefix.
+    /// </summary>
+    public bool CanResetIdentity => Mode == GroupDatReconciliationMode.NewGroup && _decisions.Count == 0;
+
+    /// <summary>
+    /// Re-applies the automatic Group Name + Group ID suggestions from the current System + Authority,
+    /// discarding any manual overrides and returning both fields to auto-managed. Create mode only.
+    /// Leaf Final-ID overrides live on the candidates and are unaffected.
+    /// </summary>
+    public void ResetIdentityToSuggested()
+    {
+        RequireCreatable();
+        _groupNameManual = false;
+        _groupIdManual   = false;
+        _groupId   = SuggestGroupId(SystemId, _authority);
+        _groupName = SuggestGroupName(_authority);
     }
 
     /// <summary>True when the Group ID is a valid, collision-free new id (Create-mode gate).</summary>
@@ -240,12 +299,138 @@ public sealed class GroupDatReconciliationSession
         c.FinalIdOverride = null;
     }
 
-    /// <summary>Remembers the media type chosen for a not-yet-confirmed DAT (builder scratch state).</summary>
+    // ── Create-mode implicit leaf proposals ─────────────────────────────────────
+    // In Create mode every discovered DAT is implicitly a new-leaf proposal — editable in memory,
+    // never a persisted decision, never consumed. There is no per-DAT "create leaf" step.
+
+    /// <summary>Every discovered DAT as an implicit new-leaf proposal (Create mode; empty in Update).</summary>
+    public IReadOnlyList<IncomingDatCandidate> Proposals =>
+        Mode == GroupDatReconciliationMode.NewGroup
+            ? _incoming.ToList()
+            : (IReadOnlyList<IncomingDatCandidate>)Array.Empty<IncomingDatCandidate>();
+
+    /// <summary>Why a single Create-mode proposal is not yet valid (same contracts as single-leaf creation).</summary>
+    public enum LeafProposalIssue { Valid, MissingMediaType, InvalidFinalId, DuplicateFinalId, CatalogCollision }
+
+    /// <summary>Case-insensitive count of each effective proposal id (for duplicate detection / rendering).</summary>
+    public IReadOnlyDictionary<string, int> ProposalIdCounts()
+    {
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in _incoming)
+        {
+            var id = EffectiveIdFor(c);
+            counts[id] = counts.GetValueOrDefault(id) + 1;
+        }
+        return counts;
+    }
+
+    /// <summary>Validation state of one proposal. Reuses the same id policy + collision rules as leaf creation.</summary>
+    public LeafProposalIssue EvaluateProposal(
+        IncomingDatCandidate candidate, IReadOnlyDictionary<string, int>? idCounts = null)
+    {
+        if (string.IsNullOrWhiteSpace(candidate.DraftMediaTypeId) ||
+            (!Catalog.MediaTypes.IsEmpty && !Catalog.MediaTypes.Any(m => m.Id == candidate.DraftMediaTypeId)))
+            return LeafProposalIssue.MissingMediaType;
+
+        var id = EffectiveIdFor(candidate);
+        if (!DatTechnicalIdPolicy.IsValidNew(id))  return LeafProposalIssue.InvalidFinalId;
+        if (Catalog.OccupiedLeafIds.Contains(id))  return LeafProposalIssue.CatalogCollision;
+
+        var counts = idCounts ?? ProposalIdCounts();
+        if (counts.TryGetValue(id, out var n) && n > 1) return LeafProposalIssue.DuplicateFinalId;
+
+        return LeafProposalIssue.Valid;
+    }
+
+    /// <summary>Aggregate validation of all Create-mode proposals, categorized for a compact summary.</summary>
+    public sealed record LeafProposalSummary(
+        int Total, int Valid, int MissingMediaType, int InvalidFinalId,
+        int DuplicateFinalId, int CatalogCollision)
+    {
+        public int RequiringAttention => Total - Valid;
+    }
+
+    public LeafProposalSummary SummarizeProposals()
+    {
+        var counts = ProposalIdCounts();
+        int total = 0, valid = 0, mm = 0, inv = 0, dup = 0, col = 0;
+        foreach (var c in _incoming)
+        {
+            total++;
+            switch (EvaluateProposal(c, counts))
+            {
+                case LeafProposalIssue.Valid:            valid++; break;
+                case LeafProposalIssue.MissingMediaType: mm++;    break;
+                case LeafProposalIssue.InvalidFinalId:   inv++;   break;
+                case LeafProposalIssue.DuplicateFinalId: dup++;   break;
+                case LeafProposalIssue.CatalogCollision: col++;   break;
+            }
+        }
+        return new LeafProposalSummary(total, valid, mm, inv, dup, col);
+    }
+
+    /// <summary>The first proposal (discovery order) that is not valid, or null when all are valid.</summary>
+    public IncomingDatCandidate? FirstInvalidProposal()
+    {
+        var counts = ProposalIdCounts();
+        return _incoming.FirstOrDefault(c => EvaluateProposal(c, counts) != LeafProposalIssue.Valid);
+    }
+
+    /// <summary>
+    /// Resets one proposal to its automatic suggestion: empty Dat Suffix, automatic Final ID, and
+    /// (optionally) the last bulk-default media type. Folder tokens are shared across siblings and are
+    /// intentionally not altered here. Create mode only.
+    /// </summary>
+    public void ResetProposal(string candidateId, string? defaultMediaTypeId = null)
+    {
+        RequireCreatable();
+        var c = _incoming.FirstOrDefault(x => x.CandidateId == candidateId)
+            ?? throw new InvalidOperationException("DAT candidate is not part of this session.");
+        c.DatToken          = "";
+        c.FinalIdOverride   = null;
+        c.IsMediaTypeManual = false;
+        if (!string.IsNullOrWhiteSpace(defaultMediaTypeId)) c.DraftMediaTypeId = defaultMediaTypeId;
+    }
+
+    /// <summary>
+    /// Records the media type chosen for one not-yet-confirmed candidate as a <b>manual override</b>
+    /// (a later "Apply to remaining DATs" default will not overwrite it). Scratch state only — it
+    /// becomes a decision only when <see cref="CreateNewLeaf"/> is pressed.
+    /// </summary>
     public void SetDraftMediaType(string candidateId, string mediaTypeId)
     {
         var c = _incoming.FirstOrDefault(x => x.CandidateId == candidateId)
             ?? throw new InvalidOperationException("DAT candidate is not part of this session.");
-        c.DraftMediaTypeId = mediaTypeId;
+        c.DraftMediaTypeId  = mediaTypeId;
+        c.IsMediaTypeManual = true;
+    }
+
+    /// <summary>
+    /// Propagates <paramref name="mediaTypeId"/> (the media type shown for the currently-selected leaf)
+    /// onto every OTHER <i>unresolved</i> incoming candidate that has no manual override, leaving
+    /// manual overrides and already-confirmed decisions untouched. The source candidate
+    /// (<paramref name="sourceCandidateId"/>) is excluded entirely — it already shows the value and is
+    /// counted as neither updated nor preserved. This only sets scratch state — it creates no decision,
+    /// consumes no candidate, selects no leaf, validates no plan, and does not enable Continue. Returns
+    /// the count of other candidates updated and the count of other manual overrides preserved.
+    /// </summary>
+    public (int Updated, int PreservedManual) ApplyDefaultMediaTypeToUnresolved(
+        string mediaTypeId, string? sourceCandidateId = null)
+    {
+        if (string.IsNullOrWhiteSpace(mediaTypeId) ||
+            (!Catalog.MediaTypes.IsEmpty && !Catalog.MediaTypes.Any(m => m.Id == mediaTypeId)))
+            throw new InvalidOperationException("A valid media type must be selected.");
+
+        int updated = 0, preserved = 0;
+        foreach (var c in _incoming)
+        {
+            if (_consumedDats.Contains(c.CandidateId)) continue;         // resolved ⇒ never touched
+            if (c.CandidateId == sourceCandidateId) continue;           // the source leaf ⇒ not counted
+            if (c.IsMediaTypeManual) { preserved++; continue; }         // manual override ⇒ preserved
+            c.DraftMediaTypeId = mediaTypeId;                            // propagated value (stays non-manual)
+            updated++;
+        }
+        return (updated, preserved);
     }
 
     /// <summary>Case-insensitive collision against occupied catalog leaf ids and other new-leaf ids in this session.</summary>
@@ -281,11 +466,13 @@ public sealed class GroupDatReconciliationSession
 
     /// <summary>
     /// Create a new leaf from a discovered DAT with a final id and media type. Consumes only the DAT.
-    /// This is the primary Create-mode action and is also available while updating a group; new leaves
-    /// are prefixed by the (existing or new) Group ID.
+    /// <b>Update mode only</b> — in Create mode every discovered DAT is already an implicit new-leaf
+    /// proposal (see <see cref="Proposals"/>), so there is no per-DAT create decision. New leaves are
+    /// prefixed by the existing Group ID.
     /// </summary>
     public GroupDatDecision CreateNewLeaf(string datCandidateId, string finalId, string mediaTypeId)
     {
+        RequireUpdateMode();
         var dat = RequireAvailableDat(datCandidateId);
         var eval = EvaluateNewLeafId(finalId);
         if (!eval.IsValid)
@@ -319,6 +506,14 @@ public sealed class GroupDatReconciliationSession
         _decisions.Remove(decision);
         if (decision.Dat is not null)  _consumedDats.Remove(decision.Dat.CandidateId);
         if (decision.Leaf is not null) _consumedLeaves.Remove(decision.Leaf.DatLineId);
+
+        // A restored new-leaf candidate keeps the media type of the undone decision, treated as a
+        // preserved manual choice (a later default apply will not overwrite it).
+        if (decision.Kind == GroupDatDecisionKind.NewLeaf && decision.Dat is not null)
+        {
+            decision.Dat.DraftMediaTypeId  = decision.MediaTypeId;
+            decision.Dat.IsMediaTypeManual = true;
+        }
     }
 
     private IncomingDatCandidate RequireAvailableDat(string candidateId)
@@ -356,9 +551,11 @@ public sealed class GroupDatReconciliationSession
             if (string.IsNullOrWhiteSpace(_groupName)) reasons.Add("Group name is required.");
             if (GroupIdBlockingReason() is { } gidReason) reasons.Add(gidReason);
 
-            // Every discovered DAT must be resolved into a new leaf (sequential, one at a time).
-            var incoming = AvailableIncoming.Count;
-            if (incoming > 0) reasons.Add($"{incoming} discovered DAT(s) not yet resolved.");
+            // Every discovered DAT is an implicit proposal — all must be valid (no per-DAT step).
+            var summary = SummarizeProposals();
+            if (summary.Total == 0) reasons.Add("No leaf proposals.");
+            else if (summary.RequiringAttention > 0)
+                reasons.Add($"{summary.RequiringAttention} leaf proposal(s) require attention.");
         }
         else
         {
@@ -388,11 +585,16 @@ public sealed class GroupDatReconciliationSession
             .OrderBy(u => u.ExistingLeafId, StringComparer.Ordinal)
             .ToImmutableArray();
 
-        // New leaves come from explicit new-leaf decisions in BOTH modes (no global auto-draft).
-        var newLeaves = _decisions.Where(d => d.Kind == GroupDatDecisionKind.NewLeaf)
-            .Select(d => new GroupDatNewLeafPlan(
-                d.FinalId!, d.MediaTypeId!, d.Dat!.RelativePath, d.Dat.SourcePath,
-                d.Dat.HeaderName, d.Dat.Version, d.Dat.ReleaseCount))
+        // New leaves: Create mode ⇒ one per implicit proposal (every discovered DAT); Update mode ⇒
+        // only the explicit new-leaf decisions.
+        var newLeaves = (Mode == GroupDatReconciliationMode.NewGroup
+                ? _incoming.Select(c => new GroupDatNewLeafPlan(
+                    EffectiveIdFor(c), c.DraftMediaTypeId!, c.RelativePath, c.SourcePath,
+                    c.HeaderName, c.Version, c.ReleaseCount))
+                : _decisions.Where(d => d.Kind == GroupDatDecisionKind.NewLeaf)
+                    .Select(d => new GroupDatNewLeafPlan(
+                        d.FinalId!, d.MediaTypeId!, d.Dat!.RelativePath, d.Dat.SourcePath,
+                        d.Dat.HeaderName, d.Dat.Version, d.Dat.ReleaseCount)))
             .OrderBy(n => n.LeafId, StringComparer.Ordinal)
             .ToImmutableArray();
 

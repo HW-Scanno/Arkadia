@@ -11240,11 +11240,12 @@ public partial class MainWindow : Window
         // The System context is fixed by the current selection: its id (immutable, from the caller)
         // plus the chosen authority derive the group identity inside the window. It is never chosen or
         // edited there.
-        var systemId   = _selectedPlatformId;
-        var systemName = _selectedPlatform?.Name ?? systemId;
+        var systemId     = _selectedPlatformId;
+        var systemName   = _selectedPlatform?.Name ?? systemId;
+        var manufacturer = _selectedPlatform?.Manufacturer ?? "";
 
         var preview = BuildGroupDatPreviewSnapshot();
-        var dialog  = new GroupDatReconciliationDialog(preview, systemId, systemName);
+        var dialog  = new GroupDatReconciliationDialog(preview, systemId, systemName, manufacturer);
         var ok      = await dialog.ShowDialog<bool>(this);
         if (ok && dialog.Plan is { } plan)
             await new InfoDialog("Group DAT",

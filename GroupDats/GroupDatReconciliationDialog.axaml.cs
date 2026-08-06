@@ -28,13 +28,15 @@ public partial class GroupDatReconciliationDialog : Window
     private DatGroupDiscoveryResult? _discovery;
     private GroupDatReconciliationSession _session = null!;
     private bool _building;
+    private string? _lastBulkMediaTypeId;   // last "Apply to remaining DATs" default (for Reset leaf proposal)
 
     public GroupDatReconciliationPlan? Plan { get; private set; }
 
     public GroupDatReconciliationDialog() : this(GroupDatCatalogPreviewData.Empty, "system", "System") { }
 
     /// <summary>Create mode — a new group under the given System context.</summary>
-    public GroupDatReconciliationDialog(GroupDatCatalogPreviewData catalog, string systemId, string systemName)
+    public GroupDatReconciliationDialog(
+        GroupDatCatalogPreviewData catalog, string systemId, string systemName, string manufacturer = "")
     {
         InitializeComponent();
         _catalog = catalog;
@@ -50,10 +52,12 @@ public partial class GroupDatReconciliationDialog : Window
         FillOptionCombo(MediaTypeCombo, _catalog.MediaTypes, selectFirst: false);
         _building = false;
 
-        var authority = SelectedId(AuthorityCombo) ?? "";
-        var groupId   = GroupDatReconciliationSession.SuggestGroupId(systemId, authority);
-        var groupName = _catalog.Authorities.FirstOrDefault(a => a.Id == authority)?.Name ?? authority;
-        _session = GroupDatReconciliationSession.ForNewGroup(_catalog, systemId, name, authority, groupName, groupId);
+        var authority   = SelectedId(AuthorityCombo) ?? "";
+        var authDisplay = _catalog.Authorities.FirstOrDefault(a => a.Id == authority)?.Name ?? authority;
+        var groupId     = GroupDatReconciliationSession.SuggestGroupId(systemId, authority);
+        var groupName   = GroupDatReconciliationSession.ComposeGroupName(manufacturer, name, authDisplay);
+        _session = GroupDatReconciliationSession.ForNewGroup(
+            _catalog, systemId, name, authority, groupName, groupId, manufacturer);
 
         InitCommonForMode();
     }
@@ -90,8 +94,13 @@ public partial class GroupDatReconciliationDialog : Window
         GroupIdField.IsEnabled   = NewMode;
         _building = false;
 
-        UpdateActionsPanel.IsVisible = !NewMode;
-        LeftHeader.Text = NewMode ? "DISCOVERED DATS (AVAILABLE)" : "DISCOVERED DATS (AVAILABLE)";
+        // Create mode: every discovered DAT is an implicit proposal — no per-DAT decision UI.
+        // Update mode: keep the manual decision workflow (associate/create/absent/undo).
+        UpdateActionsPanel.IsVisible  = !NewMode;
+        DecisionsPanel.IsVisible      = !NewMode;
+        CreateLeafButton.IsVisible    = !NewMode;
+        ResetProposalButton.IsVisible = NewMode;
+        LeftHeader.Text = NewMode ? "DISCOVERED DATS" : "DISCOVERED DATS (AVAILABLE)";
 
         RefreshGroupIdStatus();
         RefreshAll();
@@ -110,6 +119,8 @@ public partial class GroupDatReconciliationDialog : Window
 
     private void OnAuthorityChanged(object? sender, SelectionChangedEventArgs e)
     {
+        // Real selection change only (programmatic combo init runs under _building). Selecting the
+        // same authority raises no SelectionChanged, so nothing needs simulating here.
         if (_building || !NewMode) return;
         _session.SetAuthority(SelectedId(AuthorityCombo) ?? "");
         _building = true;
@@ -122,20 +133,89 @@ public partial class GroupDatReconciliationDialog : Window
 
     private void OnGroupNameChanged(object? sender, TextChangedEventArgs e)
     {
-        if (_building || !NewMode) return;
+        if (_building || !NewMode) return;      // programmatic assignment never marks manual
         _session.SetGroupName(GroupNameField.Text?.Trim() ?? "");
         RefreshValidation();   // Group Name never affects leaf ids
+        RefreshIdentityState();
     }
 
     private void OnGroupIdChanged(object? sender, TextChangedEventArgs e)
     {
-        if (_building || !NewMode) return;
+        if (_building || !NewMode) return;      // programmatic assignment never marks manual
         _session.SetGroupId(GroupIdField.Text?.Trim() ?? "");
         GroupIdText.Text = _session.GroupId;
         RefreshGroupIdStatus();
         RefreshDatsList();
         RefreshDetailAndBuilder();   // recomputes non-overridden proposals from the new prefix
         RefreshValidation();
+        RefreshIdentityState();
+    }
+
+    private void OnResetIdentity(object? sender, RoutedEventArgs e)
+    {
+        if (!NewMode || !_session.CanResetIdentity) return;
+        _session.ResetIdentityToSuggested();   // clears manual overrides, recomputes from System + Authority
+        _building = true;
+        GroupNameField.Text = _session.GroupName;
+        GroupIdField.Text   = _session.GroupId;
+        _building = false;
+        GroupIdText.Text = _session.GroupId;
+        RefreshGroupIdStatus();
+        RefreshDatsList();
+        RefreshDetailAndBuilder();   // re-prefix non-overridden leaf proposals; manual Final IDs preserved
+        RefreshValidation();
+        RefreshIdentityState();
+    }
+
+    private void RefreshIdentityState()
+    {
+        if (!NewMode)
+        {
+            // Update mode: identity is read-only — no reset button, no status line.
+            ResetIdentityButton.IsVisible = false;
+            IdentityStateText.IsVisible   = false;
+            return;
+        }
+        ResetIdentityButton.IsVisible = true;
+        IdentityStateText.IsVisible   = true;
+
+        var custom = _session.IsIdentityCustom;
+        ResetIdentityButton.IsEnabled = _session.CanResetIdentity && custom;
+        IdentityStateText.Text = custom ? "Custom identity" : "Suggested from System and Authority";
+        IdentityStateText.Foreground = new SolidColorBrush(Color.Parse(custom ? "#E8A000" : "#888899"));
+    }
+
+    // ── Apply selected leaf's media type to the remaining DATs ──────────────────
+
+    private void OnApplyDefaultMedia(object? sender, RoutedEventArgs e)
+    {
+        // Value source is the selected leaf's Media Type combo — no separate default state.
+        if (SelectedDat() is not { } dat || SelectedId(MediaTypeCombo) is not { } media) return;
+
+        _lastBulkMediaTypeId = media;
+        var (updated, preserved) = _session.ApplyDefaultMediaTypeToUnresolved(media, dat.CandidateId);
+        var mediaName = (MediaTypeCombo.SelectedItem as ComboBoxItem)?.Content as string ?? media;
+
+        // Pre-filling media changes proposal validity → refresh markers + global validation immediately.
+        RefreshDatsList();
+        RefreshValidation();
+        RefreshApplyDefaultMediaState();
+
+        // Feedback (bottom validation/status area) above the refreshed summary. The source leaf keeps
+        // its value and is excluded from both counts.
+        var applied = preserved > 0
+            ? $"Applied {mediaName} to {updated} other remaining DAT(s); {preserved} manual override(s) preserved."
+            : $"Applied {mediaName} to {updated} other remaining DAT(s).";
+        SummaryText.Text = applied + "\n" + SummaryText.Text;
+        SummaryText.Foreground = new SolidColorBrush(Color.Parse("#4CAF50"));
+    }
+
+    private void RefreshApplyDefaultMediaState()
+    {
+        ApplyDefaultMediaButton.IsEnabled =
+            SelectedDat() is not null
+            && SelectedId(MediaTypeCombo) is not null
+            && _session.AvailableIncoming.Count > 0;
     }
 
     // ── Source & selection ──────────────────────────────────────────────────────
@@ -169,7 +249,7 @@ public partial class GroupDatReconciliationDialog : Window
     {
         if (_building) return;
         if (SelectedDat() is { } dat) _session.SetManualFinalId(dat.CandidateId, FinalIdField.Text?.Trim() ?? "");
-        RefreshIdStatus(); RefreshValidation();
+        RefreshIdStatus(); RefreshDatsList(); RefreshValidation();
     }
 
     private void OnMediaTypeChanged(object? sender, SelectionChangedEventArgs e)
@@ -177,6 +257,9 @@ public partial class GroupDatReconciliationDialog : Window
         if (_building) return;
         if (SelectedDat() is { } dat && SelectedId(MediaTypeCombo) is { } media)
             _session.SetDraftMediaType(dat.CandidateId, media);
+        RefreshApplyDefaultMediaState();   // Apply button depends on the current combo value
+        RefreshDatsList();                 // media affects the proposal's validity marker
+        RefreshValidation();
     }
 
     private void OnResetId(object? sender, RoutedEventArgs e)
@@ -185,6 +268,25 @@ public partial class GroupDatReconciliationDialog : Window
         _session.ClearManualFinalId(dat.CandidateId);
         _building = true; FinalIdField.Text = _session.EffectiveIdFor(dat); _building = false;
         RefreshIdStatus(); RefreshDatsList(); RefreshValidation();
+    }
+
+    // ── Create-mode implicit-proposal commands ──────────────────────────────────
+
+    private void OnResetProposal(object? sender, RoutedEventArgs e)
+    {
+        if (!NewMode || SelectedDat() is not { } dat) return;
+        _session.ResetProposal(dat.CandidateId, _lastBulkMediaTypeId);
+        RefreshDetailAndBuilder();   // repaint suffix / auto Final ID / media for the selection
+        RefreshDatsList();
+        RefreshValidation();
+    }
+
+    private void OnSelectNextIssue(object? sender, RoutedEventArgs e)
+    {
+        if (_session.FirstInvalidProposal() is not { } bad) return;
+        var item = DatsList.Items.OfType<ListBoxItem>()
+            .FirstOrDefault(i => (i.Tag as IncomingDatCandidate)?.CandidateId == bad.CandidateId);
+        if (item is not null) { DatsList.SelectedItem = item; DatsList.ScrollIntoView(item); }
     }
 
     // ── Decisions ────────────────────────────────────────────────────────────
@@ -256,6 +358,8 @@ public partial class GroupDatReconciliationDialog : Window
 
         RefreshDetailAndBuilder();
         RefreshComparison();
+        RefreshApplyDefaultMediaState();
+        RefreshIdentityState();
         RefreshValidation();
     }
 
@@ -264,11 +368,28 @@ public partial class GroupDatReconciliationDialog : Window
         var prev = SelectedDat()?.CandidateId;
         _building = true;
         DatsList.Items.Clear();
-        foreach (var c in _session.AvailableIncoming)
+
+        if (NewMode)
         {
-            var folder = c.FolderPath.Length == 0 ? "(root)" : c.FolderPath;
-            DatsList.Items.Add(new ListBoxItem { Tag = c, Content = $"{folder}  ▸  {c.FileName}   ·   {c.ReleaseCount} rel" });
+            // Create: show ALL discovered DATs (implicit proposals) with a discreet issue marker.
+            var counts = _session.ProposalIdCounts();
+            foreach (var c in _session.Proposals)
+            {
+                var folder = c.FolderPath.Length == 0 ? "(root)" : c.FolderPath;
+                var ok = _session.EvaluateProposal(c, counts) == GroupDatReconciliationSession.LeafProposalIssue.Valid;
+                var mark = ok ? "" : "   ⚠";
+                DatsList.Items.Add(new ListBoxItem { Tag = c, Content = $"{folder}  ▸  {c.FileName}   ·   {c.ReleaseCount} rel{mark}" });
+            }
         }
+        else
+        {
+            foreach (var c in _session.AvailableIncoming)
+            {
+                var folder = c.FolderPath.Length == 0 ? "(root)" : c.FolderPath;
+                DatsList.Items.Add(new ListBoxItem { Tag = c, Content = $"{folder}  ▸  {c.FileName}   ·   {c.ReleaseCount} rel" });
+            }
+        }
+
         if (prev is not null)
             DatsList.SelectedItem = DatsList.Items.OfType<ListBoxItem>()
                 .FirstOrDefault(i => (i.Tag as IncomingDatCandidate)?.CandidateId == prev);
@@ -285,9 +406,18 @@ public partial class GroupDatReconciliationDialog : Window
     private void RefreshDetailAndBuilder()
     {
         var dat = SelectedDat();
-        if (dat is null) { DetailText.Text = "Select a DAT on the left."; IdBuilderPanel.IsVisible = false; CreateLeafButton.IsEnabled = false; return; }
-        IdBuilderPanel.IsVisible   = true;
-        CreateLeafButton.IsEnabled = true;
+        if (dat is null)
+        {
+            DetailText.Text = "Select a DAT on the left.";
+            IdBuilderPanel.IsVisible = false;
+            CreateLeafButton.IsEnabled = false;
+            ResetProposalButton.IsEnabled = false;
+            RefreshApplyDefaultMediaState();   // no selection ⇒ Apply disabled
+            return;
+        }
+        IdBuilderPanel.IsVisible      = true;
+        CreateLeafButton.IsEnabled    = true;
+        ResetProposalButton.IsEnabled = NewMode;
         DetailText.Text =
             $"relative path : {dat.RelativePath}\n" +
             $"header name   : {dat.HeaderName}\n" +
@@ -306,6 +436,7 @@ public partial class GroupDatReconciliationDialog : Window
             .FirstOrDefault(i => (i.Tag as string) == dat.DraftMediaTypeId);
         _building = false;
         RefreshIdStatus();
+        RefreshApplyDefaultMediaState();   // Apply availability tracks the selected leaf + combo
     }
 
     private void BuildFolderTokenRows(IncomingDatCandidate dat)
@@ -319,10 +450,22 @@ public partial class GroupDatReconciliationDialog : Window
             pathSoFar = pathSoFar.Length == 0 ? segments[i] : pathSoFar + "/" + segments[i];
             var node = _session.FolderTree.NodeForFolder(pathSoFar);
             if (node is null) continue;
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            row.Children.Add(new TextBlock { Text = segments[i], Width = 150, Foreground = new SolidColorBrush(Color.Parse("#AAAACC")), VerticalAlignment = VerticalAlignment.Center });
-            var tb = new TextBox { Text = node.Token, Width = 130, Tag = node };
+            // Match the shared builder grid (label 150 / content *) so every token TextBox starts on
+            // the same content-column line as Dat Suffix, Media type, and Final id.
+            var row = new Grid { ColumnDefinitions = new ColumnDefinitions("150,*") };
+            var seg = new TextBlock
+            {
+                Text = segments[i],
+                Foreground = new SolidColorBrush(Color.Parse("#AAAACC")),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Avalonia.Thickness(0, 0, 8, 0),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            Grid.SetColumn(seg, 0);
+            row.Children.Add(seg);
+            var tb = new TextBox { Text = node.Token, Width = 130, HorizontalAlignment = HorizontalAlignment.Left, Tag = node };
             tb.TextChanged += OnFolderTokenChanged;
+            Grid.SetColumn(tb, 1);
             row.Children.Add(tb);
             FolderTokensPanel.Children.Add(row);
         }
@@ -361,9 +504,10 @@ public partial class GroupDatReconciliationDialog : Window
         var id = FinalIdField.Text?.Trim() ?? "";
         if (id.Length == 0) { IdStatusText.Text = ""; return; }
         var ev = _session.EvaluateNewLeafId(id);
+        // Clear success indicator when valid; the single blocking reason (no duplication) when not.
         IdStatusText.Text = ev.IsValid
-            ? (ev.ExceedsRecommendedLength ? "valid (exceeds 48-char recommendation)" : "valid")
-            : "invalid — " + (ev.Reason ?? "");
+            ? (ev.ExceedsRecommendedLength ? "✓ Valid (exceeds 48-char recommendation)" : "✓ Valid")
+            : "✗ " + (ev.Reason ?? "invalid id");
         IdStatusText.Foreground = new SolidColorBrush(Color.Parse(ev.IsValid ? "#4CAF50" : "#EF5350"));
     }
 
@@ -381,10 +525,38 @@ public partial class GroupDatReconciliationDialog : Window
         if (_session is null) return;
         RefreshGroupIdStatus();
         var reasons = _session.BlockingReasons();
-        SummaryText.Text = reasons.Count == 0
-            ? "Ready — all discovered DATs resolved. Plan validated; execution will be enabled in a later phase."
-            : "Cannot continue yet:\n• " + string.Join("\n• ", reasons);
-        SummaryText.Foreground = new SolidColorBrush(Color.Parse(reasons.Count == 0 ? "#4CAF50" : "#FFA726"));
         ContinueButton.IsEnabled = reasons.Count == 0;
+
+        if (NewMode)
+        {
+            // Create: compact proposal summary (never hundreds of individual errors) + issue navigator.
+            var s = _session.SummarizeProposals();
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"{s.Total} leaf proposal(s) — {s.Valid} valid, {s.RequiringAttention} requiring attention.");
+            if (s.RequiringAttention > 0)
+            {
+                var cats = new List<string>();
+                if (s.MissingMediaType > 0) cats.Add($"{s.MissingMediaType} missing media type");
+                if (s.InvalidFinalId   > 0) cats.Add($"{s.InvalidFinalId} invalid Final ID");
+                if (s.DuplicateFinalId > 0) cats.Add($"{s.DuplicateFinalId} duplicate Final ID");
+                if (s.CatalogCollision > 0) cats.Add($"{s.CatalogCollision} catalog collision");
+                if (cats.Count > 0) sb.Append("  (" + string.Join(", ", cats) + ")");
+            }
+            // Identity / discovery blockers that are not per-proposal still surface here.
+            foreach (var r in reasons.Where(r => !r.Contains("leaf proposal(s) require attention")))
+                sb.Append("\n• " + r);
+
+            SummaryText.Text = sb.ToString();
+            SummaryText.Foreground = new SolidColorBrush(Color.Parse(reasons.Count == 0 ? "#4CAF50" : "#FFA726"));
+            SelectNextIssueButton.IsEnabled = _session.FirstInvalidProposal() is not null;
+        }
+        else
+        {
+            SummaryText.Text = reasons.Count == 0
+                ? "Ready — all discovered DATs and existing leaves resolved. Plan validated; execution will be enabled in a later phase."
+                : "Cannot continue yet:\n• " + string.Join("\n• ", reasons);
+            SummaryText.Foreground = new SolidColorBrush(Color.Parse(reasons.Count == 0 ? "#4CAF50" : "#FFA726"));
+            SelectNextIssueButton.IsEnabled = false;   // Update mode has no proposal navigator
+        }
     }
 }
