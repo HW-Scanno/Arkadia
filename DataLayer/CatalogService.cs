@@ -1354,6 +1354,306 @@ public sealed class CatalogService
         };
     }
 
+    // ── Group DAT: atomic Create (group + leaves + metadata + working states) ────
+
+    // Test-only seams (internal, never set in production; no production behaviour depends on them).
+    // The failure-injection ones are justified because there is no reliable way to force a
+    // mid-transaction error after some inserts once the payload is validated.
+    internal Action<int>?              OnLeafInsertedForTests;      // fired after each leaf insert (1-based index)
+    internal Action?                   OnBeforeCommitForTests;      // fired just before Commit
+    internal Action<SqliteConnection>? OnTransactionOpenedForTests; // fired inside the tx with the live connection
+
+    /// <summary>
+    /// Atomically registers a new Group DAT and all of its leaves in the catalog. Within a SINGLE
+    /// connection and SINGLE transaction it: validates against the live catalog, inserts <c>dat_groups</c>
+    /// (current_revision = 0), inserts every <c>dat_lines</c> row already complete with its Group metadata
+    /// columns (no window without metadata), applies the initial working states (same <c>is_manual = 0</c>
+    /// rule as import), and commits. Any failure — validation, SQLite constraint, or cancellation before
+    /// commit — rolls back the whole transaction: no group, no leaf, no metadata, no working state remains.
+    /// Performs NO filesystem access and does not verify that any leaf database physically exists (that is
+    /// the caller's responsibility, before calling this). Additive: it does not use or affect
+    /// <see cref="SaveDatLines"/> or any Single-DAT path.
+    /// </summary>
+    /// <exception cref="GroupDatCatalogValidationException">A deterministic validation failure.</exception>
+    /// <exception cref="SqliteException">An unexpected database error (distinct from validation).</exception>
+    public void CreateDatGroupWithLeaves(
+        GroupDatCatalogCreateRequest request,
+        System.Threading.CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var conn = Open();
+
+        // FK enforcement is per-connection and CANNOT change while a transaction is active — so enable
+        // it BEFORE BeginTransaction(). This makes the dat_lines/dat_groups FKs a real DB-level defence
+        // (not merely the application validations below).
+        using (var pragma = conn.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA foreign_keys = ON;";
+            pragma.ExecuteNonQuery();
+        }
+
+        using var tx = conn.BeginTransaction();
+        OnTransactionOpenedForTests?.Invoke(conn);
+
+        ValidateGroupAndLeaves(conn, tx, request);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var now = DateTime.UtcNow.ToString("o");
+
+        // ── dat_groups ──
+        using (var g = conn.CreateCommand())
+        {
+            g.Transaction = tx;
+            g.CommandText = """
+                INSERT INTO dat_groups(id, display_name, hardware_family_id, authority, current_revision, created_at_utc, updated_at_utc)
+                VALUES($id, $displayName, $hardwareFamilyId, $authority, 0, $now, $now)
+                """;
+            g.Parameters.AddWithValue("$id",               request.GroupId);
+            g.Parameters.AddWithValue("$displayName",      request.DisplayName);
+            g.Parameters.AddWithValue("$hardwareFamilyId", request.HardwareFamilyId);
+            g.Parameters.AddWithValue("$authority",        request.Authority);
+            g.Parameters.AddWithValue("$now",              now);
+            g.ExecuteNonQuery();
+        }
+
+        // ── dat_lines (each born complete with its Group metadata) ──
+        int inserted = 0;
+        foreach (var leaf in request.Leaves)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            InsertGroupLeaf(conn, tx, request.GroupId, leaf, now);
+            OnLeafInsertedForTests?.Invoke(++inserted);
+        }
+
+        // ── initial working states (same rule as Single-DAT import) ──
+        foreach (var leaf in request.Leaves)
+            foreach (var ws in leaf.InitialWorkingStates)
+                WriteWorkingStateIfNotManual(conn, tx, ws);
+
+        OnBeforeCommitForTests?.Invoke();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        tx.Commit();
+    }
+
+    private void InsertGroupLeaf(
+        SqliteConnection conn, SqliteTransaction tx, string groupId, GroupDatCatalogLeafCreate leaf, string now)
+    {
+        var dl = leaf.DatLine;
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        // Same columns Single-DAT import writes (transform_strategy_type / folder_transform_id /
+        // file_handling take their schema defaults) PLUS the Group metadata columns, in one row.
+        cmd.CommandText = """
+            INSERT INTO dat_lines(
+                id, hardware_family_id, name, authority, media_type_id, version, storage_strategy_id,
+                data_store_path, release_count, imported_at_utc, catalog_enabled, library_title_mode,
+                group_id, relative_dat_path, source_dat_name, source_dat_sha256,
+                semantic_fingerprint, semantic_fingerprint_version, last_seen_group_revision)
+            VALUES(
+                $id, $hardwareFamilyId, $name, $authority, $mediaTypeId, $version, $storageStrategyId,
+                $dataStorePath, $releaseCount, $importedAt, $catalogEnabled, $libraryTitleMode,
+                $groupId, $relativeDatPath, $sourceDatName, $sourceDatSha256,
+                $semanticFingerprint, $semanticFingerprintVersion, $lastSeenGroupRevision)
+            """;
+        cmd.Parameters.AddWithValue("$id",                dl.Id);
+        cmd.Parameters.AddWithValue("$hardwareFamilyId",  dl.HardwareFamilyId);
+        cmd.Parameters.AddWithValue("$name",              dl.Name);
+        cmd.Parameters.AddWithValue("$authority",         dl.Authority);
+        cmd.Parameters.AddWithValue("$mediaTypeId",       dl.MediaTypeId.Length > 0 ? dl.MediaTypeId : "other");
+        cmd.Parameters.AddWithValue("$version",           dl.Version);
+        cmd.Parameters.AddWithValue("$storageStrategyId", NullIfEmpty(dl.StorageStrategyId));
+        cmd.Parameters.AddWithValue("$dataStorePath",     dl.DataStorePath);
+        cmd.Parameters.AddWithValue("$releaseCount",      dl.ReleaseCount);
+        cmd.Parameters.AddWithValue("$importedAt",        dl.ImportedAtUtc == default ? now : dl.ImportedAtUtc.ToString("o"));
+        cmd.Parameters.AddWithValue("$catalogEnabled",    dl.CatalogEnabled ? 1 : 0);
+        cmd.Parameters.AddWithValue("$libraryTitleMode",  dl.LibraryTitleMode);
+        cmd.Parameters.AddWithValue("$groupId",           groupId);
+        cmd.Parameters.AddWithValue("$relativeDatPath",   leaf.RelativeDatPath);
+        cmd.Parameters.AddWithValue("$sourceDatName",     leaf.SourceDatName);
+        cmd.Parameters.AddWithValue("$sourceDatSha256",   leaf.SourceDatSha256);
+        cmd.Parameters.AddWithValue("$semanticFingerprint",        (object?)leaf.SemanticFingerprint ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$semanticFingerprintVersion", (object?)leaf.SemanticFingerprintVersion ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$lastSeenGroupRevision",      leaf.LastSeenGroupRevision);
+        cmd.ExecuteNonQuery();
+    }
+
+    private static void WriteWorkingStateIfNotManual(
+        SqliteConnection conn, SqliteTransaction tx, GroupDatInitialWorkingState ws)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO catalog_working_state(item_id, working_state, working_note, is_manual)
+            VALUES($itemId, $state, $note, 0)
+            ON CONFLICT(item_id) DO UPDATE SET
+                working_state = excluded.working_state,
+                working_note  = excluded.working_note
+            WHERE is_manual = 0
+            """;
+        cmd.Parameters.AddWithValue("$itemId", ws.ItemId);
+        cmd.Parameters.AddWithValue("$state",  ws.State);
+        cmd.Parameters.AddWithValue("$note",   (object?)ws.Note ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+    }
+
+    // ── Validation (all within the create transaction; no filesystem access) ─────
+
+    private void ValidateGroupAndLeaves(
+        SqliteConnection conn, SqliteTransaction tx, GroupDatCatalogCreateRequest request)
+    {
+        static void Fail(GroupDatCatalogCreateError e, string msg, string? leaf = null)
+            => throw new GroupDatCatalogValidationException(e, msg, leaf);
+
+        // ── Group ──
+        if (!DatTechnicalIdPolicy.IsValidNew(request.GroupId))
+            Fail(GroupDatCatalogCreateError.InvalidGroupId, $"Group id '{request.GroupId}' is not a valid new id.");
+        if (string.IsNullOrWhiteSpace(request.DisplayName))
+            Fail(GroupDatCatalogCreateError.EmptyDisplayName, "Group display name must be non-empty.");
+        if (string.IsNullOrWhiteSpace(request.Authority))
+            Fail(GroupDatCatalogCreateError.InvalidAuthority, "Group authority must be non-empty.");
+        if (RowExists(conn, tx, "SELECT 1 FROM dat_groups WHERE id = $v LIMIT 1", request.GroupId))
+            Fail(GroupDatCatalogCreateError.GroupIdCollision, $"A Group DAT with id '{request.GroupId}' already exists (case-insensitive).");
+        if (!RowExists(conn, tx, "SELECT 1 FROM hardware_families WHERE id = $v LIMIT 1", request.HardwareFamilyId))
+            Fail(GroupDatCatalogCreateError.HardwareFamilyMissing, $"Hardware family '{request.HardwareFamilyId}' does not exist.");
+
+        // ── Leaves ──
+        if (request.Leaves is null || request.Leaves.Count == 0)
+            Fail(GroupDatCatalogCreateError.NoLeaves, "A Group DAT must be created with at least one leaf.");
+
+        var seenLeafIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenPaths   = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var leaf in request.Leaves!)
+        {
+            var dl = leaf.DatLine ?? throw new GroupDatCatalogValidationException(
+                GroupDatCatalogCreateError.InvalidLeafId, "Leaf dat_line record is null.");
+            var id = dl.Id;
+
+            if (!DatTechnicalIdPolicy.IsValidNew(id))
+                Fail(GroupDatCatalogCreateError.InvalidLeafId, $"Leaf id '{id}' is not a valid new id.", id);
+            if (!seenLeafIds.Add(id))
+                Fail(GroupDatCatalogCreateError.DuplicateLeafIdInPayload, $"Leaf id '{id}' appears more than once in the request (case-insensitive).", id);
+            if (RowExists(conn, tx, "SELECT 1 FROM dat_lines WHERE id = $v COLLATE NOCASE LIMIT 1", id))
+                Fail(GroupDatCatalogCreateError.LeafIdCollision, $"A dat_line with id '{id}' already exists (case-insensitive).", id);
+            if (!string.Equals(dl.HardwareFamilyId, request.HardwareFamilyId, StringComparison.Ordinal))
+                Fail(GroupDatCatalogCreateError.LeafSystemMismatch, $"Leaf '{id}' belongs to system '{dl.HardwareFamilyId}', not the group's '{request.HardwareFamilyId}'.", id);
+            if (!string.Equals(dl.Authority, request.Authority, StringComparison.Ordinal))
+                Fail(GroupDatCatalogCreateError.LeafAuthorityMismatch, $"Leaf '{id}' has authority '{dl.Authority}', not the group's '{request.Authority}'.", id);
+            var mediaType = dl.MediaTypeId.Length > 0 ? dl.MediaTypeId : "other";
+            if (!RowExists(conn, tx, "SELECT 1 FROM media_types WHERE id = $v LIMIT 1", mediaType))
+                Fail(GroupDatCatalogCreateError.MediaTypeMissing, $"Leaf '{id}' references unknown media type '{mediaType}'.", id);
+
+            if (string.IsNullOrEmpty(dl.DataStorePath))
+                Fail(GroupDatCatalogCreateError.EmptyDataStorePath, $"Leaf '{id}' has an empty data store path.", id);
+            if (!seenPaths.Add(dl.DataStorePath))
+                Fail(GroupDatCatalogCreateError.DuplicateDataStorePathInPayload, $"Data store path '{dl.DataStorePath}' appears more than once in the request (case-insensitive).", id);
+            if (RowExists(conn, tx, "SELECT 1 FROM dat_lines WHERE data_store_path = $v COLLATE NOCASE LIMIT 1", dl.DataStorePath))
+                Fail(GroupDatCatalogCreateError.DataStorePathCollision, $"Data store path '{dl.DataStorePath}' is already assigned to another dat_line.", id);
+
+            if (!IsValidRelativeDatPath(leaf.RelativeDatPath))
+                Fail(GroupDatCatalogCreateError.InvalidRelativeDatPath, $"Leaf '{id}' has an invalid relative DAT path '{leaf.RelativeDatPath}'.", id);
+            if (string.IsNullOrWhiteSpace(leaf.SourceDatName))
+                Fail(GroupDatCatalogCreateError.EmptySourceDatName, $"Leaf '{id}' has an empty source DAT name.", id);
+            if (!IsValidSha256(leaf.SourceDatSha256))
+                Fail(GroupDatCatalogCreateError.InvalidSourceSha256, $"Leaf '{id}' has a malformed source DAT SHA-256.", id);
+            if (leaf.LastSeenGroupRevision != 0)
+                Fail(GroupDatCatalogCreateError.InvalidLastSeenRevision, $"Leaf '{id}' must have last_seen_group_revision = 0 for Group Create v1.", id);
+
+            var fpNull  = leaf.SemanticFingerprint is null;
+            var verNull = leaf.SemanticFingerprintVersion is null;
+            if (fpNull != verNull || (!fpNull && (string.IsNullOrWhiteSpace(leaf.SemanticFingerprint) || leaf.SemanticFingerprintVersion <= 0)))
+                Fail(GroupDatCatalogCreateError.InvalidSemanticFingerprint, $"Leaf '{id}' has inconsistent semantic fingerprint / version.", id);
+        }
+    }
+
+    private static bool RowExists(SqliteConnection conn, SqliteTransaction tx, string sql, string value)
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("$v", value ?? "");
+        return cmd.ExecuteScalar() is not null;
+    }
+
+    /// <summary>A relative, '/'-normalized DAT path with no root and no <c>..</c> traversal (no empty segments).</summary>
+    private static bool IsValidRelativeDatPath(string? p)
+    {
+        if (string.IsNullOrWhiteSpace(p)) return false;
+        if (p.Contains('\\')) return false;              // must be forward-slash normalized
+        if (p.StartsWith('/')) return false;             // not rooted
+        if (Path.IsPathRooted(p)) return false;          // no drive/UNC root
+        foreach (var seg in p.Split('/'))
+        {
+            if (seg.Length == 0) return false;           // no empty segment (leading/trailing/double slash)
+            if (seg == "..") return false;               // no traversal
+        }
+        return true;
+    }
+
+    private static bool IsValidSha256(string? s)
+        => s is { Length: 64 } && s.All(Uri.IsHexDigit);
+
+    /// <summary>
+    /// All leaves of a Group DAT (dat_line row + Group metadata), in a single query with no N+1, ordered
+    /// deterministically by relative DAT path then id. Case-insensitive on <c>group_id</c>. Read-only;
+    /// returns an empty list for a group with no leaves. Does not modify anything.
+    /// </summary>
+    public List<GroupLeafRecord> GetLeavesForGroup(string groupId)
+    {
+        var result = new List<GroupLeafRecord>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, hardware_family_id, name, authority, media_type_id, version, storage_strategy_id,
+                   data_store_path, release_count, imported_at_utc, transform_strategy_type,
+                   folder_transform_id, file_handling, catalog_enabled, library_title_mode,
+                   group_id, relative_dat_path, source_dat_name, source_dat_sha256,
+                   semantic_fingerprint, semantic_fingerprint_version, last_seen_group_revision
+            FROM dat_lines
+            WHERE group_id = $gid COLLATE NOCASE
+            ORDER BY relative_dat_path, id
+            """;
+        cmd.Parameters.AddWithValue("$gid", groupId ?? "");
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var datLine = new DatLineRecord
+            {
+                Id                    = r.GetString(0),
+                HardwareFamilyId      = r.GetString(1),
+                Name                  = r.GetString(2),
+                Authority             = r.GetString(3),
+                MediaTypeId           = r.IsDBNull(4) ? "other" : r.GetString(4),
+                Version               = r.IsDBNull(5) ? "" : r.GetString(5),
+                StorageStrategyId     = r.IsDBNull(6) ? "" : r.GetString(6),
+                DataStorePath         = r.IsDBNull(7) ? "" : r.GetString(7),
+                ReleaseCount          = r.GetInt32(8),
+                ImportedAtUtc         = DateTime.Parse(r.GetString(9)),
+                TransformStrategyType = r.IsDBNull(10) ? "none" : r.GetString(10),
+                FolderTransformId     = r.IsDBNull(11) ? "" : r.GetString(11),
+                FileHandling          = r.GetString(12),
+                CatalogEnabled        = r.IsDBNull(13) || r.GetInt32(13) != 0,
+                LibraryTitleMode      = r.IsDBNull(14) ? "dat" : r.GetString(14),
+            };
+            var meta = new DatLineGroupMetadataRecord
+            {
+                DatLineId                  = r.GetString(0),
+                GroupId                    = r.IsDBNull(15) ? null : r.GetString(15),
+                RelativeDatPath            = r.IsDBNull(16) ? null : r.GetString(16),
+                SourceDatName              = r.IsDBNull(17) ? null : r.GetString(17),
+                SourceDatSha256            = r.IsDBNull(18) ? null : r.GetString(18),
+                SemanticFingerprint        = r.IsDBNull(19) ? null : r.GetString(19),
+                SemanticFingerprintVersion = r.IsDBNull(20) ? null : r.GetInt32(20),
+                LastSeenGroupRevision      = r.IsDBNull(21) ? null : r.GetInt32(21),
+            };
+            result.Add(new GroupLeafRecord(datLine, meta));
+        }
+        return result;
+    }
+
     // ── Transform Strategy ────────────────────────────────────────────────────
 
     public void SaveDatLineTransformStrategy(string datLineId, string strategyType, string? folderTransformId)
