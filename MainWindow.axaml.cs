@@ -113,6 +113,11 @@ public partial class MainWindow : Window
     private SystemPlatform? _selectedPlatform;   // kept for OnEditPlatform compat
     private string?        _selectedPlatformId;
     private DatLineInfo?   _selectedDatLine;
+    private string?        _selectedGroupId;     // set when a Group DAT card is selected (distinct from a dat_line)
+
+    // Group DAT view state, rebuilt on every RefreshSystems (read-only aggregation over group leaves).
+    private List<GroupDatCardInfo> _groupCards   = [];
+    private HashSet<string>        _groupLeafIds = new(StringComparer.OrdinalIgnoreCase);
 
     private void InitSystems()
     {
@@ -169,23 +174,48 @@ public partial class MainWindow : Window
 
         var allDatLines = _catalog.LoadDatLines();
 
+        // Group membership (read-only): leaf id → group id, plus per-group display metadata. One
+        // GetLeavesForGroup query per group — no N+1. Group leaves stay real dat_lines; they are only
+        // hidden from the main list and rolled up into a single Group card.
+        var leafToGroup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var groupMeta   = new Dictionary<string, GroupMeta>(StringComparer.OrdinalIgnoreCase);
+        foreach (var g in _catalog.LoadDatGroups())
+        {
+            groupMeta[g.Id.Value] = new GroupMeta(g.DisplayName, GetAuthorityName(g.Authority), g.HardwareFamilyId);
+            foreach (var leaf in _catalog.GetLeavesForGroup(g.Id.Value))
+                leafToGroup[leaf.DatLine.Id] = g.Id.Value;
+        }
+        _groupLeafIds = new HashSet<string>(leafToGroup.Keys, StringComparer.OrdinalIgnoreCase);
+
+        var groupLeafInputs = new List<LeafCoverageInput>();
+
         _systemsPlatforms = _catalog.LoadPlatforms()
             .Select(platform =>
             {
                 var platformDatLines = allDatLines.Where(dl => dl.HardwareFamilyId == platform.Id).ToList();
                 var total   = platformDatLines.Sum(dl => dl.ReleaseCount);
                 int present = 0, outdated = 0, unwanted = 0, lost = 0;
-                foreach (var dl in platformDatLines.Where(dl => dl.DataStorePath.Length > 0))
+                foreach (var dl in platformDatLines)
                 {
-                    var absPath = Path.Combine(_dataDir, dl.DataStorePath);
-                    if (File.Exists(absPath))
+                    int lPresent = 0, lUnwanted = 0;
+                    if (dl.DataStorePath.Length > 0)
                     {
-                        var c = new DatLineStore(absPath).GetAllStatusCounts();
-                        present  += c.Present;
-                        outdated += c.Outdated;
-                        unwanted += c.Unwanted;
-                        lost     += c.Lost;
+                        var absPath = Path.Combine(_dataDir, dl.DataStorePath);
+                        if (File.Exists(absPath))
+                        {
+                            var c = new DatLineStore(absPath).GetAllStatusCounts();
+                            lPresent  = c.Present;
+                            lUnwanted = c.Unwanted;
+                            present  += c.Present;
+                            outdated += c.Outdated;
+                            unwanted += c.Unwanted;
+                            lost     += c.Lost;
+                        }
                     }
+                    // A group leaf is counted once here (System stats) AND contributes to its Group card's
+                    // summed coverage — never double-counted, because the Group card is not itself a dat_line.
+                    if (leafToGroup.TryGetValue(dl.Id, out var gid))
+                        groupLeafInputs.Add(new LeafCoverageInput(gid, dl.ReleaseCount, lPresent, lUnwanted));
                 }
                 // Wanted = titles minus the unwanted curator veto. Missing is measured over
                 // the wanted subset so unwanted rows never inflate the "missing" figure.
@@ -207,6 +237,8 @@ public partial class MainWindow : Window
             })
             .ToList();
 
+        _groupCards = GroupDatPartition.BuildGroupCards(groupLeafInputs, groupMeta);
+
         BuildTree();
         UpdateActionBar();
     }
@@ -216,6 +248,7 @@ public partial class MainWindow : Window
         _selectedPlatformId = platformId;
         _selectedPlatform   = _systemsPlatforms.FirstOrDefault(x => x.Id == platformId);
         _selectedDatLine    = null;
+        _selectedGroupId    = null;
         BuildTree();
         UpdateDetailPane(_selectedPlatform, null);
         UpdateActionBar();
@@ -226,8 +259,22 @@ public partial class MainWindow : Window
         _selectedPlatformId = platformId;
         _selectedPlatform   = _systemsPlatforms.FirstOrDefault(x => x.Id == platformId);
         _selectedDatLine    = d;
+        _selectedGroupId    = null;
         BuildTree();
         UpdateDetailPane(_selectedPlatform, d);
+        UpdateActionBar();
+    }
+
+    // A Group DAT is a distinct selectable item, never a dat_line. Selecting it clears the dat-line
+    // selection so no arbitrary hidden leaf is shown; the right panel gets a neutral read-only summary.
+    private void SelectGroup(GroupDatCardInfo card, string platformId)
+    {
+        _selectedPlatformId = platformId;
+        _selectedPlatform   = _systemsPlatforms.FirstOrDefault(x => x.Id == platformId);
+        _selectedDatLine    = null;
+        _selectedGroupId    = card.GroupId;
+        BuildTree();
+        BuildGroupDetailContent(card);
         UpdateActionBar();
     }
 
@@ -288,6 +335,13 @@ public partial class MainWindow : Window
                         var isSelectedDat = _selectedDatLine?.CatalogId is not null &&
                                             _selectedDatLine.CatalogId == d.CatalogId;
                         SystemsTreePanel.Children.Add(MakeDatRow(d, p.Id, isSelectedDat));
+                    }
+
+                    // One card per Group DAT belonging to this System (the hidden leaves live behind Details).
+                    foreach (var card in _groupCards.Where(c => c.HardwareFamilyId == p.Id))
+                    {
+                        var isSelectedGroup = _selectedGroupId == card.GroupId;
+                        SystemsTreePanel.Children.Add(MakeGroupRow(card, p.Id, isSelectedGroup));
                     }
                 }
             }
@@ -517,6 +571,141 @@ public partial class MainWindow : Window
         row.PointerPressed += (_, _) => SelectDatLine(datInfo, pId);
 
         return row;
+    }
+
+    // Group DAT card: same two-line height as a normal DAT row, with a compact Details button and the
+    // completion percentage pinned to the far right (aligned with the other cards).
+    private Border MakeGroupRow(GroupDatCardInfo card, string platformId, bool isSelected)
+    {
+        var bgColor  = isSelected ? Color.Parse("#1A1A2E") : Color.Parse("#0D0D18");
+        var bdrColor = isSelected ? Color.Parse("#44448A") : Color.Parse("#181826");
+
+        var nameBlock = new TextBlock
+        {
+            Text              = card.DisplayName,
+            FontSize          = 12,
+            FontWeight        = isSelected ? FontWeight.SemiBold : FontWeight.Normal,
+            Foreground        = new SolidColorBrush(Color.Parse(isSelected ? "#D8D8F0" : "#AAAACC")),
+            TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            TextWrapping      = Avalonia.Media.TextWrapping.NoWrap,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+
+        var subBlock = new TextBlock
+        {
+            Text         = card.Subtitle,
+            FontSize     = 10,
+            Foreground   = new SolidColorBrush(Color.Parse("#555566")),
+            TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            TextWrapping = Avalonia.Media.TextWrapping.NoWrap,
+            Margin       = new Avalonia.Thickness(0, 2, 0, 0),
+        };
+
+        var textStack = new StackPanel();
+        textStack.Children.Add(nameBlock);
+        textStack.Children.Add(subBlock);
+
+        var detailsBtn = new Button
+        {
+            Content           = "Details",
+            FontSize          = 11,
+            Padding           = new Avalonia.Thickness(12, 4),
+            CornerRadius      = new Avalonia.CornerRadius(4),
+            BorderThickness   = new Avalonia.Thickness(1),
+            BorderBrush       = new SolidColorBrush(Color.Parse("#3A3A5A")),
+            Background        = new SolidColorBrush(Color.Parse("#181826")),
+            Foreground        = new SolidColorBrush(Color.Parse("#AAAACC")),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Cursor            = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+        };
+        var theCard = card;
+        var pId     = platformId;
+        detailsBtn.Click += (_, _) => OpenGroupDetails(theCard, pId);
+
+        var coverageBlock = new TextBlock
+        {
+            Text              = card.CoverageText,
+            FontSize          = 11,
+            Foreground        = new SolidColorBrush(Color.Parse(
+                                    Systems.SystemsCoverageColorPolicy.HexFor(card.CoveragePercent))),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin            = new Avalonia.Thickness(12, 0, 0, 0),
+            MinWidth          = 40,
+            TextAlignment     = Avalonia.Media.TextAlignment.Right,
+        };
+
+        var grid = new Grid { Margin = new Avalonia.Thickness(28, 8, 10, 8) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        Grid.SetColumn(textStack,     0);
+        Grid.SetColumn(detailsBtn,    1);
+        Grid.SetColumn(coverageBlock, 2);
+        grid.Children.Add(textStack);
+        grid.Children.Add(detailsBtn);
+        grid.Children.Add(coverageBlock);
+
+        var row = new Border
+        {
+            Background      = new SolidColorBrush(bgColor),
+            BorderBrush     = new SolidColorBrush(bdrColor),
+            BorderThickness = new Avalonia.Thickness(1),
+            CornerRadius    = new Avalonia.CornerRadius(4),
+            Margin          = new Avalonia.Thickness(16, 0, 0, 0),
+            Cursor          = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+            Child           = grid,
+        };
+        row.PointerPressed += (_, _) => SelectGroup(theCard, pId);
+        return row;
+    }
+
+    // Details: read-only leaf list resolved from ONE GetLeavesForGroup query (no N+1). Uses the persisted
+    // relative_dat_path and the currently-persisted media type — nothing is recomputed or mutated.
+    private async void OpenGroupDetails(GroupDatCardInfo card, string platformId)
+    {
+        if (_selectedGroupId != card.GroupId) SelectGroup(card, platformId);
+        var leaves     = _catalog.GetLeavesForGroup(card.GroupId);
+        var mediaNames = _catalog.GetMediaTypes().ToDictionary(m => m.Id, m => m.Name, StringComparer.OrdinalIgnoreCase);
+        var rows       = Systems.GroupDatDetails.BuildRows(leaves, mediaNames);
+        await new GroupDatDetailsDialog(card, rows).ShowDialog(this);
+    }
+
+    // Neutral, read-only right-panel summary for a selected Group DAT (the real leaf list is the dialog).
+    private void BuildGroupDetailContent(GroupDatCardInfo card)
+    {
+        SystemsDetailEmptyMsg.IsVisible = false;
+        SystemsDetailPanel.Children.Clear();
+
+        SystemsDetailPanel.Children.Add(new TextBlock
+        {
+            Text         = card.DisplayName,
+            FontSize     = 15,
+            FontWeight   = FontWeight.SemiBold,
+            Foreground   = new SolidColorBrush(Color.Parse("#E8E8F0")),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+        });
+        SystemsDetailPanel.Children.Add(new TextBlock
+        {
+            Text       = card.Subtitle,
+            FontSize   = 12,
+            Foreground = new SolidColorBrush(Color.Parse("#888899")),
+            Margin     = new Avalonia.Thickness(0, 2, 0, 0),
+        });
+        SystemsDetailPanel.Children.Add(new TextBlock
+        {
+            Text       = $"Group DAT · wanted coverage {card.CoverageText}",
+            FontSize   = 12,
+            Foreground = new SolidColorBrush(Color.Parse("#AAAACC")),
+            Margin     = new Avalonia.Thickness(0, 12, 0, 0),
+        });
+        SystemsDetailPanel.Children.Add(new TextBlock
+        {
+            Text         = "Use Details on the card to browse the group's leaf DATs.",
+            FontSize     = 11,
+            Foreground   = new SolidColorBrush(Color.Parse("#555566")),
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Margin       = new Avalonia.Thickness(0, 8, 0, 0),
+        });
     }
 
     private Bitmap? LoadDatAuthorityImage(string authority)
@@ -1035,6 +1224,7 @@ public partial class MainWindow : Window
     private List<DatLineInfo> BuildDatLineInfos(string platformId)
         => _catalog.LoadDatLines()
             .Where(dl => dl.HardwareFamilyId == platformId)
+            .Where(dl => !_groupLeafIds.Contains(dl.Id))   // group leaves are shown via the Group card, not here
             .Select(dl =>
             {
                 int outdated = 0;

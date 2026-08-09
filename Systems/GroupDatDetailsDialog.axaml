@@ -1,0 +1,75 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:sys="using:Arkadia.Systems"
+        x:Class="Arkadia.GroupDatDetailsDialog"
+        Title="Arkadia - Group DAT"
+        Width="720" Height="560"
+        MinWidth="520" MinHeight="360"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="20,18,20,16">
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,12">
+            <TextBlock x:Name="HeaderName"
+                       FontSize="15" FontWeight="SemiBold" Foreground="#E8E8F0"/>
+            <TextBlock x:Name="HeaderSub"
+                       FontSize="12" Foreground="#888899"/>
+        </StackPanel>
+
+        <!-- Column headers -->
+        <Border Grid.Row="1" Background="#14141C" CornerRadius="4,4,0,0" Padding="10,7"
+                BorderBrush="#1E1E2E" BorderThickness="1,1,1,0">
+            <Grid ColumnDefinitions="2*,4*,2*,Auto">
+                <TextBlock Grid.Column="0" Text="LEAF DAT"    FontSize="10" LetterSpacing="1" Foreground="#666677"/>
+                <TextBlock Grid.Column="1" Text="SOURCE PATH" FontSize="10" LetterSpacing="1" Foreground="#666677"/>
+                <TextBlock Grid.Column="2" Text="MEDIA TYPE"  FontSize="10" LetterSpacing="1" Foreground="#666677"/>
+                <TextBlock Grid.Column="3" Text="RELEASES"    FontSize="10" LetterSpacing="1" Foreground="#666677"
+                           Width="72" TextAlignment="Right"/>
+            </Grid>
+        </Border>
+
+        <!-- Rows (virtualized, vertical scroll) -->
+        <Border Grid.Row="2" BorderBrush="#1E1E2E" BorderThickness="1,0,1,1" CornerRadius="0,0,4,4">
+            <ListBox x:Name="LeavesList"
+                     Background="Transparent"
+                     BorderThickness="0"
+                     Padding="0"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto">
+                <ListBox.ItemTemplate>
+                    <DataTemplate x:DataType="sys:GroupDatDetailsRow">
+                        <Grid ColumnDefinitions="2*,4*,2*,Auto">
+                            <TextBlock Grid.Column="0" Text="{Binding LeafId}"
+                                       FontSize="11" Foreground="#C8C8E0"
+                                       FontFamily="Consolas,Courier New,monospace"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Grid.Column="1" Text="{Binding SourcePath}"
+                                       FontSize="11" Foreground="#9999AA"
+                                       FontFamily="Consolas,Courier New,monospace"
+                                       TextTrimming="CharacterEllipsis"
+                                       ToolTip.Tip="{Binding SourcePath}"/>
+                            <TextBlock Grid.Column="2" Text="{Binding MediaType}"
+                                       FontSize="11" Foreground="#AAAACC"
+                                       TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Grid.Column="3" Text="{Binding Releases}"
+                                       FontSize="11" Foreground="#AAAACC"
+                                       Width="72" TextAlignment="Right"/>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+
+        <!-- Footer -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Close"
+                    Background="#7B68EE" Foreground="#FFFFFF"
+                    Padding="24,8" CornerRadius="6" BorderThickness="0"
+                    Click="OnClose"/>
+        </StackPanel>
+    </Grid>
+</Window>
