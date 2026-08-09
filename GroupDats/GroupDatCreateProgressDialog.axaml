@@ -1,0 +1,74 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.GroupDatCreateProgressDialog"
+        Title="Arkadia - Create Group DAT"
+        Width="460"
+        SizeToContent="Height"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <StackPanel Margin="28,24,28,24" Spacing="0">
+
+        <TextBlock x:Name="OpTitle"
+                   FontSize="13" FontWeight="SemiBold"
+                   Foreground="#F0F0F0"
+                   Margin="0,0,0,16"/>
+
+        <!-- Running panel -->
+        <Border x:Name="RunningPanel"
+                Background="#1A1A24" CornerRadius="6" Padding="16,14"
+                Margin="0,0,0,16">
+            <StackPanel Spacing="10">
+                <TextBlock x:Name="PhaseText"
+                           FontSize="12" Foreground="#888899"
+                           TextWrapping="Wrap"/>
+                <ProgressBar x:Name="OpProgress"
+                             IsIndeterminate="True"
+                             Height="10"
+                             Foreground="#7B68EE"
+                             Background="#242433"
+                             CornerRadius="4"
+                             Minimum="0" Maximum="100" Value="0"
+                             Margin="0,2,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Result panel (shown on completion) -->
+        <StackPanel x:Name="ResultPanel" IsVisible="False" Spacing="0">
+            <TextBlock x:Name="ResultTitle"
+                       FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
+                       Foreground="#888899" Margin="0,0,0,12"/>
+            <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,12">
+                <TextBlock x:Name="ResultMessage"
+                           FontSize="12" Foreground="#E8E8F0"
+                           TextWrapping="Wrap"/>
+            </Border>
+            <!-- Cleanup paths (only for CleanupRequired) -->
+            <TextBox x:Name="PathsBox"
+                     IsVisible="False"
+                     IsReadOnly="True"
+                     AcceptsReturn="True"
+                     TextWrapping="NoWrap"
+                     MaxHeight="140"
+                     FontSize="11"
+                     FontFamily="Consolas,Courier New,monospace"
+                     Foreground="#FFA726"
+                     Background="#14141C"
+                     BorderBrush="#332211" BorderThickness="1"
+                     Margin="0,0,0,16"/>
+        </StackPanel>
+
+        <!-- OK button -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="OkButton"
+                    Content="OK"
+                    IsEnabled="False"
+                    Background="#7B68EE" Foreground="#FFFFFF"
+                    Padding="24,8" CornerRadius="6" BorderThickness="0"
+                    Click="OnOk"/>
+        </StackPanel>
+
+    </StackPanel>
+</Window>

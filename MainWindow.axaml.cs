@@ -11247,11 +11247,86 @@ public partial class MainWindow : Window
         var preview = BuildGroupDatPreviewSnapshot();
         var dialog  = new GroupDatReconciliationDialog(preview, systemId, systemName, manufacturer);
         var ok      = await dialog.ShowDialog<bool>(this);
-        if (ok && dialog.Plan is { } plan)
+        if (!ok || dialog.Plan is not { } plan) return;   // Continue builds the plan (read-only); no writes here.
+
+        // Update remains preview-only in this milestone — execution is available for Create (NewGroup) only.
+        if (plan.Mode != GroupDatReconciliationMode.NewGroup)
+        {
             await new InfoDialog("Group DAT",
                 $"Plan validated ({plan.NewLeaves.Length} new, {plan.Updates.Length} update, " +
-                $"{plan.AbsentLeaves.Length} absent). Execution will be enabled in a later phase.")
+                $"{plan.AbsentLeaves.Length} absent). Execution is available for Create only in this build.")
                 .ShowDialog(this);
+            return;
+        }
+
+        // Step 2 — Review Plan (read-only). Only the confirm action ("Create Group") proceeds; Cancel/Escape
+        // /window-close all return false and perform zero filesystem/catalog writes.
+        var review = new ConfirmDialog("Create Group DAT",
+            $"Group Name: {plan.GroupName}\n" +
+            $"Group ID: {plan.GroupId}\n" +
+            $"System: {plan.SystemName}\n" +
+            $"Authority: {plan.Authority}\n\n" +
+            $"New leaves: {plan.NewLeaves.Length}\n" +
+            $"Updates: {plan.Updates.Length}\n" +
+            $"Absent: {plan.AbsentLeaves.Length}\n\n" +
+            "Confirm to create the Group DAT. Arkadia will build the leaf databases and register the Group " +
+            "in the catalog. This is a real, persistent write.");
+        var confirmed = await review.ShowDialog<bool>(this);
+        if (!GroupDatCreatePresenter.WillExecute(plan.Mode, confirmed)) return;   // Cancel ⇒ zero writes
+
+        await ExecuteGroupDatCreateAsync(plan);
+    }
+
+    private bool _groupDatCreateRunning;
+
+    /// <summary>
+    /// Runs <see cref="GroupDatExecutionService.ExecuteCreateAsync"/> off the UI thread with a live progress
+    /// dialog, then presents the typed result. The catalog/filesystem are refreshed only on a committed
+    /// result — every other outcome (aborted / cancelled / cleanup-required) leaves the view unchanged. A
+    /// reentrancy guard ensures a double event cannot start a second execution.
+    /// </summary>
+    private async System.Threading.Tasks.Task ExecuteGroupDatCreateAsync(GroupDatReconciliationPlan plan)
+    {
+        if (_groupDatCreateRunning) return;
+        _groupDatCreateRunning = true;
+        try
+        {
+            var service        = new GroupDatExecutionService(_catalog, _dataDir);
+            var progressDialog = new GroupDatCreateProgressDialog("Creating Group DAT: " + plan.GroupName);
+            var progress       = new Progress<GroupDatExecutionProgress>(p => progressDialog.Update(p));
+            GroupDatExecutionResult? result = null;
+
+            var workTask = System.Threading.Tasks.Task.Run(() =>
+                result = service.ExecuteCreateAsync(plan, progress, System.Threading.CancellationToken.None)
+                                .GetAwaiter().GetResult());
+
+            _ = workTask.ContinueWith(t =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    if (t.IsFaulted || result is null)
+                        progressDialog.SetResult(new GroupDatCreatePresentation(
+                            GroupDatCreatePresentationKind.Error, "Group DAT not created",
+                            "Group DAT was not created.\nNo catalog changes were committed.\n\nAn unexpected error occurred.",
+                            Array.Empty<string>(), ShouldRefresh: false));
+                    else
+                        progressDialog.SetResult(GroupDatCreatePresenter.Present(result, plan.GroupName));
+                }),
+                System.Threading.Tasks.TaskContinuationOptions.None);
+
+            await progressDialog.ShowDialog<bool>(this);
+            await workTask;
+
+            if (workTask.IsCompletedSuccessfully && result is { } r && GroupDatCreatePresenter.ShouldRefresh(r))
+            {
+                RebuildLibraryDatasets();
+                ResolveFlagImages();
+                RefreshSystemsKeepSelection(plan.SystemId);
+            }
+        }
+        finally
+        {
+            _groupDatCreateRunning = false;
+        }
     }
 
     private GroupDatCatalogPreviewData BuildGroupDatPreviewSnapshot()
