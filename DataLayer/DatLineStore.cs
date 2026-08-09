@@ -14,8 +14,17 @@ public sealed class DatLineStore
 {
     private readonly string _connectionString;
 
+    /// <summary>
+    /// Diagnostic/test seam: counts DatLineStore constructions on the CURRENT thread (each opens the DB and
+    /// runs EnsureSchema). Thread-static so a synchronous measured window is immune to other xUnit test
+    /// classes constructing stores on their own threads in parallel. Purely observational — no production
+    /// logic reads it; used by startup-cost tests to assert the startup path opens no group leaf databases.
+    /// </summary>
+    [ThreadStatic] internal static int ConstructionCount;
+
     public DatLineStore(string dbPath)
     {
+        ConstructionCount++;
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
         _connectionString = $"Data Source={dbPath}";
         EnsureSchema();

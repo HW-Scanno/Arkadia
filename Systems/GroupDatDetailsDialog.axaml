@@ -12,12 +12,20 @@
 
     <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="20,18,20,16">
 
-        <!-- Header -->
+        <!-- Header + loading indicator -->
         <StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,12">
             <TextBlock x:Name="HeaderName"
                        FontSize="15" FontWeight="SemiBold" Foreground="#E8E8F0"/>
             <TextBlock x:Name="HeaderSub"
                        FontSize="12" Foreground="#888899"/>
+            <StackPanel x:Name="LoadingRow" Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
+                <ProgressBar x:Name="LoadSpinner" IsIndeterminate="True"
+                             Width="120" Height="6"
+                             Foreground="#7B68EE" Background="#242433"
+                             VerticalAlignment="Center"/>
+                <TextBlock x:Name="LoadStatus" FontSize="11" Foreground="#888899"
+                           VerticalAlignment="Center" Text="Loading leaf details…"/>
+            </StackPanel>
         </StackPanel>
 
         <!-- Column headers -->

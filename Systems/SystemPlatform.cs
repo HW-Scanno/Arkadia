@@ -22,6 +22,13 @@ public sealed class SystemPlatform
     public int Unwanted { get; init; }
 
     /// <summary>
+    /// True when this platform has Group-DAT leaves whose status counts are not yet loaded (they are loaded
+    /// lazily off the UI thread). While pending, the present/unwanted figures exclude those leaves, so the
+    /// coverage shown must be a loading indicator — never a (false) partial percentage.
+    /// </summary>
+    public bool CoveragePending { get; init; }
+
+    /// <summary>
     /// Releases we intend to keep = all titles minus the unwanted curator veto.
     /// Coverage answers "of the releases I want to keep, how complete is this system?",
     /// so the denominator must exclude unwanted (not merely-hidden catalog rows).

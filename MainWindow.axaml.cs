@@ -96,8 +96,7 @@ public partial class MainWindow : Window
         InitAnalytics();
         InitLogs();
         ResolveFlagImages();
-        SetActive(NavDashboard);
-        InitDashboard();
+        SetActive(NavDashboard);   // activates Dashboard and runs InitDashboard() once (no redundant second call)
         InitLogo();
     }
 
@@ -115,9 +114,15 @@ public partial class MainWindow : Window
     private DatLineInfo?   _selectedDatLine;
     private string?        _selectedGroupId;     // set when a Group DAT card is selected (distinct from a dat_line)
 
-    // Group DAT view state, rebuilt on every RefreshSystems (read-only aggregation over group leaves).
+    // Group DAT view state, rebuilt on every RefreshSystems (catalog-only — no leaf DB opens here).
     private List<GroupDatCardInfo> _groupCards   = [];
     private HashSet<string>        _groupLeafIds = new(StringComparer.OrdinalIgnoreCase);
+
+    // Lazy Group coverage: leaf DBs are opened OFF the UI thread on demand; results cached for the session.
+    private readonly Dictionary<string, (int Present, int Unwanted)> _groupCoverageCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _groupCoverageInFlight = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _groupCoverageFailed   = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<(string DataStorePath, int ReleaseCount)>> _groupLeafDbInfo = new(StringComparer.OrdinalIgnoreCase);
 
     private void InitSystems()
     {
@@ -174,20 +179,31 @@ public partial class MainWindow : Window
 
         var allDatLines = _catalog.LoadDatLines();
 
-        // Group membership (read-only): leaf id → group id, plus per-group display metadata. One
-        // GetLeavesForGroup query per group — no N+1. Group leaves stay real dat_lines; they are only
-        // hidden from the main list and rolled up into a single Group card.
+        // Group membership (read-only, catalog-only — NO leaf DB opens). leaf id → group id, per-group
+        // display metadata, and per-group leaf DB locations for the LAZY coverage load. Group leaves stay
+        // real dat_lines; they are hidden from the main list and rolled up into one Group card whose
+        // completion is computed off the UI thread on demand (never during this startup path).
         var leafToGroup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var groupMeta   = new Dictionary<string, GroupMeta>(StringComparer.OrdinalIgnoreCase);
+        var groupLeafCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var groupReleaseSum = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        _groupLeafDbInfo.Clear();
         foreach (var g in _catalog.LoadDatGroups())
         {
             groupMeta[g.Id.Value] = new GroupMeta(g.DisplayName, GetAuthorityName(g.Authority), g.HardwareFamilyId);
+            var dbInfo = new List<(string DataStorePath, int ReleaseCount)>();
+            int relSum = 0;
             foreach (var leaf in _catalog.GetLeavesForGroup(g.Id.Value))
+            {
                 leafToGroup[leaf.DatLine.Id] = g.Id.Value;
+                dbInfo.Add((leaf.DatLine.DataStorePath, leaf.DatLine.ReleaseCount));
+                relSum += leaf.DatLine.ReleaseCount;
+            }
+            _groupLeafDbInfo[g.Id.Value] = dbInfo;
+            groupLeafCount[g.Id.Value]   = dbInfo.Count;
+            groupReleaseSum[g.Id.Value]  = relSum;
         }
         _groupLeafIds = new HashSet<string>(leafToGroup.Keys, StringComparer.OrdinalIgnoreCase);
-
-        var groupLeafInputs = new List<LeafCoverageInput>();
 
         _systemsPlatforms = _catalog.LoadPlatforms()
             .Select(platform =>
@@ -195,49 +211,72 @@ public partial class MainWindow : Window
                 var platformDatLines = allDatLines.Where(dl => dl.HardwareFamilyId == platform.Id).ToList();
                 var total   = platformDatLines.Sum(dl => dl.ReleaseCount);
                 int present = 0, outdated = 0, unwanted = 0, lost = 0;
+
+                // Single (non-group) leaves keep the exact historical behaviour: open each DB for counts.
                 foreach (var dl in platformDatLines)
                 {
-                    int lPresent = 0, lUnwanted = 0;
-                    if (dl.DataStorePath.Length > 0)
-                    {
-                        var absPath = Path.Combine(_dataDir, dl.DataStorePath);
-                        if (File.Exists(absPath))
-                        {
-                            var c = new DatLineStore(absPath).GetAllStatusCounts();
-                            lPresent  = c.Present;
-                            lUnwanted = c.Unwanted;
-                            present  += c.Present;
-                            outdated += c.Outdated;
-                            unwanted += c.Unwanted;
-                            lost     += c.Lost;
-                        }
-                    }
-                    // A group leaf is counted once here (System stats) AND contributes to its Group card's
-                    // summed coverage — never double-counted, because the Group card is not itself a dat_line.
-                    if (leafToGroup.TryGetValue(dl.Id, out var gid))
-                        groupLeafInputs.Add(new LeafCoverageInput(gid, dl.ReleaseCount, lPresent, lUnwanted));
+                    if (leafToGroup.ContainsKey(dl.Id)) continue;   // group leaf — never opened on this path
+                    if (dl.DataStorePath.Length == 0) continue;
+                    var absPath = Path.Combine(_dataDir, dl.DataStorePath);
+                    if (!File.Exists(absPath)) continue;
+                    var c = new DatLineStore(absPath).GetAllStatusCounts();
+                    present  += c.Present;
+                    outdated += c.Outdated;
+                    unwanted += c.Unwanted;
+                    lost     += c.Lost;
                 }
-                // Wanted = titles minus the unwanted curator veto. Missing is measured over
-                // the wanted subset so unwanted rows never inflate the "missing" figure.
+
+                // Fold in group leaves ONLY from already-loaded cache; otherwise mark coverage pending.
+                // A failed load is "resolved" (no contribution, not pending) so the header shows N/A, not a
+                // perpetual spinner.
+                bool coveragePending = false;
+                foreach (var gid in groupMeta.Keys.Where(k => groupMeta[k].HardwareFamilyId == platform.Id))
+                {
+                    if (_groupCoverageCache.TryGetValue(gid, out var cov))
+                    {
+                        present  += cov.Present;
+                        unwanted += cov.Unwanted;
+                    }
+                    else if (!_groupCoverageFailed.Contains(gid))
+                    {
+                        coveragePending = true;   // its leaves are still loading off the UI thread
+                    }
+                }
+
                 int wanted = Math.Max(0, total - unwanted);
                 return new SystemPlatform
                 {
-                    Id           = platform.Id,
-                    Name         = platform.Name,
-                    Manufacturer = platform.Manufacturer,
-                    HardwareType = _hardwareTypeMap.TryGetValue(platform.HardwareTypeId, out var ht) ? ht : "",
-                    DatLines     = platformDatLines.Count,
-                    TotalTitles  = total,
-                    Present      = present,
-                    Outdated     = outdated,
-                    Missing      = Math.Max(0, wanted - present - outdated - lost),
-                    Lost         = lost,
-                    Unwanted     = unwanted,
+                    Id              = platform.Id,
+                    Name            = platform.Name,
+                    Manufacturer    = platform.Manufacturer,
+                    HardwareType    = _hardwareTypeMap.TryGetValue(platform.HardwareTypeId, out var ht) ? ht : "",
+                    DatLines        = platformDatLines.Count,
+                    TotalTitles     = total,
+                    Present         = present,
+                    Outdated        = outdated,
+                    Missing         = Math.Max(0, wanted - present - outdated - lost),
+                    Lost            = lost,
+                    Unwanted        = unwanted,
+                    CoveragePending = coveragePending,
                 };
             })
             .ToList();
 
-        _groupCards = GroupDatPartition.BuildGroupCards(groupLeafInputs, groupMeta);
+        // Group cards: computed from cache when available; failed → N/A (0,0); otherwise pending (spinner) —
+        // never a false 0%.
+        _groupCards = groupMeta.Select(kv =>
+        {
+            var (gid, m) = (kv.Key, kv.Value);
+            int leaves = groupLeafCount.TryGetValue(gid, out var lc) ? lc : 0;
+            if (_groupCoverageCache.TryGetValue(gid, out var cov))
+            {
+                int wanted = Math.Max(0, (groupReleaseSum.TryGetValue(gid, out var rs) ? rs : 0) - cov.Unwanted);
+                return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, cov.Present, wanted);
+            }
+            if (_groupCoverageFailed.Contains(gid))
+                return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, 0, 0);   // → "N/A"
+            return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, 0, 0) { CoveragePending = true };
+        }).ToList();
 
         BuildTree();
         UpdateActionBar();
@@ -252,6 +291,47 @@ public partial class MainWindow : Window
         BuildTree();
         UpdateDetailPane(_selectedPlatform, null);
         UpdateActionBar();
+        EnsureGroupCoverageForPlatformAsync(platformId);   // lazy, off-UI-thread; refreshes when coverage lands
+    }
+
+    /// <summary>
+    /// Loads Group coverage for the selected platform's groups OFF the UI thread (opening their leaf DBs),
+    /// caches the result, then re-renders so the spinner is replaced by the real percentage. Never blocks
+    /// the UI; a failure resolves the group to N/A (non-blocking). Uses the same simple Task.Run + Dispatcher
+    /// pattern as the rest of the app — no async framework, no per-leaf catalog query.
+    /// </summary>
+    private void EnsureGroupCoverageForPlatformAsync(string platformId)
+    {
+        var pending = _groupCards
+            .Where(c => c.HardwareFamilyId == platformId && c.CoveragePending && !_groupCoverageInFlight.Contains(c.GroupId))
+            .Select(c => c.GroupId)
+            .ToList();
+        if (pending.Count == 0) return;
+
+        foreach (var gid in pending)
+        {
+            if (!_groupLeafDbInfo.TryGetValue(gid, out var leaves)) continue;
+            _groupCoverageInFlight.Add(gid);
+
+            var leafSnapshot = leaves;
+            var targetGid    = gid;
+            var dataDir      = _dataDir;
+
+            var work = System.Threading.Tasks.Task.Run(() =>
+                Systems.GroupCoverageLoader.Compute(leafSnapshot, dataDir));
+
+            _ = work.ContinueWith(t =>
+                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                {
+                    _groupCoverageInFlight.Remove(targetGid);
+                    if (t.IsCompletedSuccessfully) _groupCoverageCache[targetGid] = t.Result;
+                    else                           _groupCoverageFailed.Add(targetGid);
+                    // Re-render (no group DB opens now — the value is cached / marked failed).
+                    if (_selectedPlatformId == platformId)
+                        RefreshSystemsKeepSelection(_selectedPlatformId);
+                }),
+                System.Threading.Tasks.TaskContinuationOptions.None);
+        }
     }
 
     private void SelectDatLine(DatLineInfo d, string platformId)
@@ -383,18 +463,23 @@ public partial class MainWindow : Window
                 Foreground = new SolidColorBrush(hwColor),
             });
 
+        // While this system's Group leaves are still loading off the UI thread, show a loading indicator
+        // ("…") rather than a partial (false) percentage over only the non-group leaves.
         var coverageBlock = new TextBlock
         {
-            Text              = p.WantedCoverage,
+            Text              = p.CoveragePending ? "…" : p.WantedCoverage,
             FontSize          = 11,
-            Foreground        = new SolidColorBrush(Color.Parse(
-                                    Systems.SystemsCoverageColorPolicy.HexFor(p.WantedCoveragePercent))),
+            Foreground        = new SolidColorBrush(Color.Parse(p.CoveragePending
+                                    ? "#888899"
+                                    : Systems.SystemsCoverageColorPolicy.HexFor(p.WantedCoveragePercent))),
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             Margin            = new Avalonia.Thickness(8, 0, 0, 0),
         };
-        ToolTip.SetTip(coverageBlock, p.WantedCoveragePercent is null
-            ? "Wanted coverage: N/A — no wanted releases"
-            : $"Wanted coverage: {p.WantedCoverage} (excludes unwanted)");
+        ToolTip.SetTip(coverageBlock, p.CoveragePending
+            ? "Computing wanted coverage…"
+            : p.WantedCoveragePercent is null
+                ? "Wanted coverage: N/A — no wanted releases"
+                : $"Wanted coverage: {p.WantedCoverage} (excludes unwanted)");
 
         var datCountBlock = new TextBlock
         {
@@ -622,28 +707,41 @@ public partial class MainWindow : Window
         var pId     = platformId;
         detailsBtn.Click += (_, _) => OpenGroupDetails(theCard, pId);
 
-        var coverageBlock = new TextBlock
-        {
-            Text              = card.CoverageText,
-            FontSize          = 11,
-            Foreground        = new SolidColorBrush(Color.Parse(
-                                    Systems.SystemsCoverageColorPolicy.HexFor(card.CoveragePercent))),
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Margin            = new Avalonia.Thickness(12, 0, 0, 0),
-            MinWidth          = 40,
-            TextAlignment     = Avalonia.Media.TextAlignment.Right,
-        };
+        // While coverage is loading off the UI thread, show a small indeterminate spinner (never 0%).
+        Control coverageCtrl = card.CoveragePending
+            ? new ProgressBar
+              {
+                  IsIndeterminate   = true,
+                  Width             = 40,
+                  Height            = 6,
+                  Foreground        = new SolidColorBrush(Color.Parse("#7B68EE")),
+                  Background         = new SolidColorBrush(Color.Parse("#242433")),
+                  VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                  Margin            = new Avalonia.Thickness(12, 0, 0, 0),
+              }
+            : new TextBlock
+              {
+                  Text              = card.CoverageText,
+                  FontSize          = 11,
+                  Foreground        = new SolidColorBrush(Color.Parse(
+                                          Systems.SystemsCoverageColorPolicy.HexFor(card.CoveragePercent))),
+                  VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                  Margin            = new Avalonia.Thickness(12, 0, 0, 0),
+                  MinWidth          = 40,
+                  TextAlignment     = Avalonia.Media.TextAlignment.Right,
+              };
+        ToolTip.SetTip(coverageCtrl, card.CoveragePending ? "Computing wanted coverage…" : null);
 
         var grid = new Grid { Margin = new Avalonia.Thickness(28, 8, 10, 8) };
         grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
         grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
         grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        Grid.SetColumn(textStack,     0);
-        Grid.SetColumn(detailsBtn,    1);
-        Grid.SetColumn(coverageBlock, 2);
+        Grid.SetColumn(textStack,    0);
+        Grid.SetColumn(detailsBtn,   1);
+        Grid.SetColumn(coverageCtrl, 2);
         grid.Children.Add(textStack);
         grid.Children.Add(detailsBtn);
-        grid.Children.Add(coverageBlock);
+        grid.Children.Add(coverageCtrl);
 
         var row = new Border
         {
@@ -659,15 +757,42 @@ public partial class MainWindow : Window
         return row;
     }
 
-    // Details: read-only leaf list resolved from ONE GetLeavesForGroup query (no N+1). Uses the persisted
-    // relative_dat_path and the currently-persisted media type — nothing is recomputed or mutated.
+    // Details: read-only leaf list resolved from ONE GetLeavesForGroup query (no N+1, no leaf DB opens).
+    // The dialog opens IMMEDIATELY and loads its rows off the UI thread with a live count, so a large group
+    // never freezes the window. Uses the persisted relative_dat_path and media type — nothing recomputed.
     private async void OpenGroupDetails(GroupDatCardInfo card, string platformId)
     {
         if (_selectedGroupId != card.GroupId) SelectGroup(card, platformId);
-        var leaves     = _catalog.GetLeavesForGroup(card.GroupId);
-        var mediaNames = _catalog.GetMediaTypes().ToDictionary(m => m.Id, m => m.Name, StringComparer.OrdinalIgnoreCase);
-        var rows       = Systems.GroupDatDetails.BuildRows(leaves, mediaNames);
-        await new GroupDatDetailsDialog(card, rows).ShowDialog(this);
+
+        var dialog  = new GroupDatDetailsDialog(card);
+        var groupId = card.GroupId;
+        var catalog = _catalog;
+        var progress = new Progress<(int Loaded, int Total)>(p => dialog.SetProgress(p.Loaded, p.Total));
+
+        var load = System.Threading.Tasks.Task.Run(() =>
+        {
+            var leaves     = catalog.GetLeavesForGroup(groupId);                    // single catalog query
+            var mediaNames = catalog.GetMediaTypes().ToDictionary(m => m.Id, m => m.Name, StringComparer.OrdinalIgnoreCase);
+            var rows       = new List<Systems.GroupDatDetailsRow>(leaves.Count);
+            var mapped     = Systems.GroupDatDetails.BuildRows(leaves, mediaNames);
+            for (int i = 0; i < mapped.Count; i++)
+            {
+                rows.Add(mapped[i]);
+                if ((i & 0x1F) == 0 || i == mapped.Count - 1)
+                    ((IProgress<(int, int)>)progress).Report((i + 1, mapped.Count));
+            }
+            return (IReadOnlyList<Systems.GroupDatDetailsRow>)rows;
+        });
+
+        _ = load.ContinueWith(t =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (t.IsCompletedSuccessfully) dialog.SetRows(t.Result);
+                else                           dialog.SetRows(Array.Empty<Systems.GroupDatDetailsRow>());
+            }),
+            System.Threading.Tasks.TaskContinuationOptions.None);
+
+        await dialog.ShowDialog(this);
     }
 
     // Neutral, read-only right-panel summary for a selected Group DAT (the real leaf list is the dialog).
@@ -1972,6 +2097,12 @@ public partial class MainWindow : Window
     // Active dataset entries (set when DAT line changes)
     private IReadOnlyList<LibraryEntry> _activeDatasetEntries = [];
     private List<LibraryDataset> _activeLibraryDatasets = [];
+
+    // Library datasets are expensive (open every leaf DB + 3 heavy loads) and the Library view is not the
+    // startup view — so they are built lazily on first Library open. Mutations elsewhere either rebuild now
+    // (if already built) or mark it dirty to rebuild on the next open.
+    private bool _libraryBuilt;
+    private bool _libraryDirty;
 
     // Single source of truth for Library selection — tracks by ReleaseId, not list index.
     private readonly LibrarySelectionState _librarySelection = new();
@@ -5495,12 +5626,33 @@ public partial class MainWindow : Window
 
     private void InitLibrary()
     {
-        RebuildLibraryDatasets();
+        // Do NOT build datasets here — deferred to the first Library open (EnsureLibraryBuilt). Only wire the
+        // status-filter combo, which is cheap and independent of the leaf databases.
         LibraryStatusFilter.ItemsSource   = new[] { "All Statuses", "Present", "Outdated", "Pending", "Missing", "Lost", "Unwanted", "New", "Hidden" };
         LibraryStatusFilter.SelectedIndex = 0;
     }
 
+    /// <summary>Builds the Library datasets on first open (or after a mutation marked them dirty). Cheap no-op once built and clean.</summary>
+    private void EnsureLibraryBuilt()
+    {
+        if (_libraryBuilt && !_libraryDirty) return;
+        BuildLibraryDatasetsCore();
+        _libraryBuilt = true;
+        _libraryDirty = false;
+    }
+
+    /// <summary>
+    /// Rebuild entry point used by post-mutation call sites. If the Library was already built, rebuild now so
+    /// the change is reflected; otherwise just mark it dirty so the (still-deferred) first open rebuilds — this
+    /// keeps expensive leaf-DB work off any path until the Library is actually shown.
+    /// </summary>
     private void RebuildLibraryDatasets()
+    {
+        if (_libraryBuilt) BuildLibraryDatasetsCore();
+        else               _libraryDirty = true;
+    }
+
+    private void BuildLibraryDatasetsCore()
     {
         var allPlatforms = _catalog.LoadPlatforms();
         var allDatLines  = _catalog.LoadDatLines();
@@ -6845,25 +6997,40 @@ public partial class MainWindow : Window
         SetAccentVal(DashVolLost,  volumes.Count(v => v.Status == "lost"));
         SetAccentVal(DashDiskLost, disks.Count(d => d.Status == "lost"));
 
-        int relMissing = 0, relPending = 0, relOutdated = 0, relPresent = 0;
-        foreach (var dl in datLines)
-        {
-            if (dl.DataStorePath.Length == 0) continue;
-            var dbPath = Path.Combine(_dataDir, dl.DataStorePath);
-            if (!File.Exists(dbPath)) continue;
-            var (missing, pending, outdated, present, _, _) = new DatLineStore(dbPath).GetAllStatusCounts();
-            relMissing  += missing;
-            relPending  += pending;
-            relOutdated += outdated;
-            relPresent  += present;
-        }
-        SetAccentVal(DashRelMissing, relMissing);
-        DashRelPending.Text  = relPending.ToString("N0");
-        DashRelOutdated.Text = relOutdated.ToString("N0");
+        // The per-release integrity roll-up opens EVERY leaf DB (hundreds with a large Group), so it runs
+        // OFF the UI thread — the Dashboard shows immediately with a "…" placeholder that fills in when the
+        // background pass completes. Never blocks startup; never shows a false 0%.
+        DashRelPending.Text  = "…";
+        DashRelOutdated.Text = "…";
+        DashCoverage.Text    = "Coverage: …";
+        var dashDataDir       = _dataDir;
+        var dashLeafPaths     = datLines.Where(dl => dl.DataStorePath.Length > 0)
+                                        .Select(dl => Path.Combine(dashDataDir, dl.DataStorePath)).ToList();
+        var dashTotalReleases = datLines.Sum(dl => dl.ReleaseCount);
 
-        var totalReleases = datLines.Sum(dl => dl.ReleaseCount);
-        var coveragePct   = totalReleases > 0 ? relPresent * 100 / totalReleases : 0;
-        DashCoverage.Text = $"Coverage: {coveragePct}%";
+        var dashWork = System.Threading.Tasks.Task.Run(() =>
+        {
+            int missing = 0, pending = 0, outdated = 0, present = 0;
+            foreach (var dbPath in dashLeafPaths)
+            {
+                if (!File.Exists(dbPath)) continue;
+                var (m, pd, o, pr, _, _) = new DatLineStore(dbPath).GetAllStatusCounts();
+                missing += m; pending += pd; outdated += o; present += pr;
+            }
+            return (missing, pending, outdated, present);
+        });
+
+        _ = dashWork.ContinueWith(t =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (!t.IsCompletedSuccessfully) return;   // non-blocking: leave "…" on failure
+                var (m, pd, o, pr) = t.Result;
+                SetAccentVal(DashRelMissing, m);
+                DashRelPending.Text  = pd.ToString("N0");
+                DashRelOutdated.Text = o.ToString("N0");
+                DashCoverage.Text    = $"Coverage: {(dashTotalReleases > 0 ? pr * 100 / dashTotalReleases : 0)}%";
+            }),
+            System.Threading.Tasks.TaskContinuationOptions.None);
 
         // ── Tools ────────────────────────────────────────────────────────────
         var tools       = _catalog.LoadTools();
@@ -13009,7 +13176,10 @@ public partial class MainWindow : Window
             RefreshSystemsKeepSelection(_selectedPlatformId);
 
         if (btn == NavLibrary)
+        {
+            EnsureLibraryBuilt();   // lazy first build (or rebuild if a mutation marked it dirty)
             ApplySystemsContextToLibrary();
+        }
 
         if (btn == NavCatalog)
             SyncCatalogContext();

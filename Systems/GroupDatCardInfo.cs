@@ -18,11 +18,17 @@ public sealed record GroupDatCardInfo(
     int    PresentSum,
     int    WantedSum)
 {
-    /// <summary>Wanted coverage percent, or null when there are no wanted releases (same rule as SystemPlatform).</summary>
-    public int? CoveragePercent => WantedSum > 0 ? PresentSum * 100 / WantedSum : (int?)null;
+    /// <summary>
+    /// True when coverage has not been computed yet (the leaf DBs are loaded lazily off the UI thread).
+    /// While pending the UI shows a spinner, never a percentage — and never a placeholder 0%.
+    /// </summary>
+    public bool CoveragePending { get; init; }
 
-    /// <summary>Coverage as a display string; "N/A" when there are no wanted releases.</summary>
-    public string CoverageText => CoveragePercent is { } pct ? $"{pct}%" : "N/A";
+    /// <summary>Wanted coverage percent, or null when pending / when there are no wanted releases (same rule as SystemPlatform).</summary>
+    public int? CoveragePercent => CoveragePending ? null : (WantedSum > 0 ? PresentSum * 100 / WantedSum : (int?)null);
+
+    /// <summary>Coverage as a display string; "N/A" when there are no wanted releases (not used while pending — UI shows a spinner).</summary>
+    public string CoverageText => CoveragePending ? "…" : (CoveragePercent is { } pct ? $"{pct}%" : "N/A");
 
     /// <summary>Second card line, e.g. "TOSEC · 410 leaf DATs".</summary>
     public string Subtitle => $"{Authority} · {LeafCount} leaf DAT{(LeafCount == 1 ? "" : "s")}";
