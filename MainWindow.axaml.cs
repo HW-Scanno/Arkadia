@@ -792,7 +792,74 @@ public partial class MainWindow : Window
             }),
             System.Threading.Tasks.TaskContinuationOptions.None);
 
-        await dialog.ShowDialog(this);
+        var goToLibrary = await dialog.ShowDialog<bool>(this);
+        if (goToLibrary && dialog.SelectedLeafId is { } leafId)
+            OpenLibraryForDatLine(leafId);
+    }
+
+    // Navigate the existing Single-DAT Library directly to one leaf (by authoritative dat_line id). The
+    // Systems Group selection is left untouched — this does not set _selectedDatLine/_selectedGroupId, so
+    // returning to Systems keeps the Group card coherent. No Group-wide Library, no fallback to another leaf.
+    private DatLineRecord? _pendingLibraryDatLine;
+
+    private void OpenLibraryForDatLine(string datLineId)
+    {
+        var dl = _catalog.LoadDatLines().FirstOrDefault(x => string.Equals(x.Id, datLineId, StringComparison.Ordinal));
+        if (dl is null)
+        {
+            _ = new InfoDialog("Library", "That DAT line no longer exists in the catalog.").ShowDialog(this);
+            return;
+        }
+        _pendingLibraryDatLine = dl;
+        SetActive(NavLibrary);   // consumed in the NavLibrary branch below (before ApplySystemsContextToLibrary)
+    }
+
+    /// <summary>
+    /// Points the existing Library at exactly one dat_line, resolved by <see cref="DatLineRecord.Id"/> (never
+    /// the ambiguous authority·media label, which collides across group leaves). Reuses the historical
+    /// dataset/search/status/detail/actions unchanged. On no dataset (no releases / missing DB / not
+    /// catalog-enabled) it shows the leaf as empty — never falls back to another leaf.
+    /// </summary>
+    private void NavigateLibraryToDatLine(DatLineRecord dl)
+    {
+        var platformName = _catalog.LoadPlatforms().FirstOrDefault(p => p.Id == dl.HardwareFamilyId)?.Name
+                           ?? dl.HardwareFamilyId;
+        var label        = FormatDatLineName(dl.Authority, dl.MediaTypeId);
+
+        LibraryContextPlatform.SelectionChanged -= OnLibraryContextPlatformChanged;
+        LibraryContextDatLine.SelectionChanged  -= OnLibraryContextDatLineChanged;
+
+        var platforms = LibraryContextPlatform.ItemsSource as List<string>;
+        var pIdx      = platforms?.IndexOf(platformName) ?? -1;
+        if (pIdx >= 0) LibraryContextPlatform.SelectedIndex = pIdx;
+
+        var datLines = _activeLibraryDatasets.Where(d => d.Platform == platformName).Select(d => d.DatLine).ToList();
+        LibraryContextDatLine.ItemsSource   = datLines;
+        var dIdx = datLines.IndexOf(label);
+        LibraryContextDatLine.SelectedIndex = dIdx >= 0 ? dIdx : (datLines.Count > 0 ? 0 : -1);
+
+        LibraryContextPlatform.SelectionChanged += OnLibraryContextPlatformChanged;
+        LibraryContextDatLine.SelectionChanged  += OnLibraryContextDatLineChanged;
+
+        // Authoritative selection by dat_line id — not by the (ambiguous) label the combo shows.
+        if (!LoadActiveDatasetByDatLineId(dl.Id))
+        {
+            _activeDatasetEntries = [];
+            _librarySelection.Clear();
+            ApplyLibraryFilter();
+        }
+    }
+
+    /// <summary>Selects the active Library dataset by dat_line id (entries carry the authoritative DatLineId). Returns false if none.</summary>
+    private bool LoadActiveDatasetByDatLineId(string datLineId)
+    {
+        var dataset = Library.LibraryDatasetSelector.ByDatLineId(_activeLibraryDatasets, datLineId);
+        if (dataset is null) return false;
+
+        _activeDatasetEntries = dataset.Entries;
+        _librarySelection.Clear();
+        ApplyLibraryFilter();
+        return true;
     }
 
     // Neutral, read-only right-panel summary for a selected Group DAT (the real leaf list is the dialog).
@@ -13178,7 +13245,16 @@ public partial class MainWindow : Window
         if (btn == NavLibrary)
         {
             EnsureLibraryBuilt();   // lazy first build (or rebuild if a mutation marked it dirty)
-            ApplySystemsContextToLibrary();
+            if (_pendingLibraryDatLine is { } targetDl)
+            {
+                // Explicit navigation from Group Details → open exactly this leaf (by dat_line id).
+                NavigateLibraryToDatLine(targetDl);
+                _pendingLibraryDatLine = null;
+            }
+            else
+            {
+                ApplySystemsContextToLibrary();
+            }
         }
 
         if (btn == NavCatalog)

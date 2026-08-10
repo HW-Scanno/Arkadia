@@ -46,6 +46,8 @@
                      Background="Transparent"
                      BorderThickness="0"
                      Padding="0"
+                     SelectionChanged="OnLeafSelectionChanged"
+                     DoubleTapped="OnLeafDoubleTapped"
                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
                      ScrollViewer.VerticalScrollBarVisibility="Auto">
                 <ListBox.ItemTemplate>
@@ -73,11 +75,18 @@
         </Border>
 
         <!-- Footer -->
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,14,0,0">
             <Button Content="Close"
+                    Background="#1E1E2C" Foreground="#AAAACC"
+                    BorderBrush="#2A2A3C" BorderThickness="1"
+                    Padding="20,8" CornerRadius="6"
+                    Click="OnClose"/>
+            <Button x:Name="GoToLibraryButton"
+                    Content="Go to Library"
+                    IsEnabled="False"
                     Background="#7B68EE" Foreground="#FFFFFF"
                     Padding="24,8" CornerRadius="6" BorderThickness="0"
-                    Click="OnClose"/>
+                    Click="OnGoToLibrary"/>
         </StackPanel>
     </Grid>
 </Window>
