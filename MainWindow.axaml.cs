@@ -362,11 +362,13 @@ public partial class MainWindow : Window
     {
         var hasPlatform = _selectedPlatformId is not null;
         var hasDat      = _selectedDatLine is not null;
+        var hasGroup    = _selectedGroupId is not null;
         var datHasStore = hasDat && _selectedDatLine!.DataStorePath.Length > 0;
 
         SysActEditPlatform.IsEnabled   = hasPlatform;
         SysActDeletePlatform.IsEnabled = hasPlatform;
-        SysActConfigureDat.IsEnabled   = datHasStore;
+        // Configure is available for a Single DAT (with a store) OR a selected Group DAT (uniform apply).
+        SysActConfigureDat.IsEnabled   = datHasStore || hasGroup;
         SysActUpdateDat.IsEnabled     = hasDat;
         SysActVerifyAll.IsEnabled     = datHasStore;
         SysActDeleteDat.IsEnabled     = hasDat;
@@ -1447,12 +1449,51 @@ public partial class MainWindow : Window
 
     private async void OnSysConfigureDat(object? sender, RoutedEventArgs e)
     {
+        // Group DAT selected → uniform Group Configure (never pass a group id as a dat_line).
+        if (_selectedGroupId is { } groupId)
+        {
+            await ConfigureGroupAsync(groupId);
+            return;
+        }
+
         if (_selectedDatLine is null || _selectedDatLine.DataStorePath.Length == 0) return;
         var d          = _selectedDatLine;
         var platformId = _selectedPlatformId;
         var dialog     = new ConfigureDatLineDialog(d, _catalog, _dataDir);
         var saved      = await dialog.ShowDialog<bool>(this);
         if (saved) RefreshSystemsKeepSelection(platformId);
+    }
+
+    // Opens the Group Configure dialog (read-only validation), then applies the frozen plan atomically.
+    // Catalog-only: no ingestion, no staging/source/artifact, no leaf-DB or filesystem writes.
+    private async System.Threading.Tasks.Task ConfigureGroupAsync(string groupId)
+    {
+        var card = _groupCards.FirstOrDefault(c => c.GroupId == groupId);
+        var group = _catalog.GetDatGroup(Data.Identifiers.DatGroupId.FromPersisted(groupId));
+        if (group is null) { await new InfoDialog("Configure Group", "That Group no longer exists.").ShowDialog(this); return; }
+
+        var displayName = card?.DisplayName ?? group.DisplayName;
+        var authority   = card?.Authority   ?? GetAuthorityName(group.Authority);
+        var platformId  = group.HardwareFamilyId;
+
+        var dialog = new ConfigureGroupDialog(groupId, displayName, authority, _catalog, _dataDir);
+        var ok     = await dialog.ShowDialog<bool>(this);
+        if (!ok || dialog.Plan is not { } plan) return;
+
+        try
+        {
+            var count = _catalog.ApplyDatGroupConfiguration(
+                plan.GroupId, plan.ExpectedLeafIds, plan.FileHandling, plan.TransformStrategyType, plan.FolderTransformId);
+
+            RefreshSystemsKeepSelection(platformId);
+            await new InfoDialog("Configure Group",
+                $"Configuration applied to {count} leaf DAT{(count == 1 ? "" : "s")} of \"{displayName}\".").ShowDialog(this);
+        }
+        catch (Data.GroupConfigureApplyException gex)
+        {
+            await new InfoDialog("Configure Group",
+                $"Configuration was not applied.\n\n{gex.Message}").ShowDialog(this);
+        }
     }
 
     private void OnSysUpdateDat(object? sender, RoutedEventArgs e)

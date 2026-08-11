@@ -1,0 +1,66 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.ConfigureGroupDialog"
+        Title="Arkadia - Configure Group"
+        Width="520" SizeToContent="Height"
+        MinWidth="440"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <StackPanel Margin="24,20,24,18" Spacing="0">
+
+        <!-- Header -->
+        <TextBlock x:Name="HeaderName" FontSize="15" FontWeight="SemiBold" Foreground="#E8E8F0"/>
+        <TextBlock x:Name="HeaderSub"  FontSize="12" Foreground="#888899" Margin="0,2,0,16"/>
+
+        <!-- File Handling -->
+        <TextBlock Text="FILE HANDLING" FontSize="9" FontWeight="SemiBold" Foreground="#555566" Margin="0,0,0,6"/>
+        <ComboBox x:Name="FhBox" MinWidth="220" FontSize="12"
+                  Background="#0D0D1A" Foreground="#CCCCDD" BorderBrush="#2A2A3C" BorderThickness="1"
+                  Margin="0,0,0,4" SelectionChanged="OnConfigChanged"/>
+        <TextBlock x:Name="FhCurrent" FontSize="11" Foreground="#555566" Margin="0,0,0,14"/>
+
+        <!-- Transform Strategy -->
+        <TextBlock Text="TRANSFORM STRATEGY" FontSize="9" FontWeight="SemiBold" Foreground="#555566" Margin="0,0,0,6"/>
+        <ComboBox x:Name="StratBox" MinWidth="220" FontSize="12"
+                  Background="#0D0D1A" Foreground="#CCCCDD" BorderBrush="#2A2A3C" BorderThickness="1"
+                  Margin="0,0,0,4" SelectionChanged="OnStrategyChanged"/>
+        <TextBlock x:Name="StratCurrent" FontSize="11" Foreground="#555566" Margin="0,0,0,14"/>
+
+        <!-- Folder Transform (release_folder only) -->
+        <StackPanel x:Name="FolderPanel" IsVisible="False" Spacing="0">
+            <TextBlock Text="FOLDER TRANSFORM" FontSize="9" FontWeight="SemiBold" Foreground="#555566" Margin="0,0,0,6"/>
+            <ComboBox x:Name="FolderBox" MinWidth="220" FontSize="12"
+                      Background="#0D0D1A" Foreground="#CCCCDD" BorderBrush="#2A2A3C" BorderThickness="1"
+                      Margin="0,0,0,4" SelectionChanged="OnConfigChanged"/>
+            <TextBlock x:Name="FolderCurrent" FontSize="11" Foreground="#555566" Margin="0,0,0,14"/>
+        </StackPanel>
+
+        <Border Height="1" Background="#1A1A2C" Margin="0,2,0,14"/>
+
+        <!-- Validation status -->
+        <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,4">
+            <ProgressBar x:Name="ValidateSpinner" IsIndeterminate="True" IsVisible="False"
+                         Width="120" Height="6" Foreground="#7B68EE" Background="#242433"
+                         VerticalAlignment="Center"/>
+            <TextBlock x:Name="ValidateStatus" FontSize="12" Foreground="#888899" VerticalAlignment="Center"
+                       TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <!-- Footer -->
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,16,0,0">
+            <Button x:Name="CancelButton" Content="Cancel"
+                    Background="#1E1E2C" Foreground="#AAAACC" BorderBrush="#2A2A3C" BorderThickness="1"
+                    Padding="18,8" CornerRadius="6" Click="OnCancel"/>
+            <Button x:Name="ValidateButton" Content="Validate"
+                    Background="#1A1A2C" Foreground="#CCCCDD" BorderBrush="#3A3A5A" BorderThickness="1"
+                    Padding="18,8" CornerRadius="6" Click="OnValidate"/>
+            <Button x:Name="ApplyButton" Content="Apply to all leaves" IsEnabled="False"
+                    Background="#7B68EE" Foreground="#FFFFFF" BorderThickness="0"
+                    Padding="20,8" CornerRadius="6" Click="OnApply"/>
+        </StackPanel>
+
+    </StackPanel>
+</Window>

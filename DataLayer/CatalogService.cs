@@ -1654,6 +1654,91 @@ public sealed class CatalogService
         return result;
     }
 
+    /// <summary>
+    /// Atomically applies ONE uniform configuration (file handling + transform strategy + folder transform)
+    /// to every leaf of a Group, in a single connection + single transaction (all-or-nothing). Guards, inside
+    /// the transaction: the group must exist and be non-empty; its current membership must still equal
+    /// <paramref name="expectedLeafIds"/> (frozen at validation time) — any drift rolls back; and the number
+    /// of rows updated must equal the expected leaf count. Writes ONLY the three <c>dat_lines</c> columns via
+    /// a single <c>UPDATE … WHERE group_id = …</c>; it does not touch extension mappings (same as Single
+    /// Configure when the strategy is not <c>file_extension</c>), leaf DBs, or the filesystem. Non-group
+    /// dat_lines and other groups are untouched. Returns the number of leaves updated.
+    /// </summary>
+    public int ApplyDatGroupConfiguration(
+        string                groupId,
+        IReadOnlyList<string> expectedLeafIds,
+        string                fileHandling,
+        string                transformStrategyType,
+        string?               folderTransformId)
+    {
+        // Structural config guard (mirrors Single Configure: release_folder needs a folder transform; none must not).
+        if (transformStrategyType != "none" && transformStrategyType != "release_folder")
+            throw new GroupConfigureApplyException(GroupConfigureApplyError.InvalidConfig,
+                $"Unsupported transform strategy '{transformStrategyType}'.");
+        if (transformStrategyType == "release_folder" && string.IsNullOrEmpty(folderTransformId))
+            throw new GroupConfigureApplyException(GroupConfigureApplyError.InvalidConfig,
+                "Per release folder requires a folder transform.");
+        if (transformStrategyType == "none" && !string.IsNullOrEmpty(folderTransformId))
+            throw new GroupConfigureApplyException(GroupConfigureApplyError.InvalidConfig,
+                "The None strategy must not carry a folder transform.");
+
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        // 1. Group must exist.
+        using (var g = conn.CreateCommand())
+        {
+            g.CommandText = "SELECT COUNT(*) FROM dat_groups WHERE id = $gid COLLATE NOCASE";
+            g.Parameters.AddWithValue("$gid", groupId);
+            if (Convert.ToInt64(g.ExecuteScalar()) == 0)
+                throw new GroupConfigureApplyException(GroupConfigureApplyError.GroupNotFound, $"Group '{groupId}' does not exist.");
+        }
+
+        // 2. Current membership.
+        var current = new List<string>();
+        using (var m = conn.CreateCommand())
+        {
+            m.CommandText = "SELECT id FROM dat_lines WHERE group_id = $gid COLLATE NOCASE";
+            m.Parameters.AddWithValue("$gid", groupId);
+            using var r = m.ExecuteReader();
+            while (r.Read()) current.Add(r.GetString(0));
+        }
+        if (current.Count == 0)
+            throw new GroupConfigureApplyException(GroupConfigureApplyError.EmptyGroup, $"Group '{groupId}' has no leaves.");
+
+        // 3. Membership must still match the frozen plan (no add/remove since validation).
+        var currentSet  = new HashSet<string>(current,         StringComparer.Ordinal);
+        var expectedSet = new HashSet<string>(expectedLeafIds, StringComparer.Ordinal);
+        if (!currentSet.SetEquals(expectedSet))
+            throw new GroupConfigureApplyException(GroupConfigureApplyError.MembershipDrift,
+                "Group membership changed since validation; nothing was applied.");
+
+        // 4. Single uniform UPDATE across the group's leaves.
+        int updated;
+        using (var u = conn.CreateCommand())
+        {
+            u.CommandText = """
+                UPDATE dat_lines
+                SET file_handling           = $fh,
+                    transform_strategy_type = $ts,
+                    folder_transform_id     = $ft
+                WHERE group_id = $gid COLLATE NOCASE
+                """;
+            u.Parameters.AddWithValue("$fh",  fileHandling);
+            u.Parameters.AddWithValue("$ts",  transformStrategyType);
+            u.Parameters.AddWithValue("$ft",  (object?)folderTransformId ?? DBNull.Value);
+            u.Parameters.AddWithValue("$gid", groupId);
+            updated = u.ExecuteNonQuery();
+        }
+        if (updated != expectedSet.Count)
+            throw new GroupConfigureApplyException(GroupConfigureApplyError.MembershipDrift,
+                $"Expected to update {expectedSet.Count} leaves but updated {updated}; rolled back.");
+
+        // 5. Commit — all leaves, atomically.
+        tx.Commit();
+        return updated;
+    }
+
     // ── Transform Strategy ────────────────────────────────────────────────────
 
     public void SaveDatLineTransformStrategy(string datLineId, string strategyType, string? folderTransformId)
