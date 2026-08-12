@@ -9683,29 +9683,13 @@ public partial class MainWindow : Window
             if (rel.Status == "present")
                 successfulReleaseIds.Add(rid);
 
-        // sha1/md5 → list of (releaseId, romName)
-        var sha1Index = new Dictionary<string, List<(string ReleaseId, string RomName)>>(
-            StringComparer.OrdinalIgnoreCase);
-        var md5Index  = new Dictionary<string, List<(string ReleaseId, string RomName)>>(
-            StringComparer.OrdinalIgnoreCase);
-
-        foreach (var (releaseId, files) in allReleaseFiles)
-        {
-            if (!releases.ContainsKey(releaseId)) continue;
-            foreach (var f in files)
-            {
-                if (f.Sha1.Length > 0)
-                {
-                    if (!sha1Index.TryGetValue(f.Sha1, out var sl)) { sl = new(); sha1Index[f.Sha1] = sl; }
-                    sl.Add((releaseId, f.RomName));
-                }
-                if (f.Md5.Length > 0)
-                {
-                    if (!md5Index.TryGetValue(f.Md5, out var ml)) { ml = new(); md5Index[f.Md5] = ml; }
-                    ml.Add((releaseId, f.RomName));
-                }
-            }
-        }
+        // Leaf ingestion needs — hash indexes + expected sizes + resumable ids (behavior-preserving
+        // extraction of the historical index build; a future Group run builds one per in-scope leaf and
+        // unions the indexes). The non-outdated `releases` dict above stays authoritative for this run.
+        var needs     = Ingestion.LeafIngestionNeeds.Build(
+            datLineId, allReleasesList, allReleaseFiles, resumable.ResumableReleaseIds);
+        var sha1Index = needs.Sha1Index;
+        var md5Index  = needs.Md5Index;
 
         // ── Phase 2+3: Hash & Match ───────────────────────────────────────────
         progress.Report(new IngestionProgress
@@ -9723,19 +9707,14 @@ public partial class MainWindow : Window
         foreach (var srcPath in sourceFiles)
         {
             hashProcessed++;
-            string sha1 = "";
-            string md5  = "";
 
-            try
-            {
-                using var fs = File.OpenRead(srcPath);
-                sha1 = Convert.ToHexString(SHA1.HashData(fs)).ToLowerInvariant();
-            }
-            catch { /* unreadable — will be skipped */ }
+            // Hash + match one candidate (SHA1 first, MD5 fallback, Repair filter before MD5) — extracted
+            // behavior-preserving primitive. Single disposition is unchanged: Filtered → skip; matched →
+            // copyPlan; hashed-ok-zero-match and hash-fail both fall through as unmatched (still logged).
+            var m = Ingestion.IngestionCandidateMatcher.HashAndMatch(srcPath, sha1Index, md5Index, shouldIngest);
 
-            // If a filter predicate was supplied (e.g. from Repair), skip files
-            // whose SHA1 is not in the required set.
-            if (shouldIngest != null && sha1.Length > 0 && !shouldIngest(sha1))
+            // If a filter predicate was supplied (e.g. from Repair), skip files whose SHA1 is not in the set.
+            if (m.Filtered)
             {
                 progress.Report(new IngestionProgress
                 {
@@ -9749,29 +9728,9 @@ public partial class MainWindow : Window
                 continue;
             }
 
-            List<(string ReleaseId, string RomName)>? matches = null;
-
-            if (sha1.Length > 0 && sha1Index.TryGetValue(sha1, out var sha1Matches))
+            if (m.Targets.Count > 0)
             {
-                matches = sha1Matches;
-            }
-            else if (sha1.Length > 0)
-            {
-                // SHA1 computed but no match — try MD5
-                try
-                {
-                    using var fs = File.OpenRead(srcPath);
-                    md5 = Convert.ToHexString(MD5.HashData(fs)).ToLowerInvariant();
-                }
-                catch { }
-
-                if (md5.Length > 0 && md5Index.TryGetValue(md5, out var md5Matches))
-                    matches = md5Matches;
-            }
-
-            if (matches is { Count: > 0 })
-            {
-                copyPlan[srcPath] = matches;
+                copyPlan[srcPath] = (List<(string ReleaseId, string RomName)>)m.Targets;
                 result.FilesMatched++;
             }
 
@@ -9813,16 +9772,8 @@ public partial class MainWindow : Window
         // check against the DAT-declared size when available; if sizes differ the
         // source file is not trusted and the target is left unsatisfied.
 
-        // Build a fast lookup: "releaseId|romName" → expected size (from release_files).
-        var expectedSizeIndex = new Dictionary<string, long>(StringComparer.Ordinal);
-        foreach (var (rid, files) in allReleaseFiles)
-        {
-            foreach (var f in files)
-            {
-                if (long.TryParse(f.Size, out var sz) && sz > 0)
-                    expectedSizeIndex[$"{rid}|{f.RomName}"] = sz;
-            }
-        }
+        // "releaseId|romName" → expected size (from the leaf needs; same build as before).
+        var expectedSizeIndex = needs.ExpectedSizeIndex;
 
         var satisfiedTargets = new HashSet<string>(StringComparer.Ordinal);
         // Releases in an inconsistent DB state (status 'present' but no derived_artifacts row)
@@ -9909,15 +9860,14 @@ public partial class MainWindow : Window
         // ── Phase 5: Space preflight ──────────────────────────────────────────
         progress.Report(new IngestionProgress { PhaseText = "Checking disk space…" });
 
-        long bytesNeeded = 0;
-        foreach (var (srcPath, destinations) in copyPlan)
-        {
-            long srcLen = 0;
-            try { srcLen = new FileInfo(srcPath).Length; } catch { }
-            int pendingCount = destinations.Count(d => IsStageable(d.ReleaseId, d.RomName));
-            bytesNeeded += srcLen * pendingCount;
-        }
-        bytesNeeded += 256L * 1024 * 1024; // 256 MB safety buffer
+        long bytesNeeded = Ingestion.IngestionSpacePreflight.BytesNeeded(
+            copyPlan.Select(kv =>
+            {
+                long srcLen = 0;
+                try { srcLen = new FileInfo(kv.Key).Length; } catch { }
+                int pendingCount = kv.Value.Count(d => IsStageable(d.ReleaseId, d.RomName));
+                return (srcLen, pendingCount);
+            }));
 
         try
         {
@@ -9936,141 +9886,23 @@ public partial class MainWindow : Window
         }
 
         // ── Phase 6: Copy to staging ──────────────────────────────────────────
-        // copyTotal counts only stageable targets (not satisfied, not volume-unavailable).
-        int copyTotal = copyPlan.Values.Sum(
-            dests => dests.Count(d => IsStageable(d.ReleaseId, d.RomName)));
+        // Extracted behavior-preserving staging engine. allowMove:true keeps the Single sole-target
+        // same-volume move optimization exactly. It returns the exact classification sets Phases 7/8
+        // consume, plus a candidate-assimilation ledger for a future Group cleanup (unused by Single).
+        var staging = Ingestion.IngestionStagingEngine.StageTargets(
+            copyPlan, releases, satisfiedTargets, stagingRoot, platformId, datLineId,
+            SafeFileName, result, progress, allowMove: true);
 
-        progress.Report(new IngestionProgress
-        {
-            PhaseText       = "Copying to staging…",
-            IsIndeterminate = false,
-            Total           = copyTotal > 0 ? copyTotal : 1,
-            Processed       = 0,
-        });
+        var successfullyCopied      = staging.SuccessfullyCopied;
+        var movedFromIncoming       = staging.MovedFromIncoming;
+        var allTargetsSatisfied     = staging.AllTargetsSatisfied;
+        var allTargetsUnwanted      = staging.AllTargetsUnwanted;
+        var affectedReleaseIds      = staging.AffectedReleaseIds;
+        var unwantedSkippedReleases = staging.UnwantedSkippedReleases;
 
-        // successfullyCopied: source files whose every pending target was copied OK.
-        // allTargetsSatisfied: source files that had no pending targets at all (already done).
-        // transformFailedReleases: releases where at least one file's transform failed — their
-        //   contributing source files must not be deleted from incoming-roms.
-        var successfullyCopied      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var movedFromIncoming       = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var allTargetsSatisfied     = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var allTargetsUnwanted      = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var affectedReleaseIds      = new HashSet<string>(StringComparer.Ordinal);
+        // Populated by Phase 7 (finalization) below — declared here as in the original Phase 6 block.
         var transformFailedReleases = new HashSet<string>(StringComparer.Ordinal);
-        var unwantedSkippedReleases = new HashSet<string>(StringComparer.Ordinal);
-        // incompleteReleases: releases where staging completeness check failed (e.g. orphan .bin, missing .cue).
-        // These must also block archive deletion so the ZIP is preserved for recovery.
         var incompleteReleases      = new HashSet<string>(StringComparer.Ordinal);
-        int copyCount = 0;
-
-        foreach (var (srcPath, destinations) in copyPlan)
-        {
-            var srcInfo = new FileInfo(srcPath);
-
-            // Filter to stageable targets (not already satisfied).
-            var pending = destinations
-                .Where(d => IsStageable(d.ReleaseId, d.RomName))
-                .ToList();
-
-            if (pending.Count == 0)
-            {
-                // No stageable target → every target was already satisfied → duplicate.
-                allTargetsSatisfied.Add(srcPath);
-                continue;
-            }
-
-            // UNWANTED WINS: split pending into wanted vs unwanted targets.
-            var wantedPending = pending
-                .Where(d => !releases.TryGetValue(d.ReleaseId, out var r) || r.Status != "unwanted")
-                .ToList();
-
-            // Log per-release unwanted-skipped for any unwanted targets.
-            var seenUnwantedLog = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var (releaseId, _) in pending)
-            {
-                if (!seenUnwantedLog.Add(releaseId)) continue;
-                if (!releases.TryGetValue(releaseId, out var rel) || rel.Status != "unwanted") continue;
-                unwantedSkippedReleases.Add(releaseId);
-                // Phase 6 classification only — the physical move to incoming-skip
-                // (and the UnwantedSkipped count) happens once in Phase 8 as "unwanted-moved".
-                var skipOp = new IngestionOperation(srcInfo.Name, "unwanted-classified", rel.Name);
-                result.Operations.Add(skipOp);
-                progress.Report(new IngestionProgress { NewOperation = skipOp });
-            }
-
-            if (wantedPending.Count == 0)
-            {
-                // All matched targets are unwanted — defer to Phase 8 for incoming-skip move.
-                allTargetsUnwanted.Add(srcPath);
-                continue;
-            }
-
-            bool anyFailed           = false;
-            bool wasMovedFromIncoming = false;
-
-            foreach (var (releaseId, romName) in wantedPending)
-            {
-                var relName    = releases.TryGetValue(releaseId, out var rel) ? rel.Name : releaseId;
-                var safeFolder = SafeFileName(relName);
-                var stagingDir = Path.Combine(stagingRoot, safeFolder);
-                var destPath   = Path.Combine(stagingDir, romName);
-
-                Directory.CreateDirectory(stagingDir);
-
-                try
-                {
-                    // Move when this is the sole remaining target and paths share a volume
-                    // (same-volume File.Move is an atomic NTFS rename — no byte copy).
-                    // Copy otherwise (fan-out to multiple releases, or cross-volume).
-                    StagingHelpers.StageFile(srcPath, destPath, wantedPending.Count, out var stageOp);
-
-                    // Size sanity check only for copies (moves are atomic and integrity-guaranteed).
-                    if (stageOp != "stage-moved" && new FileInfo(destPath).Length != srcInfo.Length)
-                        throw new IOException($"Size mismatch after copy for {romName}");
-
-                    if (stageOp == "stage-moved") wasMovedFromIncoming = true;
-
-                    // Mark this target satisfied so no later file re-copies it.
-                    satisfiedTargets.Add($"{releaseId}|{romName}");
-                    affectedReleaseIds.Add(releaseId);
-                    result.FilesCopied++;
-                    copyCount++;
-
-                    var op = new IngestionOperation(
-                        srcInfo.Name, stageOp,
-                        $"staging/{platformId}/{datLineId}/{safeFolder}/{romName}");
-                    result.Operations.Add(op);
-
-                    if (copyCount % 25 == 0 || copyCount == copyTotal)
-                        progress.Report(new IngestionProgress
-                        {
-                            PhaseText       = "Copying to staging…",
-                            IsIndeterminate = false,
-                            Total           = copyTotal > 0 ? copyTotal : 1,
-                            Processed       = copyCount,
-                            Accepted        = result.FilesMatched,
-                            Rejected        = 0,
-                            NewOperation    = op,
-                        });
-                }
-                catch (Exception ex) when (ex is not OutOfMemoryException)
-                {
-                    anyFailed = true;
-                    var op = new IngestionOperation(srcInfo.Name, "copy-failed", ex.Message);
-                    result.Operations.Add(op);
-                    progress.Report(new IngestionProgress { NewOperation = op });
-                }
-            }
-
-            if (!anyFailed)
-            {
-                if (wasMovedFromIncoming)
-                    movedFromIncoming.Add(srcPath);
-                else
-                    successfullyCopied.Add(srcPath);
-            }
-        }
 
         // ── Phase 7: Completeness check + source promotion ────────────────────
         progress.Report(new IngestionProgress { PhaseText = "Checking completeness…" });

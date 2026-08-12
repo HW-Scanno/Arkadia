@@ -34,13 +34,19 @@ internal static class StagingHelpers
     /// <param name="opName">
     /// Set to <c>"stage-moved"</c> when a move was performed, <c>"copy"</c> otherwise.
     /// </param>
+    /// <param name="allowMove">
+    /// When false, always copy (never move) even for a sole same-volume target. Group Ingestion sets this
+    /// false because it keeps the incoming original until a final cross-leaf cleanup pass. Defaults true, so
+    /// existing Single-DAT callers keep the historical move optimization exactly.
+    /// </param>
     internal static void StageFile(
         string  srcPath,
         string  destPath,
         int     pendingCount,
-        out string opName)
+        out string opName,
+        bool    allowMove = true)
     {
-        if (pendingCount == 1 && SameVolume(srcPath, destPath))
+        if (allowMove && pendingCount == 1 && SameVolume(srcPath, destPath))
         {
             try
             {
