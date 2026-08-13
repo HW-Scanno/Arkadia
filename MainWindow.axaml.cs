@@ -9907,148 +9907,15 @@ public partial class MainWindow : Window
         // ── Phase 7: Completeness check + source promotion ────────────────────
         progress.Report(new IngestionProgress { PhaseText = "Checking completeness…" });
 
-        var now = DateTime.UtcNow;
-
-        // Resolve transform + tool once for this ingestion run
-        var allTransforms = _catalog.LoadTransforms();
-        var allTools      = _catalog.LoadTools();
-        var activeXform   = allTransforms.FirstOrDefault(t => t.Id == storageStrategyId)
-                         ?? new TransformRecord { Id = "no_compression", Name = "No Compression", CommandTemplate = "" };
-        var activeTool    = allTools.FirstOrDefault(t => t.Id == activeXform.ToolId);
-
-        // Load transform strategy for this DAT line (file_extension / release_folder dispatch)
-        var datLineStrategyType = "none";
-        var extMappingDict      = new Dictionary<string, ExtensionTransformMapping>(StringComparer.OrdinalIgnoreCase);
-        TransformRecord? folderXform = null;
-        ToolRecord?      folderTool  = null;
-        {
-            var dlRecord = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
-            if (dlRecord?.TransformStrategyType == "file_extension")
-            {
-                datLineStrategyType = "file_extension";
-                foreach (var m in _catalog.LoadExtensionMappings(datLineId))
-                    extMappingDict[m.FileExtension] = m;
-            }
-            else if (dlRecord?.TransformStrategyType == "release_folder" &&
-                     dlRecord.FolderTransformId.Length > 0)
-            {
-                datLineStrategyType = "release_folder";
-                folderXform = allTransforms.FirstOrDefault(t => t.Id == dlRecord.FolderTransformId);
-                folderTool  = folderXform?.ToolId.Length > 0
-                    ? allTools.FirstOrDefault(t => t.Id == folderXform.ToolId)
-                    : null;
-            }
-            else if (dlRecord?.TransformStrategyType == "release_shape")
-            {
-                datLineStrategyType = "release_shape";
-            }
-        }
-
-        // ── Resolve the uniform archive output form (M1d) ──────────────────────
-        // Only file_extension is release-set-dependent; the others are fixed by strategy.
-        // Prefer the persisted form; fall back to the M1a resolver (do not persist here).
-        var datLineArchiveForm = Archive.ArchiveDatLineOutputForm.SingleFileFlat;
-        if (datLineStrategyType == "file_extension")
-        {
-            var persistedForm = Archive.ArchiveOutputPersistenceMapping.FormFromDb(
-                _catalog.GetDatLineArchiveOutputValidation(datLineId)?.Form);
-            if (persistedForm != Archive.ArchiveDatLineOutputForm.Unknown)
-            {
-                datLineArchiveForm = persistedForm;
-            }
-            else
-            {
-                static string ExtKey(string rom)
-                {
-                    var e = Path.GetExtension(rom).ToLowerInvariant();
-                    return e.Length == 0 ? "(no ext)" : e;
-                }
-                bool anyMulti = releases.Values
-                    .Where(r => r.Status != "unwanted")
-                    .Any(r => allReleaseFiles.TryGetValue(r.Id, out var rf) &&
-                              rf.Count(x => extMappingDict.TryGetValue(ExtKey(x.RomName), out var m) && !m.IsDiscard) >= 2);
-                datLineArchiveForm = anyMulti
-                    ? Archive.ArchiveDatLineOutputForm.MultiFileReleaseFolder
-                    : Archive.ArchiveDatLineOutputForm.SingleFileFlat;
-            }
-        }
-        else if (datLineStrategyType == "release_folder")
-        {
-            datLineArchiveForm = folderXform is { IsFolderOriented: true, OutputIsFolder: true }
-                ? Archive.ArchiveDatLineOutputForm.MultiFileReleaseFolder
-                : Archive.ArchiveDatLineOutputForm.SingleFileFlat;
-        }
-
-        // Per-release transform dispatch, kept as a delegate so the existing per-strategy processors stay
-        // in place (untouched) while the completeness/promotion/status orchestration moves to the engine.
-        // This is verbatim of the historical dispatch block; it populates transformFailedReleases on failure.
-        void TransformRelease(Ingestion.LeafReleaseFinalizeArgs a)
-        {
-            var release       = a.Release;
-            var releaseId     = release.Id;
-            var safeFolder    = a.SafeFolder;
-            var sourceDir     = a.SourceDir;
-            var expectedFiles = a.ExpectedFiles;
-
-            if (datLineStrategyType == "release_folder")
-            {
-                if (folderXform is { IsFolderOriented: true, OutputIsFile: true })
-                {
-                    ProcessFolderOrientedRelease(
-                        releaseId, safeFolder, sourceDir,
-                        folderXform, folderTool,
-                        appRoot, platformId, datLineId,
-                        now, store, result, progress, transformFailedReleases);
-                }
-                else if (folderXform is { IsFolderOriented: true, OutputIsFolder: true })
-                {
-                    ProcessFolderOrientedFolderRelease(
-                        releaseId, safeFolder, sourceDir, expectedFiles,
-                        folderXform,
-                        appRoot, platformId, datLineId,
-                        now, store, result, progress, transformFailedReleases);
-                }
-                else
-                {
-                    transformFailedReleases.Add(releaseId);
-                    var failOp = new IngestionOperation(release.Name, "transform-config-error",
-                        folderXform is null
-                            ? "No folder-oriented transform is configured for this DAT line."
-                            : $"Transform '{folderXform.Name}' is not folder-oriented.");
-                    result.Operations.Add(failOp);
-                    progress.Report(new IngestionProgress { NewOperation = failOp });
-                }
-            }
-            else if (datLineStrategyType == "release_shape")
-            {
-                ProcessReleaseShapeOrientedRelease(
-                    releaseId, safeFolder, sourceDir, expectedFiles,
-                    allTransforms, allTools,
-                    appRoot, platformId, datLineId,
-                    release.Status,
-                    now, store, result, progress, transformFailedReleases);
-            }
-            else
-            {
-                // ── Per-file: verify source + persist provenance + transform ──
-                ProcessFileOrientedRelease(
-                    releaseId, safeFolder, sourceDir, expectedFiles,
-                    datLineStrategyType, extMappingDict,
-                    activeXform, activeTool, allTransforms, allTools, storageStrategyId,
-                    appRoot, platformId, datLineId, datLineArchiveForm,
-                    now, store, result, progress, transformFailedReleases);
-            }
-        }
-
-        // Extracted behavior-preserving leaf finalizer: resumable-add, per-release completeness, staging→
-        // source promotion, transform dispatch (via the delegate above), and present-status writes. It
-        // mutates the same sets Phase 8/9 consume (transformFailedReleases / incompleteReleases /
-        // successfulReleaseIds) and returns them for a future Group orchestrator.
-        Ingestion.LeafFinalizationEngine.FinalizeLeaf(
-            affectedReleaseIds, resumable.ResumableReleaseIds, releases, store,
-            stagingRoot, sourceRoot, platformId, datLineId, SafeFileName,
-            result, progress, transformFailedReleases, incompleteReleases, successfulReleaseIds,
-            TransformRelease);
+        // Resolve the leaf's persisted transform configuration + dispatch, then finalize (completeness →
+        // promotion → transform → status). Extracted as one reusable leaf-scoped adapter so a future Group
+        // orchestrator can finalize any in-scope leaf without duplicating this block. Behavior-preserving;
+        // it mutates the same sets Phase 8/9 consume.
+        FinalizeConfiguredLeaf(
+            platformId, datLineId, storageStrategyId, appRoot,
+            store, stagingRoot, sourceRoot, releases, allReleaseFiles,
+            affectedReleaseIds, resumable.ResumableReleaseIds,
+            result, progress, transformFailedReleases, incompleteReleases, successfulReleaseIds);
 
         // ── Phase 8: Source file handling ─────────────────────────────────────
         progress.Report(new IngestionProgress { PhaseText = "Handling source files…" });
@@ -10464,6 +10331,170 @@ public partial class MainWindow : Window
                 progress.Report(new IngestionProgress { NewOperation = failOp });
             }
         }
+    }
+
+    // ── Configured leaf finalization adapter ────────────────────────────────
+    // Resolves ONE leaf's persisted transform configuration (strategy / transforms / tools / extension
+    // mappings / folder transform / active storage transform / archive output form), builds the verbatim
+    // per-strategy dispatch delegate (which invokes the existing private processors, untouched), and runs
+    // LeafFinalizationEngine.FinalizeLeaf. Operates purely from the explicit leaf identity/config/paths
+    // passed in — it does NOT read _selectedDatLine/_selectedGroupId/Systems selection — so a future Group
+    // path can call it once per in-scope leaf. Behavior-preserving; it mutates the same
+    // transformFailedReleases / incompleteReleases / successfulReleaseIds sets Phase 8/9 consume.
+    private Ingestion.LeafFinalizationResult FinalizeConfiguredLeaf(
+        string                                               platformId,
+        string                                               datLineId,
+        string                                               storageStrategyId,
+        string                                               appRoot,
+        DatLineStore                                         store,
+        string                                               stagingRoot,
+        string                                               sourceRoot,
+        IReadOnlyDictionary<string, ReleaseRecord>           releases,
+        IReadOnlyDictionary<string, List<ReleaseFileRecord>> allReleaseFiles,
+        HashSet<string>                                      affectedReleaseIds,
+        IReadOnlyList<string>                                resumableReleaseIds,
+        IngestionResult                                      result,
+        IProgress<IngestionProgress>                         progress,
+        HashSet<string>                                      transformFailedReleases,
+        HashSet<string>                                      incompleteReleases,
+        HashSet<string>                                      successfulReleaseIds)
+    {
+        var now = DateTime.UtcNow;
+
+        // Resolve transform + tool once for this ingestion run
+        var allTransforms = _catalog.LoadTransforms();
+        var allTools      = _catalog.LoadTools();
+        var activeXform   = allTransforms.FirstOrDefault(t => t.Id == storageStrategyId)
+                         ?? new TransformRecord { Id = "no_compression", Name = "No Compression", CommandTemplate = "" };
+        var activeTool    = allTools.FirstOrDefault(t => t.Id == activeXform.ToolId);
+
+        // Load transform strategy for this DAT line (file_extension / release_folder dispatch)
+        var datLineStrategyType = "none";
+        var extMappingDict      = new Dictionary<string, ExtensionTransformMapping>(StringComparer.OrdinalIgnoreCase);
+        TransformRecord? folderXform = null;
+        ToolRecord?      folderTool  = null;
+        {
+            var dlRecord = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
+            if (dlRecord?.TransformStrategyType == "file_extension")
+            {
+                datLineStrategyType = "file_extension";
+                foreach (var m in _catalog.LoadExtensionMappings(datLineId))
+                    extMappingDict[m.FileExtension] = m;
+            }
+            else if (dlRecord?.TransformStrategyType == "release_folder" &&
+                     dlRecord.FolderTransformId.Length > 0)
+            {
+                datLineStrategyType = "release_folder";
+                folderXform = allTransforms.FirstOrDefault(t => t.Id == dlRecord.FolderTransformId);
+                folderTool  = folderXform?.ToolId.Length > 0
+                    ? allTools.FirstOrDefault(t => t.Id == folderXform.ToolId)
+                    : null;
+            }
+            else if (dlRecord?.TransformStrategyType == "release_shape")
+            {
+                datLineStrategyType = "release_shape";
+            }
+        }
+
+        // ── Resolve the uniform archive output form (M1d) ──────────────────────
+        // Only file_extension is release-set-dependent; the others are fixed by strategy.
+        // Prefer the persisted form; fall back to the M1a resolver (do not persist here).
+        var datLineArchiveForm = Archive.ArchiveDatLineOutputForm.SingleFileFlat;
+        if (datLineStrategyType == "file_extension")
+        {
+            var persistedForm = Archive.ArchiveOutputPersistenceMapping.FormFromDb(
+                _catalog.GetDatLineArchiveOutputValidation(datLineId)?.Form);
+            if (persistedForm != Archive.ArchiveDatLineOutputForm.Unknown)
+            {
+                datLineArchiveForm = persistedForm;
+            }
+            else
+            {
+                static string ExtKey(string rom)
+                {
+                    var e = Path.GetExtension(rom).ToLowerInvariant();
+                    return e.Length == 0 ? "(no ext)" : e;
+                }
+                bool anyMulti = releases.Values
+                    .Where(r => r.Status != "unwanted")
+                    .Any(r => allReleaseFiles.TryGetValue(r.Id, out var rf) &&
+                              rf.Count(x => extMappingDict.TryGetValue(ExtKey(x.RomName), out var m) && !m.IsDiscard) >= 2);
+                datLineArchiveForm = anyMulti
+                    ? Archive.ArchiveDatLineOutputForm.MultiFileReleaseFolder
+                    : Archive.ArchiveDatLineOutputForm.SingleFileFlat;
+            }
+        }
+        else if (datLineStrategyType == "release_folder")
+        {
+            datLineArchiveForm = folderXform is { IsFolderOriented: true, OutputIsFolder: true }
+                ? Archive.ArchiveDatLineOutputForm.MultiFileReleaseFolder
+                : Archive.ArchiveDatLineOutputForm.SingleFileFlat;
+        }
+
+        // Per-release transform dispatch, kept as a delegate so the existing per-strategy processors stay
+        // in place (untouched). This is verbatim of the historical dispatch block; it populates
+        // transformFailedReleases on failure.
+        void TransformRelease(Ingestion.LeafReleaseFinalizeArgs a)
+        {
+            var release       = a.Release;
+            var releaseId     = release.Id;
+            var safeFolder    = a.SafeFolder;
+            var sourceDir     = a.SourceDir;
+            var expectedFiles = a.ExpectedFiles;
+
+            switch (Ingestion.LeafTransformDispatchResolver.Decide(datLineStrategyType, folderXform))
+            {
+                case Ingestion.LeafTransformDispatch.FolderFile:
+                    ProcessFolderOrientedRelease(
+                        releaseId, safeFolder, sourceDir,
+                        folderXform!, folderTool,
+                        appRoot, platformId, datLineId,
+                        now, store, result, progress, transformFailedReleases);
+                    break;
+
+                case Ingestion.LeafTransformDispatch.FolderFolder:
+                    ProcessFolderOrientedFolderRelease(
+                        releaseId, safeFolder, sourceDir, expectedFiles,
+                        folderXform!,
+                        appRoot, platformId, datLineId,
+                        now, store, result, progress, transformFailedReleases);
+                    break;
+
+                case Ingestion.LeafTransformDispatch.FolderConfigError:
+                    transformFailedReleases.Add(releaseId);
+                    var failOp = new IngestionOperation(release.Name, "transform-config-error",
+                        folderXform is null
+                            ? "No folder-oriented transform is configured for this DAT line."
+                            : $"Transform '{folderXform.Name}' is not folder-oriented.");
+                    result.Operations.Add(failOp);
+                    progress.Report(new IngestionProgress { NewOperation = failOp });
+                    break;
+
+                case Ingestion.LeafTransformDispatch.ReleaseShape:
+                    ProcessReleaseShapeOrientedRelease(
+                        releaseId, safeFolder, sourceDir, expectedFiles,
+                        allTransforms, allTools,
+                        appRoot, platformId, datLineId,
+                        release.Status,
+                        now, store, result, progress, transformFailedReleases);
+                    break;
+
+                default:   // FileOriented — verify source + persist provenance + transform
+                    ProcessFileOrientedRelease(
+                        releaseId, safeFolder, sourceDir, expectedFiles,
+                        datLineStrategyType, extMappingDict,
+                        activeXform, activeTool, allTransforms, allTools, storageStrategyId,
+                        appRoot, platformId, datLineId, datLineArchiveForm,
+                        now, store, result, progress, transformFailedReleases);
+                    break;
+            }
+        }
+
+        return Ingestion.LeafFinalizationEngine.FinalizeLeaf(
+            affectedReleaseIds, resumableReleaseIds, releases, store,
+            stagingRoot, sourceRoot, platformId, datLineId, SafeFileName,
+            result, progress, transformFailedReleases, incompleteReleases, successfulReleaseIds,
+            TransformRelease);
     }
 
     // ── Folder-oriented release processor — output_kind = file ──────────────
