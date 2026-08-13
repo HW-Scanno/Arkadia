@@ -9979,87 +9979,17 @@ public partial class MainWindow : Window
                 : Archive.ArchiveDatLineOutputForm.SingleFileFlat;
         }
 
-        // ── Resume interrupted wanted staging ─────────────────────────────────
-        // Add releases whose staging is already complete (detected up front) so
-        // Phase 7 promotes + transforms them exactly like freshly-staged releases.
-        // Phase 7 re-checks completeness, and the processors' own idempotency
-        // guards prevent re-transforming an already-valid derived artifact.
-        foreach (var rid in resumable.ResumableReleaseIds)
+        // Per-release transform dispatch, kept as a delegate so the existing per-strategy processors stay
+        // in place (untouched) while the completeness/promotion/status orchestration moves to the engine.
+        // This is verbatim of the historical dispatch block; it populates transformFailedReleases on failure.
+        void TransformRelease(Ingestion.LeafReleaseFinalizeArgs a)
         {
-            if (!affectedReleaseIds.Add(rid)) continue;   // already staged this run
-            if (!releases.TryGetValue(rid, out var resumeRel)) continue;
-            result.StagingResumed++;
-            var resumeOp = new IngestionOperation(resumeRel.Name, "staging-resumed",
-                $"staging/{platformId}/{datLineId}/{SafeFileName(resumeRel.Name)}");
-            result.Operations.Add(resumeOp);
-            progress.Report(new IngestionProgress { NewOperation = resumeOp });
-        }
+            var release       = a.Release;
+            var releaseId     = release.Id;
+            var safeFolder    = a.SafeFolder;
+            var sourceDir     = a.SourceDir;
+            var expectedFiles = a.ExpectedFiles;
 
-        foreach (var releaseId in affectedReleaseIds)
-        {
-            if (!releases.TryGetValue(releaseId, out var release)) continue;
-
-            var safeFolder  = SafeFileName(release.Name);
-            var stagingDir  = Path.Combine(stagingRoot, safeFolder);
-            var sourceDir   = Path.Combine(sourceRoot,  safeFolder);
-            var expectedFiles = store.LoadReleaseFiles(releaseId);
-
-            if (expectedFiles.Count == 0) continue;
-
-            bool complete = expectedFiles.All(f =>
-                File.Exists(Path.Combine(stagingDir, f.RomName)));
-
-            if (!complete)
-            {
-                incompleteReleases.Add(releaseId);
-                var missingFiles = expectedFiles
-                    .Where(f => !File.Exists(Path.Combine(stagingDir, f.RomName)))
-                    .Select(f => f.RomName)
-                    .ToList();
-                var incompleteOp = new IngestionOperation(
-                    release.Name,
-                    "incomplete-skipped",
-                    $"missing: {string.Join(", ", missingFiles)}");
-                result.Operations.Add(incompleteOp);
-                progress.Report(new IngestionProgress { NewOperation = incompleteOp });
-                continue;
-            }
-
-            // Move every file from staging → source
-            bool sourceOk = true;
-            try
-            {
-                Directory.CreateDirectory(sourceDir);
-                foreach (var f in expectedFiles)
-                {
-                    var src  = Path.Combine(stagingDir, f.RomName);
-                    var dest = Path.Combine(sourceDir,  f.RomName);
-                    File.Move(src, dest, overwrite: true);
-                }
-                // Remove empty staging folder (best-effort)
-                if (!Directory.EnumerateFileSystemEntries(stagingDir).Any())
-                    try { Directory.Delete(stagingDir); } catch { }
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException)
-            {
-                sourceOk = false;
-                var failOp = new IngestionOperation(release.Name, "release-input-assembly-failed", ex.Message);
-                result.Operations.Add(failOp);
-                progress.Report(new IngestionProgress { NewOperation = failOp });
-            }
-
-            if (!sourceOk) continue;
-
-            // staging → source is assembling a complete release input for transform,
-            // not a durable promotion. Surfaced as "release-input-assembled".
-            result.ReleaseInputsAssembled++;
-            var archOp = new IngestionOperation(
-                release.Name, "release-input-assembled",
-                $"source/{platformId}/{datLineId}/{safeFolder}");
-            result.Operations.Add(archOp);
-            progress.Report(new IngestionProgress { NewOperation = archOp });
-
-            // ── Dispatch: file-oriented or folder-oriented processor ──────────
             if (datLineStrategyType == "release_folder")
             {
                 if (folderXform is { IsFolderOriented: true, OutputIsFile: true })
@@ -10108,14 +10038,17 @@ public partial class MainWindow : Window
                     appRoot, platformId, datLineId, datLineArchiveForm,
                     now, store, result, progress, transformFailedReleases);
             }
-
-            if (!transformFailedReleases.Contains(releaseId))
-            {
-                store.UpdateReleaseStatus(releaseId, "present");
-                result.ReleasesPresent++;
-                successfulReleaseIds.Add(releaseId);
-            }
         }
+
+        // Extracted behavior-preserving leaf finalizer: resumable-add, per-release completeness, staging→
+        // source promotion, transform dispatch (via the delegate above), and present-status writes. It
+        // mutates the same sets Phase 8/9 consume (transformFailedReleases / incompleteReleases /
+        // successfulReleaseIds) and returns them for a future Group orchestrator.
+        Ingestion.LeafFinalizationEngine.FinalizeLeaf(
+            affectedReleaseIds, resumable.ResumableReleaseIds, releases, store,
+            stagingRoot, sourceRoot, platformId, datLineId, SafeFileName,
+            result, progress, transformFailedReleases, incompleteReleases, successfulReleaseIds,
+            TransformRelease);
 
         // ── Phase 8: Source file handling ─────────────────────────────────────
         progress.Report(new IngestionProgress { PhaseText = "Handling source files…" });
