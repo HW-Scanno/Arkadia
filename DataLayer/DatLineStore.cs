@@ -30,6 +30,23 @@ public sealed class DatLineStore
         EnsureSchema();
     }
 
+    private DatLineStore(string dbPath, bool readOnly)
+    {
+        // Strictly read-only open: no directory creation, no EnsureSchema/DDL, and a Mode=ReadOnly
+        // connection so NO write or schema DDL (CREATE/ALTER TABLE/INDEX) can ever execute. The existing
+        // read methods reuse this connection string via Open(), so they run pure SELECTs. Opening throws if
+        // the file is missing or not a valid database — the caller treats that as an error, never repairs it.
+        _ = readOnly;
+        _connectionString = $"Data Source={dbPath};Mode=ReadOnly";
+    }
+
+    /// <summary>
+    /// Opens an EXISTING leaf database strictly read-only for inspection (Group ingestion planning) — it
+    /// never creates, repairs, migrates, or schema-initializes the database. Use only for read methods; any
+    /// write/DDL would throw on the read-only connection. The normal writable constructor is unchanged.
+    /// </summary>
+    public static DatLineStore OpenReadOnly(string dbPath) => new(dbPath, readOnly: true);
+
     private void EnsureSchema()
     {
         using var conn = Open();

@@ -1,0 +1,53 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.GroupIngestionPlanDialog"
+        Title="Arkadia - Group Ingestion"
+        Width="520" Height="560"
+        MinWidth="440" MinHeight="380"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="24,20,24,16">
+
+        <StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,12">
+            <TextBlock x:Name="HeaderName" FontSize="15" FontWeight="SemiBold" Foreground="#E8E8F0"/>
+            <TextBlock Text="Group Ingestion — read-only planning" FontSize="12" Foreground="#888899"/>
+        </StackPanel>
+
+        <!-- Loading -->
+        <StackPanel Grid.Row="1" x:Name="LoadingRow" Orientation="Horizontal" Spacing="10" Margin="0,0,0,8">
+            <ProgressBar x:Name="LoadSpinner" IsIndeterminate="True" Width="140" Height="6"
+                         Foreground="#7B68EE" Background="#242433" VerticalAlignment="Center"/>
+            <TextBlock x:Name="LoadStatus" FontSize="12" Foreground="#888899"
+                       VerticalAlignment="Center" Text="Preparing…"/>
+        </StackPanel>
+
+        <!-- Results -->
+        <ScrollViewer Grid.Row="2" x:Name="ResultsScroll" IsVisible="False" VerticalScrollBarVisibility="Auto">
+            <StackPanel Spacing="0">
+                <Border x:Name="ReadinessBanner" CornerRadius="6" Padding="14,10" Margin="0,0,0,14">
+                    <TextBlock x:Name="ReadinessText" FontSize="13" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                </Border>
+
+                <Border Background="#1A1A24" CornerRadius="6" Padding="16,12" Margin="0,0,0,12">
+                    <StackPanel x:Name="CountsPanel" Spacing="6"/>
+                </Border>
+
+                <TextBlock x:Name="DiagnosticsTitle" Text="LEAVES REQUIRING ATTENTION" FontSize="10"
+                           FontWeight="SemiBold" LetterSpacing="1.4" Foreground="#EF5350"
+                           Margin="0,4,0,8" IsVisible="False"/>
+                <TextBox x:Name="DiagnosticsBox" IsVisible="False" IsReadOnly="True" AcceptsReturn="True"
+                         TextWrapping="NoWrap" MaxHeight="200" FontSize="11"
+                         FontFamily="Consolas,Courier New,monospace" Foreground="#FFA726"
+                         Background="#14141C" BorderBrush="#332211" BorderThickness="1"/>
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Close" Background="#7B68EE" Foreground="#FFFFFF"
+                    Padding="24,8" CornerRadius="6" BorderThickness="0" Click="OnClose"/>
+        </StackPanel>
+    </Grid>
+</Window>

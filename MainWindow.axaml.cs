@@ -372,7 +372,7 @@ public partial class MainWindow : Window
         SysActUpdateDat.IsEnabled     = hasDat;
         SysActVerifyAll.IsEnabled     = datHasStore;
         SysActDeleteDat.IsEnabled     = hasDat;
-        SysActIngestFiles.IsEnabled   = datHasStore;
+        SysActIngestFiles.IsEnabled   = datHasStore || hasGroup;
         SysActVerifyArchive.IsEnabled = datHasStore;
     }
 
@@ -1548,8 +1548,48 @@ public partial class MainWindow : Window
 
     private void OnSysIngestFiles(object? sender, RoutedEventArgs e)
     {
+        // Group DAT selected → read-only Group ingestion planning/readiness (M9C1). Never treats the group
+        // id as a dat_line. Single DAT selection keeps the existing path unchanged.
+        if (_selectedGroupId is { } groupId)
+        {
+            _ = PlanGroupIngestionAsync(groupId);
+            return;
+        }
+
         if (_selectedDatLine is null) return;
         OnIngestDatLine(_selectedDatLine);
+    }
+
+    // M9C1: builds the frozen, read-only Group ingestion plan off the UI thread and shows a readiness
+    // preview. Performs NO filesystem/catalog mutation; ends before the first mutation (RunPreIngest).
+    private async System.Threading.Tasks.Task PlanGroupIngestionAsync(string groupId)
+    {
+        var group = _catalog.GetDatGroup(Data.Identifiers.DatGroupId.FromPersisted(groupId));
+        if (group is null) { await new InfoDialog("Group Ingestion", "That Group no longer exists.").ShowDialog(this); return; }
+
+        var card        = _groupCards.FirstOrDefault(c => c.GroupId == groupId);
+        var displayName = card?.DisplayName ?? group.DisplayName;
+        var platformId  = group.HardwareFamilyId;
+        var leaves      = _catalog.GetLeavesForGroup(groupId);
+
+        var dialog   = new GroupIngestionPlanDialog(displayName);
+        var progress = new Progress<Ingestion.GroupIngestionPlanProgress>(p => dialog.Update(p));
+        var appRoot  = AppContext.BaseDirectory;
+        var dataDir  = _dataDir;
+        Ingestion.GroupIngestionPlan? plan = null;
+
+        var work = System.Threading.Tasks.Task.Run(() =>
+            plan = Ingestion.GroupIngestionPlanner.Plan(
+                _catalog, dataDir, appRoot, groupId, displayName, platformId, leaves, null, progress));
+
+        _ = work.ContinueWith(t => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (t.IsCompletedSuccessfully && plan is not null) dialog.SetPlan(plan);
+                else dialog.Update(new Ingestion.GroupIngestionPlanProgress("Planning failed unexpectedly.", 0, 0));
+            }),
+            System.Threading.Tasks.TaskContinuationOptions.None);
+
+        await dialog.ShowDialog<bool>(this);
     }
 
     private async void OnSysVerifyArchive(object? sender, RoutedEventArgs e)
@@ -10361,75 +10401,27 @@ public partial class MainWindow : Window
     {
         var now = DateTime.UtcNow;
 
-        // Resolve transform + tool once for this ingestion run
+        // Resolve the leaf's transform configuration via the shared pure resolver (same semantics the Group
+        // planner uses for read-only readiness). Catalog reads happen here; resolution itself is pure.
         var allTransforms = _catalog.LoadTransforms();
         var allTools      = _catalog.LoadTools();
-        var activeXform   = allTransforms.FirstOrDefault(t => t.Id == storageStrategyId)
-                         ?? new TransformRecord { Id = "no_compression", Name = "No Compression", CommandTemplate = "" };
-        var activeTool    = allTools.FirstOrDefault(t => t.Id == activeXform.ToolId);
+        var dlRecord      = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
+        var extMappings   = dlRecord?.TransformStrategyType == "file_extension"
+            ? _catalog.LoadExtensionMappings(datLineId)
+            : new List<ExtensionTransformMapping>();
+        var persistedForm = Archive.ArchiveOutputPersistenceMapping.FormFromDb(
+            _catalog.GetDatLineArchiveOutputValidation(datLineId)?.Form);
 
-        // Load transform strategy for this DAT line (file_extension / release_folder dispatch)
-        var datLineStrategyType = "none";
-        var extMappingDict      = new Dictionary<string, ExtensionTransformMapping>(StringComparer.OrdinalIgnoreCase);
-        TransformRecord? folderXform = null;
-        ToolRecord?      folderTool  = null;
-        {
-            var dlRecord = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
-            if (dlRecord?.TransformStrategyType == "file_extension")
-            {
-                datLineStrategyType = "file_extension";
-                foreach (var m in _catalog.LoadExtensionMappings(datLineId))
-                    extMappingDict[m.FileExtension] = m;
-            }
-            else if (dlRecord?.TransformStrategyType == "release_folder" &&
-                     dlRecord.FolderTransformId.Length > 0)
-            {
-                datLineStrategyType = "release_folder";
-                folderXform = allTransforms.FirstOrDefault(t => t.Id == dlRecord.FolderTransformId);
-                folderTool  = folderXform?.ToolId.Length > 0
-                    ? allTools.FirstOrDefault(t => t.Id == folderXform.ToolId)
-                    : null;
-            }
-            else if (dlRecord?.TransformStrategyType == "release_shape")
-            {
-                datLineStrategyType = "release_shape";
-            }
-        }
+        var cfg = Ingestion.LeafTransformConfigResolver.Resolve(
+            storageStrategyId, dlRecord, allTransforms, allTools, extMappings, persistedForm, releases, allReleaseFiles);
 
-        // ── Resolve the uniform archive output form (M1d) ──────────────────────
-        // Only file_extension is release-set-dependent; the others are fixed by strategy.
-        // Prefer the persisted form; fall back to the M1a resolver (do not persist here).
-        var datLineArchiveForm = Archive.ArchiveDatLineOutputForm.SingleFileFlat;
-        if (datLineStrategyType == "file_extension")
-        {
-            var persistedForm = Archive.ArchiveOutputPersistenceMapping.FormFromDb(
-                _catalog.GetDatLineArchiveOutputValidation(datLineId)?.Form);
-            if (persistedForm != Archive.ArchiveDatLineOutputForm.Unknown)
-            {
-                datLineArchiveForm = persistedForm;
-            }
-            else
-            {
-                static string ExtKey(string rom)
-                {
-                    var e = Path.GetExtension(rom).ToLowerInvariant();
-                    return e.Length == 0 ? "(no ext)" : e;
-                }
-                bool anyMulti = releases.Values
-                    .Where(r => r.Status != "unwanted")
-                    .Any(r => allReleaseFiles.TryGetValue(r.Id, out var rf) &&
-                              rf.Count(x => extMappingDict.TryGetValue(ExtKey(x.RomName), out var m) && !m.IsDiscard) >= 2);
-                datLineArchiveForm = anyMulti
-                    ? Archive.ArchiveDatLineOutputForm.MultiFileReleaseFolder
-                    : Archive.ArchiveDatLineOutputForm.SingleFileFlat;
-            }
-        }
-        else if (datLineStrategyType == "release_folder")
-        {
-            datLineArchiveForm = folderXform is { IsFolderOriented: true, OutputIsFolder: true }
-                ? Archive.ArchiveDatLineOutputForm.MultiFileReleaseFolder
-                : Archive.ArchiveDatLineOutputForm.SingleFileFlat;
-        }
+        var datLineStrategyType = cfg.StrategyType;
+        var extMappingDict      = cfg.ExtMappings;
+        var folderXform         = cfg.FolderXform;
+        var folderTool          = cfg.FolderTool;
+        var activeXform         = cfg.ActiveXform;
+        var activeTool          = cfg.ActiveTool;
+        var datLineArchiveForm  = cfg.ArchiveForm;
 
         // Per-release transform dispatch, kept as a delegate so the existing per-strategy processors stay
         // in place (untouched). This is verbatim of the historical dispatch block; it populates
