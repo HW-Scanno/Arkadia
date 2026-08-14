@@ -20,9 +20,10 @@ public sealed record GroupMatchTarget(string DatLineId, string ReleaseId, string
 
 /// <summary>
 /// A wanted ROM that requires NEW secure materialization (not DB-satisfied, not already staged/sourced under
-/// current Single semantics). Carries the DAT-declared hashes/size for the future aggregate scan/hash.
+/// current Single semantics). Carries the DAT-declared hashes/size for the future aggregate scan/hash, plus
+/// the release name so execution can derive the staging folder without re-opening the leaf DB.
 /// </summary>
-public sealed record GroupRequiredTarget(GroupMatchTarget Target, long ExpectedSize, string Sha1, string Md5);
+public sealed record GroupRequiredTarget(GroupMatchTarget Target, string ReleaseName, long ExpectedSize, string Sha1, string Md5);
 
 /// <summary>A release whose staging is already complete but which still needs finalization (no new incoming needed).</summary>
 public sealed record GroupResumableRelease(string DatLineId, string ReleaseId);

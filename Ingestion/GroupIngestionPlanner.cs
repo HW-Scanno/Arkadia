@@ -115,7 +115,7 @@ public static class GroupIngestionPlanner
                     if (RomSecured(stagingRoot, sourceRoot, safeFolder, f, release.Status)) continue;
                     long sz = long.TryParse(f.Size, out var s) && s > 0 ? s : 0;
                     leafRequired.Add(new GroupRequiredTarget(
-                        new GroupMatchTarget(datLineId, release.Id, f.RomName), sz, f.Sha1, f.Md5));
+                        new GroupMatchTarget(datLineId, release.Id, f.RomName), release.Name, sz, f.Sha1, f.Md5));
                 }
             }
 
