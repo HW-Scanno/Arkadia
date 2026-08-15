@@ -246,6 +246,51 @@ public partial class IngestionProgressDialog : Window
         OkButton.IsEnabled = true;
     }
 
+    /// <summary>
+    /// Group completion — reuses the same summary chrome as <see cref="SetCompleted"/> but with a caller-supplied
+    /// status title, counter set, and optional error block (so Single's counter labels are never misapplied to a
+    /// Group run). Used by the Group ingestion runtime bridge (M9C2B).
+    /// </summary>
+    public void SetCompletedGroup(
+        string statusTitle,
+        IReadOnlyList<(string Label, string Value)> counters,
+        (int Processed, int Matched, int Skipped)?  topCounters = null,
+        string? failTitle   = null,
+        string? failMessage = null)
+    {
+        _isRunning = false;
+
+        OpProgress.IsIndeterminate = false;
+        OpProgress.Maximum         = 100;
+        OpProgress.Value           = 100;
+        PhaseText.Text             = failTitle is null ? "Completed." : "Stopped.";
+
+        // Group top header counters — authoritative Group values, replacing any stale live-progress values.
+        // (Left untouched when null, e.g. an abort before any candidates were processed.)
+        if (topCounters is { } tc)
+        {
+            CountProcessed.Text = tc.Processed.ToString("N0");
+            CountAccepted.Text  = tc.Matched.ToString("N0");
+            CountRejected.Text  = tc.Skipped.ToString("N0");
+        }
+
+        SummaryPanel.IsVisible = true;
+        SumStatusTitle.Text    = statusTitle;
+
+        SummaryCountersPanel.Children.Clear();
+        foreach (var (label, value) in counters)
+            SummaryCountersPanel.Children.Add(BuildCounterRow(label, value));
+
+        if (failTitle is not null)
+        {
+            FailedPanel.IsVisible = true;
+            FailedTitle.Text      = failTitle;
+            FailedMessage.Text    = failMessage ?? "";
+        }
+
+        OkButton.IsEnabled = true;
+    }
+
     public void SetFailed(string errorMessage)
     {
         _isRunning = false;

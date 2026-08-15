@@ -45,9 +45,11 @@
             </StackPanel>
         </ScrollViewer>
 
-        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-            <Button Content="Close" Background="#7B68EE" Foreground="#FFFFFF"
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10" Margin="0,14,0,0">
+            <Button Content="Close" Background="#242433" Foreground="#E8E8F0"
                     Padding="24,8" CornerRadius="6" BorderThickness="0" Click="OnClose"/>
+            <Button x:Name="ExecuteButton" Content="Execute" Background="#7B68EE" Foreground="#FFFFFF"
+                    Padding="24,8" CornerRadius="6" BorderThickness="0" IsVisible="False" Click="OnExecute"/>
         </StackPanel>
     </Grid>
 </Window>

@@ -13,6 +13,9 @@ namespace Arkadia;
 /// </summary>
 public partial class GroupIngestionPlanDialog : Window
 {
+    /// <summary>True when the user explicitly pressed Execute (only possible for a Ready plan).</summary>
+    public bool ExecuteRequested { get; private set; }
+
     public GroupIngestionPlanDialog() : this("Group") { }
 
     public GroupIngestionPlanDialog(string displayName)
@@ -29,6 +32,9 @@ public partial class GroupIngestionPlanDialog : Window
     {
         LoadingRow.IsVisible   = false;
         ResultsScroll.IsVisible = true;
+
+        // Execute is shown ONLY for a Ready plan (Blocked / NothingToDo → Close only).
+        ExecuteButton.IsVisible = GroupExecuteGate.CanExecute(plan.Readiness);
 
         (string text, string bg, string fg) = plan.Readiness switch
         {
@@ -75,4 +81,10 @@ public partial class GroupIngestionPlanDialog : Window
     }
 
     private void OnClose(object? sender, RoutedEventArgs e) => Close(true);
+
+    private void OnExecute(object? sender, RoutedEventArgs e)
+    {
+        ExecuteRequested = true;
+        Close(true);
+    }
 }

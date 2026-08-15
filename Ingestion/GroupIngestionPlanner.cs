@@ -22,10 +22,6 @@ public sealed record GroupIngestionPlanProgress(string PhaseText, int LeafIndex,
 /// </summary>
 public static class GroupIngestionPlanner
 {
-    // Same container set as Single pre-ingest (.zip/.7z/.rar). .arc/.ark stay ordinary payloads.
-    private static readonly HashSet<string> ContainerExtensions =
-        new(StringComparer.OrdinalIgnoreCase) { ".zip", ".7z", ".rar" };
-
     public static GroupIngestionPlan Plan(
         CatalogService                        catalog,
         string                                dataDir,
@@ -275,8 +271,8 @@ public static class GroupIngestionPlanner
         int loose = 0, containers = 0;
         foreach (var f in Directory.EnumerateFiles(incomingDir, "*", SearchOption.AllDirectories))
         {
-            if (ContainerExtensions.Contains(Path.GetExtension(f))) containers++;
-            else                                                    loose++;
+            if (ArchiveContainerExtensions.IsContainer(f)) containers++;
+            else                                           loose++;
         }
         return new GroupIncomingInspection(loose, containers);
     }

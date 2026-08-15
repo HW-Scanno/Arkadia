@@ -1590,6 +1590,189 @@ public partial class MainWindow : Window
             System.Threading.Tasks.TaskContinuationOptions.None);
 
         await dialog.ShowDialog<bool>(this);
+
+        // Explicit user consent is the ONLY path to mutation. The preview above stays strictly read-only;
+        // execution receives the EXACT plan the user reviewed (its ExpectedLeafIds drive the membership guard).
+        if (dialog.ExecuteRequested && plan is not null)
+            await ExecuteGroupIngestionAsync(groupId, plan);
+    }
+
+    // ── M9C2B: Group ingestion runtime bridge ────────────────────────────────
+    // Reached ONLY after explicit Execute on a Ready preview. Guards membership drift, re-plans read-only,
+    // runs shared pre-extraction once, enumerates real candidates, then drives the already-tested
+    // GroupIngestionExecutor (allowMove=false) binding GroupLeafFinalizer to the existing FinalizeConfiguredLeaf.
+    // No stale cleanups (Group v1). Successful-container cleanup + RunPostIngest run only for a non-aborted run.
+    private async System.Threading.Tasks.Task ExecuteGroupIngestionAsync(
+        string groupId, Ingestion.GroupIngestionPlan previewPlan)
+    {
+        // ── Membership drift guard (before ANY mutation) ──────────────────────
+        var liveLeafIds = _catalog.GetLeavesForGroup(groupId).Select(l => l.DatLine.Id);
+        if (!Ingestion.GroupExecuteGate.MembershipMatches(liveLeafIds, previewPlan.ExpectedLeafIds))
+        {
+            await new InfoDialog("Group Ingestion",
+                "Group membership changed since the preview.\nRe-open Group Ingestion and review the new plan.")
+                .ShowDialog(this);
+            return;
+        }
+
+        var group = _catalog.GetDatGroup(Data.Identifiers.DatGroupId.FromPersisted(groupId));
+        if (group is null) { await new InfoDialog("Group Ingestion", "That Group no longer exists.").ShowDialog(this); return; }
+
+        var card        = _groupCards.FirstOrDefault(c => c.GroupId == groupId);
+        var displayName = card?.DisplayName ?? group.DisplayName;
+        var platformId  = group.HardwareFamilyId;
+        var leaves      = _catalog.GetLeavesForGroup(groupId);
+        var leavesById  = leaves.ToDictionary(l => l.DatLine.Id, StringComparer.Ordinal);
+        var appRoot     = AppContext.BaseDirectory;
+        var dataDir     = _dataDir;
+
+        var progressDialog = new IngestionProgressDialog($"Group Ingestion — {displayName}");
+        IProgress<IngestionProgress> progress = new Progress<IngestionProgress>(p => progressDialog.Update(p));
+
+        Ingestion.GroupIngestionRunSummary? summary = null;
+        string? blockedMessage   = null;
+        bool    nothingToDo      = false;
+        bool    membershipChanged = false;
+
+        var workTask = System.Threading.Tasks.Task.Run(() =>
+        {
+            // ── Fresh read-only re-plan (still BEFORE first mutation) ──────────
+            progress.Report(new IngestionProgress { PhaseText = "Revalidating Group…", IsIndeterminate = true });
+            var freshPlan = Ingestion.GroupIngestionPlanner.Plan(
+                _catalog, dataDir, appRoot, groupId, displayName, platformId, leaves, null,
+                new Progress<Ingestion.GroupIngestionPlanProgress>(gp =>
+                    progress.Report(new IngestionProgress { PhaseText = gp.PhaseText, IsIndeterminate = true })));
+
+            // Pre-mutation decision — membership equality (fresh vs previewed) is enforced here too, closing the
+            // window where membership drifts between the initial live guard and the fresh plan. No mutation yet.
+            switch (Ingestion.GroupExecuteGate.Decide(
+                        previewPlan.ExpectedLeafIds, freshPlan.ExpectedLeafIds, freshPlan.Readiness))
+            {
+                case Ingestion.GroupExecuteDecision.AbortMembershipChanged:
+                    membershipChanged = true;
+                    return;   // no mutation
+                case Ingestion.GroupExecuteDecision.AbortBlocked:
+                    blockedMessage = freshPlan.Diagnostics.Length > 0
+                        ? string.Join("\n", freshPlan.Diagnostics.Select(d =>
+                              d.DatLineId.Length > 0 ? $"{d.DatLineId}: {d.Reason}" : d.Reason))
+                        : "The Group is no longer ready to ingest.";
+                    return;   // no mutation
+                case Ingestion.GroupExecuteDecision.NothingToDo:
+                    nothingToDo = true;
+                    return;   // no mutation
+            }
+            // GroupExecuteDecision.Proceed → first mutation begins below.
+
+            var incomingDir = Path.Combine(appRoot, "incoming-roms", platformId);
+            Directory.CreateDirectory(incomingDir);
+
+            // ── Shared archive pre-extraction — once, platform-scoped ──────────
+            var preResult = new IngestionResult();
+            var attemptedContainers = new List<string>();
+            if (freshPlan.FileHandling == "archives_pre_extraction")
+            {
+                attemptedContainers = Ingestion.GroupIngestionCandidateSource.SnapshotContainers(incomingDir);
+                progress.Report(new IngestionProgress { PhaseText = "Preparing incoming archives…", IsIndeterminate = true });
+                RunPreIngest(incomingDir, preResult, progress);
+            }
+            var (successfulContainers, failedOrSkipped) =
+                Ingestion.GroupIngestionCandidateSource.ClassifyContainers(attemptedContainers, preResult.ExtractedArchiveInfos);
+
+            // ── Candidate enumeration — frozen AFTER pre-extraction ────────────
+            progress.Report(new IngestionProgress { PhaseText = "Inspecting candidates…", IsIndeterminate = true });
+            var candidates = Ingestion.GroupIngestionCandidateSource.EnumerateCandidates(incomingDir, freshPlan.FileHandling);
+
+            // ── Finalizer binding: writable leaf store opens ONLY here, per finalized leaf ─
+            var finalizationSummaries = new List<(string DatLineId, Ingestion.LeafFinalizationResult R)>();
+            Ingestion.GroupLeafFinalizer finalizer = (datLineId, affectedReleaseIds, resumableReleaseIds) =>
+            {
+                var leaf = leavesById[datLineId];                          // resolved from supplied id, not UI
+                var absLeafDb = Path.Combine(dataDir, leaf.DatLine.DataStorePath);
+                var leafStore = new DatLineStore(absLeafDb);               // WRITABLE — only for a finalized leaf
+                var leafReleases = leafStore.LoadReleases()
+                    .Where(r => r.Status != "outdated")
+                    .ToDictionary(r => r.Id, StringComparer.Ordinal);
+                var leafReleaseFiles = leafStore.LoadAllReleaseFiles();
+                var leafStaging = Path.Combine(appRoot, "staging", platformId, datLineId);
+                var leafSource  = Path.Combine(appRoot, "source",  platformId, datLineId);
+
+                var leafResult = new IngestionResult();
+                var r = FinalizeConfiguredLeaf(
+                    platformId, datLineId, leaf.DatLine.StorageStrategyId, appRoot,
+                    leafStore, leafStaging, leafSource, leafReleases, leafReleaseFiles,
+                    new HashSet<string>(affectedReleaseIds), resumableReleaseIds.ToList(),
+                    leafResult, progress,
+                    new HashSet<string>(StringComparer.Ordinal),
+                    new HashSet<string>(StringComparer.Ordinal),
+                    new HashSet<string>(StringComparer.Ordinal));
+                finalizationSummaries.Add((datLineId, r));
+            };
+
+            // ── Execute the already-tested core (allowMove=false, one final cleanup) ─
+            var exec = Ingestion.GroupIngestionExecutor.Execute(
+                freshPlan, candidates, appRoot, finalizer,
+                new Progress<Ingestion.GroupIngestionProgress>(gp => progress.Report(new IngestionProgress
+                {
+                    PhaseText = $"{gp.PhaseText} {gp.Index}/{gp.Total}",
+                    IsIndeterminate = gp.Total <= 0,
+                    Total = gp.Total, Processed = gp.Index,
+                })));
+
+            // ── Successful-container cleanup + housekeeping — ONLY for a non-aborted run ─
+            if (!exec.Aborted)
+            {
+                progress.Report(new IngestionProgress { PhaseText = "Cleaning up extracted archives…" });
+                Ingestion.GroupContainerCleanup.Run(preResult.ExtractedArchiveInfos, incomingDir, progress);
+                RunPostIngest(incomingDir);
+            }
+            // Aborted run: leave containers + members in place (most conservative retry state); no housekeeping.
+
+            summary = Ingestion.GroupIngestionRunSummary.Build(
+                exec, finalizationSummaries, successfulContainers.Count, failedOrSkipped.Count);
+        });
+
+        _ = workTask.ContinueWith(t => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+        {
+            if (t.IsFaulted)
+                progressDialog.SetFailed(t.Exception!.InnerException?.Message ?? t.Exception.Message);
+            else if (membershipChanged)
+                progressDialog.SetCompletedGroup("MEMBERSHIP CHANGED",
+                    System.Array.Empty<(string, string)>(), topCounters: null,
+                    failTitle: "MEMBERSHIP CHANGED SINCE PREVIEW",
+                    failMessage: "Group membership changed since the preview. Re-open Group Ingestion and review the new plan.");
+            else if (blockedMessage is not null)
+                progressDialog.SetCompletedGroup("GROUP INGESTION BLOCKED",
+                    System.Array.Empty<(string, string)>(), topCounters: null,
+                    failTitle: "BLOCKED — NO INGESTION RAN", failMessage: blockedMessage);
+            else if (nothingToDo)
+                progressDialog.SetCompletedGroup("NOTHING TO DO",
+                    System.Array.Empty<(string, string)>());
+            else if (summary is not null)
+            {
+                foreach (var op in summary.ErrorDetails)
+                    progressDialog.Update(new IngestionProgress { NewOperation = op });
+                (string? ft, string? fm) = summary.Status == Ingestion.GroupRunStatus.Aborted
+                    ? ("RUN ABORTED — NO CONTAINER CLEANUP", summary.AbortReason)
+                    : ((string?)null, (string?)null);
+                progressDialog.SetCompletedGroup(
+                    summary.StatusTitle, summary.Counters(), summary.TopCounters(), ft, fm);
+            }
+            else
+                progressDialog.SetFailed("Group ingestion ended unexpectedly.");
+        }), System.Threading.Tasks.TaskContinuationOptions.None);
+
+        await progressDialog.ShowDialog<bool>(this);
+        await workTask;
+
+        // Refresh views using existing non-blocking mechanisms (no synchronous 410-leaf aggregate rebuild).
+        if (summary is not null && !summary.Aborted)
+        {
+            RebuildLibraryDatasets();
+            ResolveFlagImages();
+            RefreshSystemsKeepSelection(platformId);
+            RefreshPending();
+            RefreshStaging();
+        }
     }
 
     private async void OnSysVerifyArchive(object? sender, RoutedEventArgs e)
@@ -11066,15 +11249,11 @@ public partial class MainWindow : Window
         IngestionResult result,
         IProgress<IngestionProgress> progress)
     {
+        // Container detection is the single shared authority (.zip/.7z/.rar, case-insensitive). ZIP vs 7z/rar
+        // dispatch below is unchanged — only the extension-set membership is consolidated.
         var archives = Directory
             .EnumerateFiles(incomingDir, "*", SearchOption.AllDirectories)
-            .Where(f =>
-            {
-                var ext = Path.GetExtension(f);
-                return string.Equals(ext, ".zip", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(ext, ".7z",  StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(ext, ".rar", StringComparison.OrdinalIgnoreCase);
-            })
+            .Where(Ingestion.ArchiveContainerExtensions.IsContainer)
             .ToList();
 
         if (archives.Count == 0) return;
