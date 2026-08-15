@@ -357,7 +357,7 @@ public sealed class CatalogService
                     ('chd_gd_compression',       'CHD GD Compression (legacy/manual)',        'chdman',      'createcd -i "{input}" -o "{output}"',                    '.chd', 0, 'file_strategy',   'file_oriented',   'file',   'B'),
                     ('chd_psp_compression',      'CHD Compression (PSP)',                     'chdman',      'createdvd -hs 2048 -c zstd -i "{input}" -o "{output}"', '.chd', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
                     ('chd_dreamcast_compression','CHD Dreamcast Compression (legacy/manual)', 'chdman',      'createcd -c zstd -i "{input}" -o "{output}"',            '.chd', 0, 'file_strategy',   'file_oriented',   'file',   'B'),
-                    ('zip_compression',          'ZIP Compression (Folder)',     '7zip',        'a -tzip "{output}" * -w"{input}"',                       '.zip', 1, 'folder_strategy', 'folder_oriented', 'file',   'A'),
+                    ('zip_compression',          'ZIP Compression (Folder)',     '7zip',        'a -tzip "{output}" "{input}\*"',                         '.zip', 1, 'folder_strategy', 'folder_oriented', 'file',   'A'),
                     ('zip_file_compression',     'ZIP Compression (File)',       '7zip',        'a -tzip "{output}" "{input}"',                           '.zip', 1, 'file_strategy',   'file_oriented',   'file',   'A'),
                     ('rvz_compression',          'RVZ Compression',             'dolphintool',  'convert -f rvz -c zstd -l 5 -i "{input}" -o "{output}"','.rvz', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
                     ('wux_compression',          'WUX Compression',             'wudcompress',  '-i "{input}" -o "{output}"',                             '.wux', 1, 'file_strategy',   'file_oriented',   'file',   'B');
@@ -383,6 +383,22 @@ public sealed class CatalogService
                 WHERE transform_id = 'chd_dreamcast_compression' AND name = 'CHD Compression (Dreamcast)';
             """;
         txRename.ExecuteNonQuery();
+
+        // ── Migrate zip_compression command template (folder-transform wildcard fix) ─
+        // The historical default resolved a bare '*' from Arkadia's inherited process
+        // working directory (never set on ProcessStartInfo), recursively compressing the
+        // whole app/data tree; '-w"{input}"' only relocated 7-Zip's temp file into the
+        // release source folder. The fix scopes the wildcard explicitly to the release
+        // source folder ("{input}\*") and drops -w. Guarded by the EXACT historical value
+        // so a user-customized template is never overwritten. Idempotent (the fixed value
+        // no longer matches the guard). transform_id and all other rows are untouched.
+        using var txZipFix = conn.CreateCommand();
+        txZipFix.CommandText = """
+            UPDATE transforms SET command_template = 'a -tzip "{output}" "{input}\*"'
+                WHERE transform_id = 'zip_compression'
+                  AND command_template = 'a -tzip "{output}" * -w"{input}"';
+            """;
+        txZipFix.ExecuteNonQuery();
 
         // ── Migrate dat_lines: archive output validation columns (M1b) ───────
         // Nullable/additive — existing rows keep NULL, which reads as "unknown"
