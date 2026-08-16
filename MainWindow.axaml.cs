@@ -3325,7 +3325,9 @@ public partial class MainWindow : Window
         // volume actions are gated off for them so a Group volume can never enter a single-leaf handler.
         bool isSingle    = hasVol && !entry!.IsGroupOwned;
 
-        VolActMake.IsEnabled     = isNotLost  && isSingle;   // plan available for init + present; Single-only
+        // Plan available for init + present. Owner-aware: Single → historical Make/Build workflow;
+        // Group → read-only Group Plan preview (V-G2). OnMakeVolume branches by owner.
+        VolActMake.IsEnabled     = isNotLost;
         VolActMove.IsEnabled     = isPhysical && isSingle;   // requires physical source
         VolActResize.IsEnabled   = isNotLost;                // capacity-only — owner-agnostic
         VolActAppend.IsEnabled   = isPhysical && isSingle;   // requires files on disk/workspace
@@ -4703,10 +4705,50 @@ public partial class MainWindow : Window
 
     // ── Make Volume ───────────────────────────────────────────────────────────
 
+    // V-G2: read-only Group volume plan. Reuses per-leaf Single eligibility + the single capacity algorithm
+    // over ONE global budget via GroupVolumePlanningService/GroupVolumePlanner. Runs off the UI thread with a
+    // spinner; shows a Close-only preview. NEVER commits — no ApplyPlanCore/Build/SaveVolumeArtifact/filesystem.
+    private async System.Threading.Tasks.Task PlanGroupVolumeAsync(VolumeEntry entry)
+    {
+        if (entry.GroupId is not { } groupId) return;
+        var volume = _catalog.GetVolumeById(entry.Id);
+        if (volume is null) return;
+
+        var leaves = _catalog.GetLeavesForGroup(groupId);
+        if (leaves.Count == 0)
+        {
+            await new InfoDialog("Group Volume Plan", "This Group has no leaf DATs to plan.").ShowDialog(this);
+            return;
+        }
+
+        var appRoot = AppContext.BaseDirectory;
+        var dataDir = _dataDir;
+        var dialog  = new GroupPlanVolumeDialog(entry.Label);
+        IProgress<Data.GroupVolumePlanProgress> progress =
+            new Progress<Data.GroupVolumePlanProgress>(p => dialog.UpdateProgress(p));
+        Data.GroupVolumePlanningResult? result = null;
+
+        var work = System.Threading.Tasks.Task.Run(() =>
+            result = Data.GroupVolumePlanningService.Plan(_catalog, dataDir, appRoot, volume, leaves, progress));
+
+        _ = work.ContinueWith(t => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (t.IsCompletedSuccessfully && result is not null) dialog.SetResult(result);
+                else dialog.UpdateProgress(new Data.GroupVolumePlanProgress("Planning failed unexpectedly.", 0, 0));
+            }),
+            System.Threading.Tasks.TaskContinuationOptions.None);
+
+        await dialog.ShowDialog<bool>(this);
+    }
+
     private async void OnMakeVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         var entry = VolumesList.SelectedItem as VolumeEntry;
         if (entry is null) return;
+
+        // Owner branch: a Group-owned volume goes to the read-only Group Plan preview — never the Single
+        // Make → ApplyPlanCore → BuildVolumeCore path (which assumes a single leaf store).
+        if (entry.IsGroupOwned) { await PlanGroupVolumeAsync(entry); return; }
 
         try
         {
