@@ -2392,6 +2392,21 @@ public sealed class CatalogService
         cmd.ExecuteNonQuery();
     }
 
+    /// <summary>
+    /// Updates only the planned capacity for the given volume. Targeted mutation — leaves ownership
+    /// (dat_line_id / group_id), status, health, sizes, and timestamps untouched. Used by Resize instead of
+    /// reconstructing a full VolumeRecord (which dropped GroupId for Group-owned volumes).
+    /// </summary>
+    public void UpdateVolumePlannedSize(string volumeId, long plannedSizeBytes)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "UPDATE volumes SET planned_size_bytes = $sz WHERE id = $id";
+        cmd.Parameters.AddWithValue("$sz", plannedSizeBytes);
+        cmd.Parameters.AddWithValue("$id", volumeId);
+        cmd.ExecuteNonQuery();
+    }
+
     public VolumeLocationRecord? GetCurrentLocation(string volumeId)
     {
         using var conn = Open();

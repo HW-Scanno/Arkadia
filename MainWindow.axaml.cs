@@ -5261,19 +5261,8 @@ public partial class MainWindow : Window
         var vol = _catalog.GetVolumes().FirstOrDefault(v => v.Id == entry.Id);
         if (vol is null) return;
 
-        _catalog.SaveVolume(new Data.VolumeRecord
-        {
-            Id               = vol.Id,
-            Label            = vol.Label,
-            PlatformId       = vol.PlatformId,
-            DatLineId        = vol.DatLineId,
-            Status           = vol.Status,
-            Health           = vol.Health,
-            PlannedSizeBytes = newBytes,
-            ActualSizeBytes  = vol.ActualSizeBytes,
-            CreatedAt        = vol.CreatedAt,
-            VerifiedAt       = vol.VerifiedAt,
-        });
+        // Planned-size-only mutation via the targeted API — preserves ownership (DatLineId/GroupId) untouched.
+        _catalog.UpdateVolumePlannedSize(vol.Id, newBytes);
 
         try
         {
@@ -5839,19 +5828,9 @@ public partial class MainWindow : Window
         var vol = _catalog.GetVolumes().FirstOrDefault(v => v.Id == entry.Id);
         if (vol is null) return;
 
-        _catalog.SaveVolume(new Data.VolumeRecord
-        {
-            Id               = vol.Id,
-            Label            = vol.Label,
-            PlatformId       = vol.PlatformId,
-            DatLineId        = vol.DatLineId,
-            Status           = "lost",
-            Health           = vol.Health,
-            PlannedSizeBytes = vol.PlannedSizeBytes,
-            ActualSizeBytes  = vol.ActualSizeBytes,
-            CreatedAt        = vol.CreatedAt,
-            VerifiedAt       = vol.VerifiedAt,
-        });
+        // Status-only mutation via the targeted API — preserves ownership (DatLineId/GroupId) untouched.
+        // Reconstructing a full VolumeRecord here dropped GroupId and crashed Group-owned volumes.
+        _catalog.UpdateVolumeStatus(vol.Id, "lost");
 
         // Propagate loss to derived artifacts that are exclusively on this volume,
         // then recalculate release presence so the library reflects the loss.

@@ -297,6 +297,81 @@ public sealed class VolumeOwnershipTests : IDisposable
         Assert.Throws<SqliteException>(() => Exec(raw, "DELETE FROM dat_groups WHERE id='c64-tosec'"));
     }
 
+    // ── Targeted-mutation regression: ownership preserved when only one header field changes ──
+    [Fact] // Group Resize: planned size changes, ownership/status untouched
+    public void UpdateVolumePlannedSize_Group_PreservesOwnership()
+    {
+        var c = WithFamilyAndGroup();
+        c.SaveVolume(GroupVol("gv", "c64-tosec"));   // planned 100, status init
+
+        c.UpdateVolumePlannedSize("gv", 5_000);
+
+        var v = c.GetVolumeById("gv")!;
+        Assert.Equal(5_000, v.PlannedSizeBytes);
+        Assert.Null(v.DatLineId);
+        Assert.Equal("c64-tosec", v.GroupId);   // GroupId preserved (was dropped by the old full-record path)
+        Assert.Equal("init", v.Status);         // only planned size changed
+        Assert.Equal(0, v.ActualSizeBytes);
+    }
+
+    [Fact] // Single Resize: planned size changes, DatLineId preserved, GroupId stays null
+    public void UpdateVolumePlannedSize_Single_PreservesOwnership()
+    {
+        var c = new CatalogService(_dir);
+        c.SaveVolume(SingleVol("sv", "c64-nointro"));
+
+        c.UpdateVolumePlannedSize("sv", 7_000);
+
+        var v = c.GetVolumeById("sv")!;
+        Assert.Equal(7_000, v.PlannedSizeBytes);
+        Assert.Equal("c64-nointro", v.DatLineId);
+        Assert.Null(v.GroupId);
+    }
+
+    [Fact] // Group Mark Lost: status → lost, ownership + planned size untouched
+    public void UpdateVolumeStatus_Group_PreservesOwnership()
+    {
+        var c = WithFamilyAndGroup();
+        c.SaveVolume(GroupVol("gv", "c64-tosec"));
+
+        c.UpdateVolumeStatus("gv", "lost");
+
+        var v = c.GetVolumeById("gv")!;
+        Assert.Equal("lost", v.Status);
+        Assert.Null(v.DatLineId);
+        Assert.Equal("c64-tosec", v.GroupId);   // GroupId preserved — this was the runtime crash
+        Assert.Equal(100, v.PlannedSizeBytes);  // only status changed
+    }
+
+    [Fact] // Single Mark Lost: status → lost, DatLineId preserved, GroupId stays null
+    public void UpdateVolumeStatus_Single_PreservesOwnership()
+    {
+        var c = new CatalogService(_dir);
+        c.SaveVolume(SingleVol("sv", "c64-nointro"));
+
+        c.UpdateVolumeStatus("sv", "lost");
+
+        var v = c.GetVolumeById("sv")!;
+        Assert.Equal("lost", v.Status);
+        Assert.Equal("c64-nointro", v.DatLineId);
+        Assert.Null(v.GroupId);
+    }
+
+    [Fact] // LOST → Delete lifecycle for a Group init/empty volume
+    public void GroupVolume_MarkLostThenDelete_Succeeds()
+    {
+        var c = WithFamilyAndGroup();
+        c.SaveVolume(GroupVol("gv", "c64-tosec"));
+
+        c.UpdateVolumeStatus("gv", "lost");
+        c.DeleteVolume("gv");
+
+        Assert.Null(c.GetVolumeById("gv"));                 // header absent
+        Assert.Empty(c.GetVolumeArtifacts("gv"));           // no artifacts
+        Assert.Null(c.GetCurrentLocation("gv"));            // no location
+        Assert.DoesNotContain(c.GetVolumes(), v => v.Id == "gv");
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
     private static string InsertVol(string id, string dat, string grp) => $"""
         INSERT INTO volumes(id, label, hardware_family_id, dat_line_id, group_id, status, health,
