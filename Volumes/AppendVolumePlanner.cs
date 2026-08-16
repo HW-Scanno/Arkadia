@@ -56,13 +56,13 @@ public sealed class AppendVolumePlanner
         int totalDa          = candidates.Count + releaseUnwanted;
 
         // Volume label per assigned DA (value = "(stale assignment)" if volume deleted)
-        var assignedWithVolumes = _catalog.GetAssignedDerivedIdsWithVolumesByDatLine(volume.DatLineId);
+        var assignedWithVolumes = _catalog.GetAssignedDerivedIdsWithVolumesByDatLine(volume.DatLineId!);
 
         long targetFree = volume.PlannedSizeBytes - volume.ActualSizeBytes;
         long allocated  = 0;
 
         // ── Archive physical file count ───────────────────────────────────
-        var archiveDir = Path.Combine(archiveRoot, "archive", volume.PlatformId, volume.DatLineId);
+        var archiveDir = Path.Combine(archiveRoot, "archive", volume.PlatformId, volume.DatLineId!);
         int physicalFileCount = Directory.Exists(archiveDir)
             ? Directory.GetFiles(archiveDir, "*", SearchOption.AllDirectories).Length
             : 0;
@@ -198,7 +198,7 @@ public sealed class AppendVolumePlanner
         {
             VolumeId              = volume.Id,
             VolumeLabel           = volume.Label,
-            DatLineId             = volume.DatLineId,
+            DatLineId             = volume.DatLineId!,
             VolumeRootPath        = volumeRootPath,
             TargetCapacityBytes   = volume.PlannedSizeBytes,
             TargetUsedBytes       = volume.ActualSizeBytes,
@@ -234,7 +234,7 @@ public sealed class AppendVolumePlanner
 
     private static AppendVolumePlan Empty(VolumeRecord volume, string volumeRoot, string archiveRoot)
     {
-        var archiveDir = Path.Combine(archiveRoot, "archive", volume.PlatformId, volume.DatLineId);
+        var archiveDir = Path.Combine(archiveRoot, "archive", volume.PlatformId, volume.DatLineId!);
         int physCount  = Directory.Exists(archiveDir)
             ? Directory.GetFiles(archiveDir, "*", SearchOption.AllDirectories).Length
             : 0;
@@ -243,7 +243,7 @@ public sealed class AppendVolumePlanner
         {
             VolumeId              = volume.Id,
             VolumeLabel           = volume.Label,
-            DatLineId             = volume.DatLineId,
+            DatLineId             = volume.DatLineId!,
             VolumeRootPath        = volumeRoot,
             TargetCapacityBytes   = volume.PlannedSizeBytes,
             TargetUsedBytes       = volume.ActualSizeBytes,

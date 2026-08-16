@@ -110,24 +110,7 @@ public partial class CreateVolumeDialog : Window
     }
 
     private string BuildSuggestedLabel(DatLineRecord datLine)
-    {
-        var n = NextNumber(datLine.Id);
-        return $"{datLine.Id}-{n:D3}";
-    }
-
-    private int NextNumber(string prefix)
-    {
-        var pattern = prefix + "-";
-        int max     = 0;
-        foreach (var label in _existingLabels)
-        {
-            if (!label.StartsWith(pattern, StringComparison.OrdinalIgnoreCase)) continue;
-            var tail = label[pattern.Length..];
-            if (int.TryParse(tail, out var n) && n > max)
-                max = n;
-        }
-        return max + 1;
-    }
+        => Volumes.VolumeLabelNumbering.SuggestLabel(_existingLabels, datLine.Id);
 
     // ── Size suggestion ───────────────────────────────────────────────────────
 

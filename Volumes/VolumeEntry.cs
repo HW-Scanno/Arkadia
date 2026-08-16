@@ -16,11 +16,16 @@ public sealed class VolumeEntry
     public required string  CurrentLocation  { get; init; }  // "disk:<label>" | "source" | "workspace" | "—"
     public required string? DiskId           { get; init; }
     public required string? DiskLabel        { get; init; }
-    /// <summary>Raw dat_line_id from the DB (not the display name).</summary>
-    public required string  RawDatLineId     { get; init; }
-    /// <summary>Absolute path to the DAT-line SQLite DB for this volume.</summary>
+    /// <summary>Raw dat_line_id from the DB (Single volumes). Null for Group-owned volumes.</summary>
+    public required string? RawDatLineId     { get; init; }
+    /// <summary>Owning group id (Group-owned volumes). Null for Single volumes.</summary>
+    public          string? GroupId          { get; init; }
+    /// <summary>Absolute path to the DAT-line SQLite DB (Single). Empty for Group-owned volumes.</summary>
     public required string  DbPath           { get; init; }
     public          int     ArtifactCount    { get; init; }
+
+    /// <summary>True when this volume is Group-owned (no single leaf owner / no single DB path).</summary>
+    public bool IsGroupOwned => GroupId is not null;
 
     public double FillRatio => PlannedSizeBytes > 0
         ? System.Math.Clamp((double)ActualSizeBytes / PlannedSizeBytes, 0, 1)

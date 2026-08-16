@@ -3223,6 +3223,8 @@ public partial class MainWindow : Window
     {
         var disks    = _catalog.GetDisks().ToDictionary(d => d.Id, d => d.Label, StringComparer.Ordinal);
         var datLines = _catalog.LoadDatLines().ToDictionary(dl => dl.Id, dl => dl, StringComparer.Ordinal);
+        // Group display names, resolved once (Group-owned volumes have no single leaf DB).
+        var groupNames = _catalog.LoadDatGroups().ToDictionary(g => g.Id.Value, g => g.DisplayName, StringComparer.OrdinalIgnoreCase);
 
         _allVolumeEntries = _catalog.GetVolumes().Select(v =>
         {
@@ -3232,18 +3234,25 @@ public partial class MainWindow : Window
                     ? $"disk: {dl}"
                 : LocTypeDisplay(loc.LocationType);
 
-            datLines.TryGetValue(v.DatLineId, out var dlRecord);
+            // Ownership is a sum type: Single (dat_line_id) resolves a single leaf DB path; Group (group_id)
+            // has no single DB (DbPath stays empty) and displays the Group name.
+            DatLineRecord? dlRecord = null;
+            if (v.DatLineId is not null) datLines.TryGetValue(v.DatLineId, out dlRecord);
             var dbPath = dlRecord?.DataStorePath.Length > 0
                 ? Path.Combine(_dataDir, dlRecord.DataStorePath)
                 : "";
+            var ownerDisplay = v.GroupId is not null
+                ? (groupNames.TryGetValue(v.GroupId, out var gn) ? gn : v.GroupId)
+                : (dlRecord?.Name ?? v.DatLineId ?? "");
 
             return new VolumeEntry
             {
                 Id               = v.Id,
                 Label            = v.Label,
                 PlatformId       = v.PlatformId,
-                DatLineId        = dlRecord?.Name ?? v.DatLineId,
+                DatLineId        = ownerDisplay,
                 RawDatLineId     = v.DatLineId,
+                GroupId          = v.GroupId,
                 DbPath           = dbPath,
                 Status           = v.Status,
                 Health           = v.Health,
@@ -3285,32 +3294,57 @@ public partial class MainWindow : Window
         RefreshVolumes();
     }
 
+    // Group-owned volume creation: a thin DB-header-only sibling of OnCreateVolume (V-G1). No planning,
+    // no filesystem, no artifact rows. SaveVolume enforces the sum-type ownership invariant.
+    private async void OnCreateGroupVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        var groups = _catalog.LoadDatGroups();
+        if (groups.Count == 0)
+        {
+            await new InfoDialog("Create Group Volume",
+                "No Group DATs exist yet. Create a Group DAT first (Systems → Create Group DAT…).")
+                .ShowDialog(this);
+            return;
+        }
+
+        var existingLabels = _catalog.GetVolumes().Select(v => v.Label).ToList();
+        var dialog = new CreateGroupVolumeDialog(groups, existingLabels, _catalog, _dataDir);
+        var ok = await dialog.ShowDialog<bool>(this);
+        if (!ok || dialog.Result is null) return;
+
+        _catalog.SaveVolume(dialog.Result);
+        RefreshVolumes();
+    }
+
     private void UpdateVolumeDetailPanel(VolumeEntry? entry)
     {
         bool hasVol      = entry is not null;
         bool isPhysical  = hasVol && entry!.Status == "present";
         bool isNotLost   = hasVol && entry!.Status != "lost";
+        // Group-owned volumes have no Single leaf workflow yet (V-G1 is create-only). All Single-DAT
+        // volume actions are gated off for them so a Group volume can never enter a single-leaf handler.
+        bool isSingle    = hasVol && !entry!.IsGroupOwned;
 
-        VolActMake.IsEnabled     = isNotLost;    // plan available for init + present; disabled for lost
-        VolActMove.IsEnabled     = isPhysical;   // requires physical source
-        VolActResize.IsEnabled   = isNotLost;
-        VolActAppend.IsEnabled   = isPhysical;   // requires files on disk/workspace
-        VolActReabsorb.IsEnabled = isPhysical;   // requires physical source
-        VolActFillback.IsEnabled = isPhysical    // source must be physical, have artifacts, valid DB
+        VolActMake.IsEnabled     = isNotLost  && isSingle;   // plan available for init + present; Single-only
+        VolActMove.IsEnabled     = isPhysical && isSingle;   // requires physical source
+        VolActResize.IsEnabled   = isNotLost;                // capacity-only — owner-agnostic
+        VolActAppend.IsEnabled   = isPhysical && isSingle;   // requires files on disk/workspace
+        VolActReabsorb.IsEnabled = isPhysical && isSingle;   // requires physical source
+        VolActFillback.IsEnabled = isPhysical && isSingle    // source must be physical, have artifacts, valid DB
             && entry!.ArtifactCount > 0
             && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
-        VolActMarkLost.IsEnabled    = isNotLost;  // already-lost volumes are no-ops
-        VolActDeleteVolume.IsEnabled = hasVol;    // enforcement is at click time
+        VolActMarkLost.IsEnabled    = isNotLost;  // already-lost volumes are no-ops — owner-agnostic
+        VolActDeleteVolume.IsEnabled = hasVol;    // header delete — owner-agnostic; enforcement at click time
 
-        VolActVerifyVolume.IsEnabled = hasVol
+        VolActVerifyVolume.IsEnabled = hasVol && isSingle
             && entry!.ArtifactCount > 0
             && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
 
-        VolActRepair.IsEnabled = hasVol
+        VolActRepair.IsEnabled = hasVol && isSingle
             && entry!.StatusLabel is "WARNING" or "LOST"
             && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
 
-        VolActArtifacts.IsEnabled = hasVol
+        VolActArtifacts.IsEnabled = hasVol && isSingle
             && entry!.ArtifactCount > 0
             && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
 
@@ -3537,7 +3571,7 @@ public partial class MainWindow : Window
 
         var appRoot      = AppContext.BaseDirectory;
         var platformId   = entry.PlatformId;
-        var rawDatLineId = entry.RawDatLineId;
+        var rawDatLineId = entry.RawDatLineId!;   // Single-only path (Group volumes are gated out)
 
         // ── Resolve volume root ────────────────────────────────────────────
         string? volumeRoot = ResolveVolumeRoot(entry, appRoot);
@@ -4531,7 +4565,7 @@ public partial class MainWindow : Window
                 {
                     Id                 = Guid.NewGuid().ToString("N"),
                     VolumeId           = entry.Id,
-                    DatLineId          = entry.RawDatLineId,
+                    DatLineId          = entry.RawDatLineId!,   // Single-only path (Group volumes are gated out)
                     DerivedArtifactId  = daId,
                     ContentIdentityKey = ck,
                     Status             = "present_in_final",
@@ -4698,7 +4732,7 @@ public partial class MainWindow : Window
             }
 
             var store       = new DatLineStore(entry.DbPath);
-            var assignedIds = _catalog.GetAssignedDerivedIdsByDatLine(entry.RawDatLineId);
+            var assignedIds = _catalog.GetAssignedDerivedIdsByDatLine(entry.RawDatLineId!);   // Single-only (gated)
             var candidates  = store.GetPlanningCandidates(AppContext.BaseDirectory, assignedIds);
 
             if (candidates.Count == 0)
@@ -5138,7 +5172,7 @@ public partial class MainWindow : Window
         if (entry.Status == "lost") return;
 
         var dlg       = new ResizeVolumeDialog(entry.Label, entry.PlannedSizeBytes,
-                            entry.ActualSizeBytes, entry.RawDatLineId, entry.DbPath, _catalog);
+                            entry.ActualSizeBytes, entry.RawDatLineId!, entry.DbPath, _catalog);
         var confirmed = await dlg.ShowDialog<bool>(this);
         if (!confirmed) return;
 

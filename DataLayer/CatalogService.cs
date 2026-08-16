@@ -143,20 +143,34 @@ public sealed class CatalogService
                 updated_at               TEXT NOT NULL
             );
 
+            -- Volume ownership is a clean sum type: EXACTLY ONE of dat_line_id (Single) or
+            -- group_id (Group DAT) is set, enforced by the CHECK. group_id FK → dat_groups(id)
+            -- ON DELETE RESTRICT (a group owning volumes cannot be deleted underneath them).
+            -- volume_artifacts.dat_line_id stays the authoritative per-artifact leaf owner and is
+            -- unchanged. Legacy Single rows migrate to (dat_line_id = existing, group_id = NULL)
+            -- via MigrateVolumesOwnership (guarded rebuild) below.
             CREATE TABLE IF NOT EXISTS volumes (
                 id                  TEXT PRIMARY KEY,
                 label               TEXT NOT NULL,
                 hardware_family_id  TEXT NOT NULL,
-                dat_line_id         TEXT NOT NULL,
+                dat_line_id         TEXT,
+                group_id            TEXT REFERENCES dat_groups(id) ON DELETE RESTRICT,
                 status              TEXT NOT NULL,
                 health              TEXT NOT NULL DEFAULT 'ok',
                 planned_size_bytes  INTEGER NOT NULL,
                 actual_size_bytes   INTEGER NOT NULL,
                 created_at          TEXT NOT NULL,
-                verified_at         TEXT
+                verified_at         TEXT,
+                CHECK (
+                    (dat_line_id IS NOT NULL AND group_id IS NULL)
+                    OR
+                    (dat_line_id IS NULL AND group_id IS NOT NULL)
+                )
             );
 
             CREATE INDEX IF NOT EXISTS idx_volumes_dat_line_id ON volumes(dat_line_id);
+            -- idx_volumes_group_id is created AFTER MigrateVolumesOwnership: on a legacy DB the volumes
+            -- table has no group_id column yet at this point.
 
             CREATE TABLE IF NOT EXISTS volume_locations (
                 id             TEXT PRIMARY KEY,
@@ -299,6 +313,20 @@ public sealed class CatalogService
             CREATE UNIQUE INDEX IF NOT EXISTS idx_cpst_unique   ON cache_package_search_terms(package_game_id, normalized_term);
             """;
         cmd.ExecuteNonQuery();
+
+        // ── Migrate volumes ownership to the sum-type model (guarded rebuild) ──
+        // Legacy schema had `dat_line_id TEXT NOT NULL` and no `group_id`. SQLite cannot relax
+        // NOT NULL or add a CHECK in place, so rebuild once, preserving every row byte-for-semantics
+        // (group_id = NULL for all legacy Single rows). Idempotent (skips when group_id already exists).
+        MigrateVolumesOwnership(conn);
+
+        // group_id index — created here so it applies to both a freshly-created new-schema `volumes`
+        // and a just-migrated legacy one (the migration also creates it; CREATE IF NOT EXISTS is safe).
+        using (var gidx = conn.CreateCommand())
+        {
+            gidx.CommandText = "CREATE INDEX IF NOT EXISTS idx_volumes_group_id ON volumes(group_id)";
+            gidx.ExecuteNonQuery();
+        }
 
         // ── Seed storage_strategies if empty ──────────────────────────────────
         using var stratCheck = conn.CreateCommand();
@@ -2267,7 +2295,7 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, label, hardware_family_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at, health
+            SELECT id, label, hardware_family_id, dat_line_id, group_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at, health
             FROM volumes
             ORDER BY label
             """;
@@ -2283,7 +2311,7 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT v.id, v.label, v.hardware_family_id, v.dat_line_id, v.status,
+            SELECT v.id, v.label, v.hardware_family_id, v.dat_line_id, v.group_id, v.status,
                    v.planned_size_bytes, v.actual_size_bytes, v.created_at, v.verified_at, v.health
             FROM volumes v
             JOIN volume_locations vl ON vl.volume_id = v.id
@@ -2299,11 +2327,21 @@ public sealed class CatalogService
 
     public void SaveVolume(VolumeRecord v)
     {
+        // Application-level ownership invariant (in addition to the DB CHECK): EXACTLY ONE owner.
+        if (v.IsDatLineOwned == v.IsGroupOwned)
+            throw new InvalidOperationException(
+                "Volume ownership must be exactly one of DatLineId or GroupId (found " +
+                (v.IsDatLineOwned ? "both" : "neither") + ").");
+
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
+        // FK enforcement is per-connection; enable it inline (repo precedent — see CreateDatGroup) so the
+        // group_id → dat_groups reference is a real DB-level defence. Single volumes have group_id NULL, so
+        // the FK is not triggered for them; the only FK a volumes write can activate is group_id.
         cmd.CommandText = """
-            INSERT INTO volumes(id, label, hardware_family_id, dat_line_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at, health)
-            VALUES($id, $label, $platId, $dlId, $status, $planned, $actual, $created, $verified, $health)
+            PRAGMA foreign_keys = ON;
+            INSERT INTO volumes(id, label, hardware_family_id, dat_line_id, group_id, status, planned_size_bytes, actual_size_bytes, created_at, verified_at, health)
+            VALUES($id, $label, $platId, $dlId, $groupId, $status, $planned, $actual, $created, $verified, $health)
             ON CONFLICT(id) DO UPDATE SET
                 label              = excluded.label,
                 status             = excluded.status,
@@ -2315,7 +2353,8 @@ public sealed class CatalogService
         cmd.Parameters.AddWithValue("$id",       v.Id);
         cmd.Parameters.AddWithValue("$label",    v.Label);
         cmd.Parameters.AddWithValue("$platId",   v.PlatformId);
-        cmd.Parameters.AddWithValue("$dlId",     v.DatLineId);
+        cmd.Parameters.AddWithValue("$dlId",     (object?)v.DatLineId ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("$groupId",  (object?)v.GroupId   ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$status",   v.Status);
         cmd.Parameters.AddWithValue("$planned",  v.PlannedSizeBytes);
         cmd.Parameters.AddWithValue("$actual",   v.ActualSizeBytes);
@@ -2694,7 +2733,7 @@ public sealed class CatalogService
         var placeholders = string.Join(",", System.Linq.Enumerable.Range(0, derivedIds.Count).Select(i => $"$id{i}"));
         cmd.CommandText = $"""
             SELECT DISTINCT
-                v.id, v.label, v.hardware_family_id, v.dat_line_id, v.status,
+                v.id, v.label, v.hardware_family_id, v.dat_line_id, v.group_id, v.status,
                 v.planned_size_bytes, v.actual_size_bytes, v.created_at, v.verified_at, v.health,
                 vl.disk_id, COALESCE(vl.location_type, 'unknown')
             FROM volume_artifacts va
@@ -2710,8 +2749,8 @@ public sealed class CatalogService
         while (r.Read())
         {
             var vol    = ReadVolume(r);
-            var diskId = r.IsDBNull(10) ? null : r.GetString(10);
-            var loc    = r.GetString(11);
+            var diskId = r.IsDBNull(11) ? null : r.GetString(11);
+            var loc    = r.GetString(12);
             result.Add((vol, diskId, loc));
         }
         return result;
@@ -2722,13 +2761,14 @@ public sealed class CatalogService
         Id               = r.GetString(0),
         Label            = r.GetString(1),
         PlatformId       = r.GetString(2),
-        DatLineId        = r.GetString(3),
-        Status           = r.GetString(4),
-        PlannedSizeBytes = r.GetInt64(5),
-        ActualSizeBytes  = r.GetInt64(6),
-        CreatedAt        = DateTime.Parse(r.GetString(7)),
-        VerifiedAt       = r.IsDBNull(8) ? null : DateTime.Parse(r.GetString(8)),
-        Health           = r.IsDBNull(9) ? "ok" : r.GetString(9),
+        DatLineId        = r.IsDBNull(3) ? null : r.GetString(3),
+        GroupId          = r.IsDBNull(4) ? null : r.GetString(4),
+        Status           = r.GetString(5),
+        PlannedSizeBytes = r.GetInt64(6),
+        ActualSizeBytes  = r.GetInt64(7),
+        CreatedAt        = DateTime.Parse(r.GetString(8)),
+        VerifiedAt       = r.IsDBNull(9) ? null : DateTime.Parse(r.GetString(9)),
+        Health           = r.IsDBNull(10) ? "ok" : r.GetString(10),
     };
 
     /// <summary>
@@ -2887,7 +2927,7 @@ public sealed class CatalogService
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT id, label, hardware_family_id, dat_line_id, status,
+            SELECT id, label, hardware_family_id, dat_line_id, group_id, status,
                    planned_size_bytes, actual_size_bytes, created_at, verified_at, health
             FROM volumes WHERE id = $id
             """;
@@ -3266,6 +3306,74 @@ public sealed class CatalogService
         var conn = new SqliteConnection(_connectionString);
         conn.Open();
         return conn;
+    }
+
+    /// <summary>
+    /// Guarded, idempotent rebuild of `volumes` from the legacy single-owner schema
+    /// (`dat_line_id NOT NULL`, no `group_id`) to the sum-type ownership schema. Preserves every
+    /// existing row (id/label/family/dat_line_id/status/health/sizes/timestamps) with `group_id = NULL`,
+    /// recreates both indexes, and keeps all volume GUIDs so `volume_artifacts`/`volume_locations`
+    /// still resolve. Foreign keys are toggled OUTSIDE the transaction (SQLite ignores the pragma
+    /// inside one). No-op once `group_id` exists.
+    /// </summary>
+    private static void MigrateVolumesOwnership(SqliteConnection conn)
+    {
+        bool hasGroupId = false;
+        using (var info = conn.CreateCommand())
+        {
+            info.CommandText = "PRAGMA table_info(volumes)";
+            using var r = info.ExecuteReader();
+            while (r.Read())
+                if (string.Equals(r.GetString(1), "group_id", StringComparison.OrdinalIgnoreCase))
+                { hasGroupId = true; break; }
+        }
+        if (hasGroupId) return;   // already migrated (or fresh DB created with the new schema)
+
+        using (var off = conn.CreateCommand()) { off.CommandText = "PRAGMA foreign_keys = OFF;"; off.ExecuteNonQuery(); }
+        using (var tx = conn.BeginTransaction())
+        {
+            using (var rebuild = conn.CreateCommand())
+            {
+                rebuild.Transaction = tx;
+                rebuild.CommandText = """
+                    CREATE TABLE volumes_new (
+                        id                  TEXT PRIMARY KEY,
+                        label               TEXT NOT NULL,
+                        hardware_family_id  TEXT NOT NULL,
+                        dat_line_id         TEXT,
+                        group_id            TEXT REFERENCES dat_groups(id) ON DELETE RESTRICT,
+                        status              TEXT NOT NULL,
+                        health              TEXT NOT NULL DEFAULT 'ok',
+                        planned_size_bytes  INTEGER NOT NULL,
+                        actual_size_bytes   INTEGER NOT NULL,
+                        created_at          TEXT NOT NULL,
+                        verified_at         TEXT,
+                        CHECK (
+                            (dat_line_id IS NOT NULL AND group_id IS NULL)
+                            OR
+                            (dat_line_id IS NULL AND group_id IS NOT NULL)
+                        )
+                    );
+
+                    INSERT INTO volumes_new
+                        (id, label, hardware_family_id, dat_line_id, group_id, status, health,
+                         planned_size_bytes, actual_size_bytes, created_at, verified_at)
+                    SELECT
+                        id, label, hardware_family_id, dat_line_id, NULL, status, health,
+                        planned_size_bytes, actual_size_bytes, created_at, verified_at
+                    FROM volumes;
+
+                    DROP TABLE volumes;
+                    ALTER TABLE volumes_new RENAME TO volumes;
+
+                    CREATE INDEX IF NOT EXISTS idx_volumes_dat_line_id ON volumes(dat_line_id);
+                    CREATE INDEX IF NOT EXISTS idx_volumes_group_id    ON volumes(group_id);
+                    """;
+                rebuild.ExecuteNonQuery();
+            }
+            tx.Commit();
+        }
+        using (var on = conn.CreateCommand()) { on.CommandText = "PRAGMA foreign_keys = ON;"; on.ExecuteNonQuery(); }
     }
 
     /// <summary>Idempotent additive column migration — ignored if the column already exists.</summary>
