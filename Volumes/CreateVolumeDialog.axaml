@@ -80,10 +80,10 @@
             </StackPanel>
 
             <StackPanel Spacing="4">
-                <TextBlock Classes="field-label" Text="DAT LINE *"/>
-                <ComboBox x:Name="DatLineCombo"
+                <TextBlock Classes="field-label" Text="COLLECTION *"/>
+                <ComboBox x:Name="CollectionCombo"
                           HorizontalAlignment="Stretch"
-                          SelectionChanged="OnDatLineChanged"/>
+                          SelectionChanged="OnCollectionChanged"/>
             </StackPanel>
 
             <StackPanel Spacing="4">

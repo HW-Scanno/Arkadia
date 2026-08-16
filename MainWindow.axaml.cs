@@ -3280,39 +3280,29 @@ public partial class MainWindow : Window
     private void OnVolumeSelectionChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
         => UpdateVolumeDetailPanel(VolumesList.SelectedItem as VolumeEntry);
 
+    // Unified Create Volume: one action for both ownership modes. The dialog lists standalone Single DATs and
+    // Groups (never Group leaves) as top-level COLLECTION owners and dispatches ownership on confirm.
     private async void OnCreateVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         var platforms      = _catalog.LoadPlatforms();
         var datLines       = _catalog.LoadDatLines();
+        var groups         = _catalog.LoadDatGroups();
         var existingLabels = _catalog.GetVolumes().Select(v => v.Label).ToList();
-        var dialog = new CreateVolumeDialog(platforms, datLines, existingLabels, _catalog, _dataDir);
+        // Authority id → human name (existing authoritative metadata) for descriptive Single owner display.
+        var authorityNames = _catalog.LoadAuthorities().ToDictionary(a => a.Id, a => a.Name, StringComparer.Ordinal);
+
+        // Group-leaf dat lines are hidden as top-level owners — membership from catalog Group metadata.
+        var groupLeafIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var g in groups)
+            foreach (var leaf in _catalog.GetLeavesForGroup(g.Id.Value))
+                groupLeafIds.Add(leaf.DatLine.Id);
+
+        var dialog = new CreateVolumeDialog(platforms, datLines, groups, groupLeafIds, authorityNames, existingLabels, _catalog, _dataDir);
         dialog.FinishInit();
         var ok = await dialog.ShowDialog<bool>(this);
         if (!ok || dialog.Result is null) return;
 
-        _catalog.SaveVolume(dialog.Result);
-        RefreshVolumes();
-    }
-
-    // Group-owned volume creation: a thin DB-header-only sibling of OnCreateVolume (V-G1). No planning,
-    // no filesystem, no artifact rows. SaveVolume enforces the sum-type ownership invariant.
-    private async void OnCreateGroupVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        var groups = _catalog.LoadDatGroups();
-        if (groups.Count == 0)
-        {
-            await new InfoDialog("Create Group Volume",
-                "No Group DATs exist yet. Create a Group DAT first (Systems → Create Group DAT…).")
-                .ShowDialog(this);
-            return;
-        }
-
-        var existingLabels = _catalog.GetVolumes().Select(v => v.Label).ToList();
-        var dialog = new CreateGroupVolumeDialog(groups, existingLabels, _catalog, _dataDir);
-        var ok = await dialog.ShowDialog<bool>(this);
-        if (!ok || dialog.Result is null) return;
-
-        _catalog.SaveVolume(dialog.Result);
+        _catalog.SaveVolume(dialog.Result);   // XOR/FK ownership invariant enforced here
         RefreshVolumes();
     }
 

@@ -1590,8 +1590,6 @@
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <Button x:Name="VolActCreateVolume"  Classes="view-toggle"
                                 Content="Create Volume"  Click="OnCreateVolume"/>
-                        <Button x:Name="VolActCreateGroupVolume" Classes="view-toggle"
-                                Content="Create Group Volume"  Click="OnCreateGroupVolume"/>
                         <Button x:Name="VolActVerifyVolume"  Classes="view-toggle" IsEnabled="False"
                                 Content="Verify Volume"  Click="OnVerifyVolume"/>
                         <Button x:Name="VolActRepair"        Classes="view-toggle" IsEnabled="False"
