@@ -826,7 +826,6 @@ public partial class MainWindow : Window
     {
         var platformName = _catalog.LoadPlatforms().FirstOrDefault(p => p.Id == dl.HardwareFamilyId)?.Name
                            ?? dl.HardwareFamilyId;
-        var label        = FormatDatLineName(dl.Authority, dl.MediaTypeId);
 
         LibraryContextPlatform.SelectionChanged -= OnLibraryContextPlatformChanged;
         LibraryContextDatLine.SelectionChanged  -= OnLibraryContextDatLineChanged;
@@ -835,10 +834,11 @@ public partial class MainWindow : Window
         var pIdx      = platforms?.IndexOf(platformName) ?? -1;
         if (pIdx >= 0) LibraryContextPlatform.SelectedIndex = pIdx;
 
-        var datLines = _activeLibraryDatasets.Where(d => d.Platform == platformName).Select(d => d.DatLine).ToList();
-        LibraryContextDatLine.ItemsSource   = datLines;
-        var dIdx = datLines.IndexOf(label);
-        LibraryContextDatLine.SelectedIndex = dIdx >= 0 ? dIdx : (datLines.Count > 0 ? 0 : -1);
+        var items = BuildLibraryDatLineItems(platformName);
+        LibraryContextDatLine.ItemsSource   = items;
+        // Highlight by authoritative dat_line id — never IndexOf(label), which collides across group leaves.
+        var navIdx = Library.LibrarySelectorItem.IndexOfDatLineId(items, dl.Id);
+        LibraryContextDatLine.SelectedIndex = navIdx >= 0 ? navIdx : (items.Count > 0 ? 0 : -1);
 
         LibraryContextPlatform.SelectionChanged += OnLibraryContextPlatformChanged;
         LibraryContextDatLine.SelectionChanged  += OnLibraryContextDatLineChanged;
@@ -851,6 +851,18 @@ public partial class MainWindow : Window
             ApplyLibraryFilter();
         }
     }
+
+    // Builds the typed DAT-line selector items for one platform. Group leaves gain a visible full DatLineId
+    // (via LibrarySelectorItem.Display); Single labels are unchanged. Identity is always the dat_line id.
+    private List<Library.LibrarySelectorItem> BuildLibraryDatLineItems(string platform)
+        => _activeLibraryDatasets
+            .Where(d => d.Platform == platform)
+            .Select(d =>
+            {
+                var id = d.Entries.Count > 0 ? d.Entries[0].DatLineId : "";
+                return new Library.LibrarySelectorItem(id, d.DatLine, _groupLeafIds.Contains(id));
+            })
+            .ToList();
 
     /// <summary>Selects the active Library dataset by dat_line id (entries carry the authoritative DatLineId). Returns false if none.</summary>
     private bool LoadActiveDatasetByDatLineId(string datLineId)
@@ -1961,32 +1973,6 @@ public partial class MainWindow : Window
         await win.ShowDialog(this);
     }
 
-    private void NavigateToLibrary(string platform, string datLine)
-    {
-        // Suppress both handlers while we set both selectors atomically
-        LibraryContextPlatform.SelectionChanged -= OnLibraryContextPlatformChanged;
-        LibraryContextDatLine.SelectionChanged  -= OnLibraryContextDatLineChanged;
-
-        var platforms = LibraryContextPlatform.ItemsSource as List<string>;
-        var pIdx      = platforms?.IndexOf(platform) ?? -1;
-        if (pIdx >= 0)
-            LibraryContextPlatform.SelectedIndex = pIdx;
-
-        var datLines = _activeLibraryDatasets
-            .Where(d => d.Platform == platform)
-            .Select(d => d.DatLine)
-            .ToList();
-        LibraryContextDatLine.ItemsSource = datLines;
-        var dIdx = datLines.IndexOf(datLine);
-        LibraryContextDatLine.SelectedIndex = dIdx >= 0 ? dIdx : 0;
-
-        LibraryContextPlatform.SelectionChanged += OnLibraryContextPlatformChanged;
-        LibraryContextDatLine.SelectionChanged  += OnLibraryContextDatLineChanged;
-
-        LoadActiveDataset(platform, dIdx >= 0 ? datLine : (datLines.Count > 0 ? datLines[0] : null));
-        SetActive(NavLibrary);
-    }
-
     /// <summary>
     /// When navigating to Library, automatically select the platform and DAT line that
     /// was last active in Systems view — if they still exist in the Library datasets.
@@ -2003,26 +1989,25 @@ public partial class MainWindow : Window
         // Check the platform exists in Library datasets.
         if (!_activeLibraryDatasets.Any(d => d.Platform == platform)) return;
 
-        if (_selectedDatLine is not null)
+        // Prefer the exact leaf by authoritative dat_line id (never the human label, which collides).
+        var datLineId = _selectedDatLine?.CatalogId;
+        if (datLineId is not null &&
+            _activeLibraryDatasets.Any(d => d.Platform == platform && d.Entries.Count > 0
+                                            && string.Equals(d.Entries[0].DatLineId, datLineId, StringComparison.Ordinal)))
         {
-            var datLine = _selectedDatLine.Name;
-            // Prefer: exact platform + DAT line match.
-            if (_activeLibraryDatasets.Any(d => d.Platform == platform && d.DatLine == datLine))
-            {
-                NavigateToLibraryInternal(platform, datLine);
-                return;
-            }
+            NavigateToLibraryInternal(platform, datLineId);
+            return;
         }
 
         // Fallback: platform exists but DAT line not found — select first DAT for that platform.
-        NavigateToLibraryInternal(platform, datLine: null);
+        NavigateToLibraryInternal(platform, datLineId: null);
     }
 
     /// <summary>
-    /// Sets Library selectors to <paramref name="platform"/> and optionally <paramref name="datLine"/>
-    /// without switching the active view (called from within view-switch logic).
+    /// Sets Library selectors to <paramref name="platform"/> and optionally <paramref name="datLineId"/>
+    /// (authoritative id, never a label) without switching the active view.
     /// </summary>
-    private void NavigateToLibraryInternal(string platform, string? datLine)
+    private void NavigateToLibraryInternal(string platform, string? datLineId)
     {
         LibraryContextPlatform.SelectionChanged -= OnLibraryContextPlatformChanged;
         LibraryContextDatLine.SelectionChanged  -= OnLibraryContextDatLineChanged;
@@ -2032,29 +2017,19 @@ public partial class MainWindow : Window
         if (pIdx >= 0)
             LibraryContextPlatform.SelectedIndex = pIdx;
 
-        var datLines = _activeLibraryDatasets
-            .Where(d => d.Platform == platform)
-            .Select(d => d.DatLine)
-            .ToList();
-        LibraryContextDatLine.ItemsSource = datLines;
-
-        string? resolvedDatLine;
-        if (datLine is not null)
-        {
-            var dIdx = datLines.IndexOf(datLine);
-            LibraryContextDatLine.SelectedIndex = dIdx >= 0 ? dIdx : 0;
-            resolvedDatLine = dIdx >= 0 ? datLine : (datLines.Count > 0 ? datLines[0] : null);
-        }
-        else
-        {
-            LibraryContextDatLine.SelectedIndex = datLines.Count > 0 ? 0 : -1;
-            resolvedDatLine = datLines.Count > 0 ? datLines[0] : null;
-        }
+        var items = BuildLibraryDatLineItems(platform);
+        LibraryContextDatLine.ItemsSource = items;
+        var dIdx = Library.LibrarySelectorItem.IndexOfDatLineId(items, datLineId);
+        LibraryContextDatLine.SelectedIndex = dIdx >= 0 ? dIdx : (items.Count > 0 ? 0 : -1);
+        var resolvedId = (LibraryContextDatLine.SelectedItem as Library.LibrarySelectorItem)?.DatLineId;
 
         LibraryContextPlatform.SelectionChanged += OnLibraryContextPlatformChanged;
         LibraryContextDatLine.SelectionChanged  += OnLibraryContextDatLineChanged;
 
-        LoadActiveDataset(platform, resolvedDatLine);
+        if (resolvedId is not null && LoadActiveDatasetByDatLineId(resolvedId)) return;
+        _activeDatasetEntries = [];
+        _librarySelection.Clear();
+        ApplyLibraryFilter();
     }
 
     private void ResolveFlagImages()
@@ -6043,9 +6018,9 @@ public partial class MainWindow : Window
 
         _activeLibraryDatasets = merged;
 
-        // Preserve current platform selection across rebuild
-        var currentPlatform = LibraryContextPlatform.SelectedItem as string;
-        var currentDatLine  = LibraryContextDatLine.SelectedItem  as string;
+        // Preserve current platform + dat_line selection across rebuild (dat_line by authoritative id).
+        var currentPlatform  = LibraryContextPlatform.SelectedItem as string;
+        var currentDatLineId = (LibraryContextDatLine.SelectedItem as Library.LibrarySelectorItem)?.DatLineId;
 
         var platforms = _activeLibraryDatasets.Select(d => d.Platform).Distinct().ToList();
 
@@ -6059,20 +6034,23 @@ public partial class MainWindow : Window
         LibraryContextPlatform.SelectedIndex = pIdx >= 0 ? pIdx : 0;
 
         var activePlatform = LibraryContextPlatform.SelectedItem as string ?? (platforms.Count > 0 ? platforms[0] : null);
-        var datLines = activePlatform is not null
-            ? _activeLibraryDatasets.Where(d => d.Platform == activePlatform).Select(d => d.DatLine).ToList()
-            : [];
-        LibraryContextDatLine.ItemsSource = datLines;
+        var items = activePlatform is not null ? BuildLibraryDatLineItems(activePlatform) : new List<Library.LibrarySelectorItem>();
+        LibraryContextDatLine.ItemsSource = items;
 
-        var dIdx = currentDatLine is not null ? datLines.IndexOf(currentDatLine) : -1;
-        LibraryContextDatLine.SelectedIndex = dIdx >= 0 ? dIdx : (datLines.Count > 0 ? 0 : -1);
+        var dIdx = Library.LibrarySelectorItem.IndexOfDatLineId(items, currentDatLineId);
+        LibraryContextDatLine.SelectedIndex = dIdx >= 0 ? dIdx : (items.Count > 0 ? 0 : -1);
 
         LibraryContextPlatform.SelectionChanged += OnLibraryContextPlatformChanged;
         LibraryContextDatLine.SelectionChanged  += OnLibraryContextDatLineChanged;
 
-        var selectedDatLine = LibraryContextDatLine.SelectedItem as string;
+        var selectedId = (LibraryContextDatLine.SelectedItem as Library.LibrarySelectorItem)?.DatLineId;
         if (activePlatform is not null)
-            LoadActiveDataset(activePlatform, selectedDatLine);
+        {
+            if (selectedId is not null && LoadActiveDatasetByDatLineId(selectedId)) return;
+            _activeDatasetEntries = [];
+            _librarySelection.Clear();
+            ApplyLibraryFilter();
+        }
     }
 
     private static string Capitalize(string s)
@@ -6094,36 +6072,28 @@ public partial class MainWindow : Window
         var platform = LibraryContextPlatform.SelectedItem as string;
         if (platform is null) return;
 
-        var datLines = _activeLibraryDatasets
-            .Where(d => d.Platform == platform)
-            .Select(d => d.DatLine)
-            .ToList();
+        var items = BuildLibraryDatLineItems(platform);
 
         // Suppress DatLine's SelectionChanged while repopulating to avoid a double-filter call
         LibraryContextDatLine.SelectionChanged -= OnLibraryContextDatLineChanged;
-        LibraryContextDatLine.ItemsSource       = datLines;
-        LibraryContextDatLine.SelectedIndex     = 0;
+        LibraryContextDatLine.ItemsSource       = items;
+        LibraryContextDatLine.SelectedIndex     = items.Count > 0 ? 0 : -1;
         LibraryContextDatLine.SelectionChanged += OnLibraryContextDatLineChanged;
 
-        LoadActiveDataset(platform, datLines.Count > 0 ? datLines[0] : null);
+        var id = (LibraryContextDatLine.SelectedItem as Library.LibrarySelectorItem)?.DatLineId;
+        if (id is not null && LoadActiveDatasetByDatLineId(id)) return;
+        _activeDatasetEntries = [];
+        _librarySelection.Clear();
+        ApplyLibraryFilter();
     }
 
     // Fired when the DAT Line context ComboBox changes
     private void OnLibraryContextDatLineChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
     {
-        var platform = LibraryContextPlatform.SelectedItem as string;
-        var datLine  = LibraryContextDatLine.SelectedItem  as string;
-        if (platform is null || datLine is null) return;
-        LoadActiveDataset(platform, datLine);
-    }
-
-    private void LoadActiveDataset(string platform, string? datLine)
-    {
-        _activeDatasetEntries = _activeLibraryDatasets
-            .FirstOrDefault(d => d.Platform == platform && d.DatLine == datLine)
-            ?.Entries ?? [];
-        // Dataset changed — a ReleaseId from the old dataset must not accidentally
-        // re-match an entry in the new one (IDs are scoped per DAT-line store).
+        if (LibraryContextDatLine.SelectedItem is not Library.LibrarySelectorItem item) return;
+        // Authoritative: resolve by dat_line id, never the (possibly duplicate) human label or list position.
+        if (LoadActiveDatasetByDatLineId(item.DatLineId)) return;
+        _activeDatasetEntries = [];
         _librarySelection.Clear();
         ApplyLibraryFilter();
     }
@@ -6136,7 +6106,8 @@ public partial class MainWindow : Window
 
     private async void OnLibraryBulkOperations(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        var datLineLabel = LibraryContextDatLine.SelectedItem as string;
+        // Human label only (not the id-suffixed Display) — the bulk dialog title stays human-facing.
+        var datLineLabel = (LibraryContextDatLine.SelectedItem as Library.LibrarySelectorItem)?.Label;
         var datLineId    = _activeDatasetEntries.FirstOrDefault()?.DatLineId;
         var dbPath       = _activeDatasetEntries.FirstOrDefault()?.DbPath;
 
@@ -9236,11 +9207,16 @@ public partial class MainWindow : Window
 
         if (platform is not null)
         {
-            // Sync library selectors
+            // Sync library selectors. The Catalog combo exposes only a human label; match the Library item by
+            // its human Label (setting SelectedItem then resolves the dataset by the item's authoritative id).
             if (LibraryContextPlatform.Items.Cast<string>().Contains(platform))
                 LibraryContextPlatform.SelectedItem = platform;
-            if (datLine is not null && LibraryContextDatLine.Items.Cast<string>().Contains(datLine))
-                LibraryContextDatLine.SelectedItem = datLine;
+            if (datLine is not null)
+            {
+                var match = LibraryContextDatLine.Items.OfType<Library.LibrarySelectorItem>()
+                    .FirstOrDefault(i => string.Equals(i.Label, datLine, StringComparison.Ordinal));
+                if (match is not null) LibraryContextDatLine.SelectedItem = match;
+            }
         }
 
         SetActive(NavLibrary);
