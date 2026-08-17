@@ -31,4 +31,18 @@ public static class VolumeArtifactPathBuilder
     /// </summary>
     public static string GetBuildDestinationPath(string volumeRoot, ArtifactBuildInfo info)
         => GetFlatFullPath(volumeRoot, info.FileName);
+
+    // ── Group volume layout (additive; Single flat methods above are unchanged) ──
+    // A Group volume nests artifacts one level under the leaf's physical segment:
+    //   <volume root>\<leaf segment>\<artifact filename>
+    // The same artifact filename may recur under different leaf segments (a distinct destination path). The
+    // leaf segment is the authority of Arkadia.Volumes.GroupRelativeLeafPath — never the DatLineId verbatim.
+
+    /// <summary>Group artifact path: <c>&lt;volumeRoot&gt;\&lt;leafSegment&gt;\&lt;artifactFileName&gt;</c>.</summary>
+    public static string GetGroupFlatFullPath(string volumeRoot, string leafSegment, string artifactFileName)
+        => Path.Combine(volumeRoot, leafSegment, artifactFileName);
+
+    /// <summary>Group Build destination for one artifact (nested under its leaf segment).</summary>
+    public static string GetGroupBuildDestinationPath(string volumeRoot, string leafSegment, ArtifactBuildInfo info)
+        => GetGroupFlatFullPath(volumeRoot, leafSegment, info.FileName);
 }

@@ -4718,6 +4718,33 @@ public partial class MainWindow : Window
             new Progress<Data.GroupVolumePlanProgress>(p => dialog.UpdateProgress(p));
         Data.GroupVolumePlanningResult? result = null;
 
+        // Apply & Build: re-plan under a fresh snapshot (stale-plan guard), validate the leaf segments, then Apply
+        // the assignments and materialize them into the local workspace — all off the UI thread. The guard and the
+        // path validation throw before any mutation; nothing is committed on those paths.
+        dialog.ExecuteHandler = previewedPlan => System.Threading.Tasks.Task.Run(() =>
+        {
+            var freshVolume = _catalog.GetVolumeById(entry.Id)
+                ?? throw new InvalidOperationException($"Volume '{entry.Label}' no longer exists.");
+            var freshLeaves = _catalog.GetLeavesForGroup(groupId);
+
+            var freshPlan = Data.GroupVolumePlanningService.Plan(_catalog, dataDir, appRoot, freshVolume, freshLeaves);
+            if (freshPlan.Readiness != Data.GroupVolumeReadiness.Ready ||
+                !Volumes.GroupVolumeExecutionService.IncludedSetMatches(result!, freshPlan))
+                throw new InvalidOperationException(
+                    "The plan changed since it was previewed — please re-open Plan and review the new plan before applying.");
+
+            // Validate every leaf's physical segment (empty/unsafe/collision) before touching the DB or disk.
+            var (segmentMap, segErr) = Volumes.GroupRelativeLeafPath.BuildMap(
+                groupId, freshLeaves.Select(l => l.DatLine.Id));
+            if (segErr is not null)
+                throw new InvalidOperationException($"Cannot build this Group volume — {segErr}");
+
+            previewedPlan.Report(new Volumes.GroupVolumeBuildProgress("Applying plan…", 0, 0));
+            Volumes.GroupVolumeExecutionService.Apply(_catalog, dataDir, freshVolume, freshLeaves, freshPlan);
+            return Volumes.GroupVolumeExecutionService.Build(
+                _catalog, dataDir, appRoot, freshVolume, freshLeaves, segmentMap, previewedPlan);
+        });
+
         var work = System.Threading.Tasks.Task.Run(() =>
             result = Data.GroupVolumePlanningService.Plan(_catalog, dataDir, appRoot, volume, leaves, progress));
 
@@ -4729,6 +4756,7 @@ public partial class MainWindow : Window
             System.Threading.Tasks.TaskContinuationOptions.None);
 
         await dialog.ShowDialog<bool>(this);
+        RefreshVolumes();   // an Apply & Build inside the dialog mutates volume/leaf state — reflect it.
     }
 
     private async void OnMakeVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
