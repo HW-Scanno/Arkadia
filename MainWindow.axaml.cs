@@ -3328,9 +3328,10 @@ public partial class MainWindow : Window
         VolActMarkLost.IsEnabled    = isNotLost;  // already-lost volumes are no-ops — owner-agnostic
         VolActDeleteVolume.IsEnabled = hasVol;    // header delete — owner-agnostic; enforcement at click time
 
-        VolActVerifyVolume.IsEnabled = hasVol && isSingle
-            && entry!.ArtifactCount > 0
-            && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
+        // Owner-aware: Single keeps its exact historical condition (artifacts + available leaf DB);
+        // Group requires only assigned artifacts (membership/leaf-DB/root validated at execution time). V-G5.
+        VolActVerifyVolume.IsEnabled = hasVol
+            && entry!.CanVerifyVolume(entry.DbPath.Length > 0 && File.Exists(entry.DbPath));
 
         VolActRepair.IsEnabled = hasVol && isSingle
             && entry!.StatusLabel is "WARNING" or "LOST"
@@ -3390,7 +3391,8 @@ public partial class MainWindow : Window
     {
         var entry = VolumesList.SelectedItem as Volumes.VolumeEntry;
         if (entry is null) return;
-        if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath)) return;
+        // Single requires an available leaf DB; Group has none (its per-leaf DBs are resolved at execution time).
+        if (!entry.IsGroupOwned && (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath))) return;
 
         var appRoot = AppContext.BaseDirectory;
 
@@ -3435,8 +3437,11 @@ public partial class MainWindow : Window
         var  volSlug   = SafeFileName(entry.Label);
         bool wasLost   = entry.Status == "lost";
 
-        // ── Show dialog ───────────────────────────────────────────────────
-        var dlg     = new DatLineVerifyDialog(entry.DatLineId, entry.PlatformId);
+        // ── Show dialog (Verify Volume presentation — not the DAT-line "Verify ALL" mode) ──
+        // entry.DatLineId carries the owner display: the Group DisplayName for Group volumes, the DAT-line
+        // description for Single. Present it as Collection/DAT Line accordingly.
+        var dlg     = new DatLineVerifyDialog();
+        dlg.ConfigureVolumeMode(entry.Label, entry.DatLineId, entry.IsGroupOwned);
         var dlgTask = dlg.ShowDialog(this);
 
         Volumes.VolumeVerifyResult? result = null;
@@ -3456,6 +3461,8 @@ public partial class MainWindow : Window
             if (p.Action == "hashing")    dlg.SetStatus($"Hashing files...  {p.Path}");
             else if (p.Action == "classified") dlg.SetStatus($"Classifying files...  {p.Path}");
         });
+        // Group only: announce the current leaf as the orchestrator advances (sequential, DatLineId order).
+        var leafProgress = new Progress<string>(leafId => dlg.SetStatus($"Verifying leaf {leafId}…"));
 
         try
         {
@@ -3464,11 +3471,26 @@ public partial class MainWindow : Window
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                     dlg.SetStatus("Scanning volume filesystem..."));
 
-                var store   = new Data.DatLineStore(entry.DbPath);
-                var svc     = new Volumes.VolumeVerifyService(_catalog);
+                if (entry.IsGroupOwned)
+                {
+                    // Group Verify = sequential leaf-by-leaf reuse of the Single engine (VolumeVerifyService.VerifyCore).
+                    var volume = _catalog.GetVolumeById(entry.Id)
+                        ?? throw new InvalidOperationException($"Volume \"{entry.Label}\" no longer exists.");
+                    var leaves  = _catalog.GetLeavesForGroup(entry.GroupId!);
+                    var outcome = Volumes.GroupVolumeVerifyOrchestrator.Verify(
+                        _catalog, _dataDir, volume, volumeRoot!, leaves, allDbPaths,
+                        foundFileProgress, verifyProgress, leafProgress);
 
-                result = svc.Verify(entry.Id, volumeRoot, store, allDbPaths,
-                    foundFileProgress, verifyProgress);
+                    if (outcome.BlockReason is not null) errorMessage = outcome.BlockReason;
+                    else                                 result       = outcome.Result;
+                }
+                else
+                {
+                    var store = new Data.DatLineStore(entry.DbPath);
+                    var svc   = new Volumes.VolumeVerifyService(_catalog);
+                    result = svc.Verify(entry.Id, volumeRoot, store, allDbPaths,
+                        foundFileProgress, verifyProgress);
+                }
 
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                     dlg.SetStatus("Applying state updates..."));
@@ -3536,6 +3558,10 @@ public partial class MainWindow : Window
         }
         else if (result is not null)
         {
+            // Populate the top summary counters from the final (aggregated, for Group) result so they no
+            // longer sit at zero while the completion line reports real numbers.
+            dlg.UpdateVolumeStats(result);
+
             string statusLine;
             if (wasLost && result.IsHealthy)
                 statusLine = "Volume RESTORED from LOST.";

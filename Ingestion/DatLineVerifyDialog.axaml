@@ -65,7 +65,7 @@
                        FontSize="13" FontWeight="SemiBold"
                        Foreground="#E8E8F0"
                        TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
-            <TextBlock Text="READ-ONLY — no changes will be persisted"
+            <TextBlock x:Name="SubtitleText" Text="READ-ONLY — no changes will be persisted"
                        FontSize="10" LetterSpacing="1" Foreground="#555566"/>
         </StackPanel>
 
@@ -75,31 +75,31 @@
                 Margin="0,0,0,8">
             <Grid ColumnDefinitions="*,*,*,*,*,*,*">
                 <StackPanel Grid.Column="0" Spacing="3">
-                    <TextBlock Classes="stat-label" Text="VOLUMES"/>
+                    <TextBlock x:Name="LblC0" Classes="stat-label" Text="VOLUMES"/>
                     <TextBlock x:Name="StatVolumes" Classes="stat-val"/>
                 </StackPanel>
                 <StackPanel Grid.Column="1" Spacing="3">
-                    <TextBlock Classes="stat-label" Text="VERIFIED"/>
+                    <TextBlock x:Name="LblC1" Classes="stat-label" Text="VERIFIED"/>
                     <TextBlock x:Name="StatVerifiedVols" Classes="stat-val"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Spacing="3">
-                    <TextBlock Classes="stat-label" Text="SKIPPED"/>
+                    <TextBlock x:Name="LblC2" Classes="stat-label" Text="SKIPPED"/>
                     <TextBlock x:Name="StatSkipped" Classes="stat-val" Foreground="#555566"/>
                 </StackPanel>
                 <StackPanel Grid.Column="3" Spacing="3">
-                    <TextBlock Classes="stat-label" Text="EXPECTED"/>
+                    <TextBlock x:Name="LblC3" Classes="stat-label" Text="EXPECTED"/>
                     <TextBlock x:Name="StatExpected" Classes="stat-val"/>
                 </StackPanel>
                 <StackPanel Grid.Column="4" Spacing="3">
-                    <TextBlock Classes="stat-label" Text="VERIFIED"/>
+                    <TextBlock x:Name="LblC4" Classes="stat-label" Text="VERIFIED"/>
                     <TextBlock x:Name="StatVerified" Classes="stat-val" Foreground="#81C784"/>
                 </StackPanel>
                 <StackPanel Grid.Column="5" Spacing="3">
-                    <TextBlock Classes="stat-label" Text="MISSING"/>
+                    <TextBlock x:Name="LblC5" Classes="stat-label" Text="MISSING"/>
                     <TextBlock x:Name="StatMissing" Classes="stat-val" Foreground="#EF5350"/>
                 </StackPanel>
                 <StackPanel Grid.Column="6" Spacing="3">
-                    <TextBlock Classes="stat-label" Text="MISMATCH"/>
+                    <TextBlock x:Name="LblC6" Classes="stat-label" Text="MISMATCH"/>
                     <TextBlock x:Name="StatMismatch" Classes="stat-val" Foreground="#FF7043"/>
                 </StackPanel>
             </Grid>

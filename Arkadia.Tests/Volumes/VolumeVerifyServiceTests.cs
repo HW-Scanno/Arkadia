@@ -131,6 +131,28 @@ public sealed class VolumeVerifyServiceTests : IDisposable
         return svc.Verify(vol.Id, VolumeRoot(vol.Label), store, []);
     }
 
+    // ── 0. VerifyCore wrapper equivalence (V-G5 seam) ─────────────────────────
+
+    [Fact] // The public Single Verify(...) is exactly VerifyCore(volId, GetVolumeArtifacts(volId), root, ...).
+    public void Verify_IsExactlyVerifyCore_OverFullAssignments()
+    {
+        var content  = new byte[] { 4, 4, 4, 4 };
+        var (vol, _) = ProvisionOne("vol-core", "Game.chd", content);
+        WriteVolumeFile("vol-core", "Game.chd", content);
+        WriteVolumeFile("vol-core", "stray.txt", new byte[] { 7 });   // an extra unknown file
+
+        var catalog = OpenCatalog();
+        var svc     = new VolumeVerifyService(catalog);
+        var scoped  = catalog.GetVolumeArtifacts(vol.Id);
+        var viaCore = svc.VerifyCore(vol.Id, scoped, VolumeRoot(vol.Label), OpenStore(), []);
+
+        // Same inputs → identical classification/recovery/health as the historical wrapper would produce.
+        Assert.Equal(2, viaCore.TotalScanned);
+        Assert.Equal(1, viaCore.Verified);
+        Assert.Equal(1, viaCore.UnknownFound);
+        Assert.Equal(1, viaCore.UnknownMoved);
+    }
+
     // ── 1. VerifyVolume_ScansAllFiles_NotOnlyChd ──────────────────────────────
 
     [Fact]

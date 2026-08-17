@@ -45,6 +45,10 @@ public sealed class VolumeVerifyService
     /// <summary>
     /// Performs a full recursive scan of <paramref name="volumeRoot"/>,
     /// classifies every file, executes recovery moves, and updates the DB.
+    ///
+    /// This is the historical Single entry point: it loads the volume's assignments and delegates to
+    /// <see cref="VerifyCore"/>. Behavior is unchanged — the assignment set is the full volume set and
+    /// reachability is derived from <paramref name="volumeRoot"/> existence.
     /// </summary>
     /// <param name="volumeId">Catalog volume ID being verified.</param>
     /// <param name="volumeRoot">Absolute path to the mounted volume root.</param>
@@ -59,11 +63,44 @@ public sealed class VolumeVerifyService
         IReadOnlyList<string>             allDatLineDbPaths,
         IProgress<FoundFileProgress>?     foundFileProgress = null,
         IProgress<VolumeVerifyProgress>?  verifyProgress    = null)
+        => VerifyCore(
+            volumeId,
+            _catalog.GetVolumeArtifacts(volumeId),
+            volumeRoot,
+            store,
+            allDatLineDbPaths,
+            foundFileProgress,
+            verifyProgress);
+
+    /// <summary>
+    /// Full-scan verify engine over an <b>explicitly supplied</b> assignment set and physical root. This is
+    /// the seam that lets a Group volume reuse the exact Single semantics leaf-by-leaf: the orchestrator passes
+    /// one leaf's assignments, that leaf's <see cref="DatLineStore"/>, and the leaf's physical root
+    /// (<c>&lt;groupRoot&gt;/&lt;leaf-segment&gt;</c>), so the flat classification/recovery logic operates
+    /// correctly inside the leaf and sibling leaves are invisible (outside <paramref name="scopedRoot"/>).
+    ///
+    /// <para><paramref name="volumeId"/> remains the OWNING volume id (the Group volume for a leaf-scoped run)
+    /// so <c>DeleteVolumeArtifactRow</c>/<c>actual_size_bytes</c>/<c>GetOwningVolumesForArtifact</c> operate on
+    /// the real owner. <paramref name="reachableOverride"/> lets the Group orchestrator supply group-root
+    /// reachability (a missing leaf subfolder under a reachable Group root is genuinely-missing content, not an
+    /// offline volume); when null, reachability is derived from <paramref name="scopedRoot"/> existence exactly
+    /// as the historical Single path.</para>
+    /// </summary>
+    public VolumeVerifyResult VerifyCore(
+        string                            volumeId,
+        IReadOnlyList<VolumeArtifactRecord> scopedAssignments,
+        string                            scopedRoot,
+        DatLineStore                      store,
+        IReadOnlyList<string>             allDatLineDbPaths,
+        IProgress<FoundFileProgress>?     foundFileProgress = null,
+        IProgress<VolumeVerifyProgress>?  verifyProgress    = null,
+        bool?                             reachableOverride  = null)
     {
+        var volumeRoot = scopedRoot;
         var log = new List<string>();
 
         // ── Build owned-artifact maps ─────────────────────────────────────────
-        var vaRecords = _catalog.GetVolumeArtifacts(volumeId);
+        var vaRecords = scopedAssignments;
         var vaByDaId  = vaRecords.ToDictionary(va => va.DerivedArtifactId, StringComparer.Ordinal);
 
         var verifyInfos = store.GetArtifactVerifyInfos(vaByDaId.Keys);
@@ -79,7 +116,10 @@ public sealed class VolumeVerifyService
         // Reachability gate: only when the root physically exists did we actually
         // scan it. If it is unreachable, every assigned artifact would look
         // "missing" — we must NOT reconcile assignments in that case (Case D).
-        bool volumeReachable = Directory.Exists(volumeRoot);
+        // A Group orchestrator supplies reachableOverride = <group-root exists> so a missing leaf
+        // subfolder under a reachable Group root is treated as genuinely-missing content (reconciled),
+        // not as an offline volume. The Single wrapper passes null → historical scopedRoot existence.
+        bool volumeReachable = reachableOverride ?? Directory.Exists(volumeRoot);
         log.Add("recursive-scan-start");
         var physFiles = ScanFiles(volumeRoot, log, foundFileProgress);
         log.Add($"recursive-scan-complete  total={physFiles.Count}  reachable={volumeReachable}");

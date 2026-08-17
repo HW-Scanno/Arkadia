@@ -111,4 +111,30 @@ public sealed class VolumeEntryTests
     [InlineData("lost", true)]
     public void CanMoveVolume_NotBuiltOrLost_Disabled(string status, bool group)
         => Assert.False(MoveCase(status, "—", group).CanMoveVolume);
+
+    // ── Verify-action gating (V-G5): Single truth table unchanged; Group needs no DbPath ────
+
+    private static VolumeEntry VerifyCase(bool group, int artifactCount) => new()
+    {
+        Id = "v1", Label = "Test", PlatformId = "c64", DatLineId = "DAT Line",
+        RawDatLineId = group ? null : "dl1", GroupId = group ? "c64-tosec" : null, DbPath = "",
+        Status = "present", Health = "ok", PlannedSizeBytes = 1_000, ActualSizeBytes = 100,
+        CurrentLocation = "workspace", DiskId = null, DiskLabel = null,
+        ArtifactCount = artifactCount,
+    };
+
+    [Theory] // Single: exactly (artifacts > 0) AND (leaf DB available) — the historical truth table, unchanged
+    [InlineData(1, true,  true)]
+    [InlineData(1, false, false)]   // no DB → disabled (regression guard)
+    [InlineData(0, true,  false)]   // no artifacts → disabled
+    [InlineData(0, false, false)]
+    public void CanVerifyVolume_Single_TruthTableUnchanged(int artifacts, bool dbAvailable, bool expected)
+        => Assert.Equal(expected, VerifyCase(group: false, artifacts).CanVerifyVolume(dbAvailable));
+
+    [Theory] // Group: requires only assigned artifacts — never a Single DbPath (validated at execution time)
+    [InlineData(1, false, true)]    // artifacts present, no DB probe → enabled
+    [InlineData(1, true,  true)]
+    [InlineData(0, false, false)]   // no artifacts → disabled
+    public void CanVerifyVolume_Group_RequiresArtifactsOnly(int artifacts, bool dbAvailable, bool expected)
+        => Assert.Equal(expected, VerifyCase(group: true, artifacts).CanVerifyVolume(dbAvailable));
 }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Arkadia.Volumes;
 
@@ -44,4 +45,38 @@ public sealed class VolumeVerifyResult
     public bool HadRecoveryActions { get; init; }
 
     public IReadOnlyList<string> LogLines { get; init; } = [];
+
+    /// <summary>
+    /// Aggregates per-leaf results into one Group-volume result: integer counters SUM, <see cref="IsHealthy"/>
+    /// is the AND of all leaves (a healthy-only-if-every-leaf-healthy rule; empty ⇒ healthy), and
+    /// <see cref="HadRecoveryActions"/> is the OR. Log lines are concatenated in the order given. Used by the
+    /// Group Verify orchestrator; the Single path never calls it.
+    /// </summary>
+    public static VolumeVerifyResult Combine(IReadOnlyList<VolumeVerifyResult> parts)
+    {
+        var log = new List<string>();
+        foreach (var p in parts) log.AddRange(p.LogLines);
+
+        return new VolumeVerifyResult
+        {
+            TotalScanned            = parts.Sum(p => p.TotalScanned),
+            SystemFiles             = parts.Sum(p => p.SystemFiles),
+            Verified                = parts.Sum(p => p.Verified),
+            MisplacedFound          = parts.Sum(p => p.MisplacedFound),
+            MisplacedRestored       = parts.Sum(p => p.MisplacedRestored),
+            MisplacedCollisions     = parts.Sum(p => p.MisplacedCollisions),
+            UnwantedFound           = parts.Sum(p => p.UnwantedFound),
+            UnwantedMoved           = parts.Sum(p => p.UnwantedMoved),
+            KnownUnexpectedFound    = parts.Sum(p => p.KnownUnexpectedFound),
+            KnownUnexpectedMoved    = parts.Sum(p => p.KnownUnexpectedMoved),
+            UnknownFound            = parts.Sum(p => p.UnknownFound),
+            UnknownMoved            = parts.Sum(p => p.UnknownMoved),
+            Missing                 = parts.Sum(p => p.Missing),
+            StaleAssignmentsRemoved = parts.Sum(p => p.StaleAssignmentsRemoved),
+            Errors                  = parts.Sum(p => p.Errors),
+            IsHealthy               = parts.All(p => p.IsHealthy),
+            HadRecoveryActions      = parts.Any(p => p.HadRecoveryActions),
+            LogLines                = log,
+        };
+    }
 }

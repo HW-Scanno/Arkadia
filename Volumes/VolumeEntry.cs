@@ -35,6 +35,16 @@ public sealed class VolumeEntry
     /// </summary>
     public bool CanMoveVolume => Status == "present";
 
+    /// <summary>
+    /// Owner-aware Verify Volume readiness. Both ownership kinds require at least one assigned artifact. A Single
+    /// volume additionally requires its leaf DB to be available (<paramref name="singleDbAvailable"/> =
+    /// <c>DbPath</c> exists) — the historical condition, preserved exactly. A Group volume has no single
+    /// <c>DbPath</c>; its per-leaf DB / membership / root are validated at execution time, so the button only
+    /// requires assigned artifacts. Pure — the caller supplies the filesystem probe result.
+    /// </summary>
+    public bool CanVerifyVolume(bool singleDbAvailable)
+        => ArtifactCount > 0 && (IsGroupOwned || singleDbAvailable);
+
     public double FillRatio => PlannedSizeBytes > 0
         ? System.Math.Clamp((double)ActualSizeBytes / PlannedSizeBytes, 0, 1)
         : 0;
