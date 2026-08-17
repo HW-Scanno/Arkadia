@@ -45,6 +45,15 @@ public sealed class VolumeEntry
     public bool CanVerifyVolume(bool singleDbAvailable)
         => ArtifactCount > 0 && (IsGroupOwned || singleDbAvailable);
 
+    /// <summary>
+    /// Append Volume readiness: the volume must be built and physically materialized (LOCAL or ON DISK ⇒
+    /// <c>Status == "present"</c>), regardless of ownership. Owner-agnostic — V-G6 ported Append to Group. The
+    /// historical Single gate was <c>isPhysical &amp;&amp; isSingle</c>; for a Single owner <c>isSingle</c> is
+    /// always true, so this preserves the Single truth table exactly while additionally enabling Group. Leaf-DB
+    /// availability is validated at execution time (no <c>DbPath</c> requirement in the gate).
+    /// </summary>
+    public bool CanAppendVolume => Status == "present";
+
     public double FillRatio => PlannedSizeBytes > 0
         ? System.Math.Clamp((double)ActualSizeBytes / PlannedSizeBytes, 0, 1)
         : 0;

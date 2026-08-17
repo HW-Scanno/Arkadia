@@ -137,4 +137,17 @@ public sealed class VolumeEntryTests
     [InlineData(0, false, false)]   // no artifacts → disabled
     public void CanVerifyVolume_Group_RequiresArtifactsOnly(int artifacts, bool dbAvailable, bool expected)
         => Assert.Equal(expected, VerifyCase(group: true, artifacts).CanVerifyVolume(dbAvailable));
+
+    // ── Append-action gating (V-G6): present-only; owner-agnostic; Single truth table preserved ────
+
+    [Theory] // Single: enabled iff present (historical isPhysical && isSingle == isPhysical for a Single owner)
+    [InlineData("present", false, true)]
+    [InlineData("init",    false, false)]
+    [InlineData("lost",    false, false)]
+    // Group: enabled iff present, with no DbPath requirement
+    [InlineData("present", true,  true)]
+    [InlineData("init",    true,  false)]
+    [InlineData("lost",    true,  false)]
+    public void CanAppendVolume_PresentOnly_OwnerAgnostic(string status, bool group, bool expected)
+        => Assert.Equal(expected, MoveCase(status, "workspace", group).CanAppendVolume);
 }

@@ -39,6 +39,12 @@ public sealed class AppendVolumeService
             // Copy
             try
             {
+                // Ensure the target's parent exists. For Single flat volumes the parent is the volume root
+                // (already present — a no-op); for Group nested layout it is the leaf-segment folder, which may
+                // not exist yet. Only the planned target's own parent is created — never an arbitrary path.
+                var targetDir = Path.GetDirectoryName(entry.TargetPath);
+                if (!string.IsNullOrEmpty(targetDir)) Directory.CreateDirectory(targetDir);
+
                 File.Copy(entry.ArchivePath, entry.TargetPath, overwrite: false);
             }
             catch (Exception ex)

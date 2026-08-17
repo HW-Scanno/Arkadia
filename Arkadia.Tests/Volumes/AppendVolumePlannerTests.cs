@@ -130,6 +130,57 @@ public sealed class AppendVolumePlannerTests : IDisposable
             .Plan(volume, volRoot, archiveRoot, OpenStore());
     }
 
+    // ── 0a. Planner extraction: Plan(...) == PlanCore(..., initial 0) (V-G6 seam) ──────
+
+    [Fact]
+    public void Plan_EqualsPlanCore_WithZeroInitialAllocation()
+    {
+        var content = new byte[] { 1, 2, 3, 4, 5 };
+        ProvisionArtifact("vol-src", "Game.chd", content);
+        var target = ProvisionEmptyVolume("vol-target");
+        var root   = VolumeRoot(target.Label);
+        Directory.CreateDirectory(root);
+
+        var wrapper = new AppendVolumePlanner(OpenCatalog()).Plan(target, root, _tmp, OpenStore());
+        var core    = new AppendVolumePlanner(OpenCatalog()).PlanCore(
+            target.Id, target.Label, target.DatLineId!, target.PlatformId,
+            target.PlannedSizeBytes, target.ActualSizeBytes, root, _tmp, OpenStore(),
+            initialAllocatedBytes: 0, out var finalAllocated);
+
+        Assert.Equal(wrapper.PlannedCount, core.PlannedCount);
+        Assert.Equal(wrapper.PlannedBytes, core.PlannedBytes);
+        Assert.Equal(wrapper.SkippedCount, core.SkippedCount);
+        Assert.Equal(wrapper.Entries.Count, core.Entries.Count);
+        Assert.Equal(core.PlannedBytes, finalAllocated);   // consumed budget flows out for the next leaf
+    }
+
+    // ── 0b. Global budget: a non-zero initial allocation shrinks remaining capacity ──────
+
+    [Fact]
+    public void PlanCore_ThreadsBudget_AlreadyConsumedLeavesNoRoom()
+    {
+        var content = new byte[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };   // 10 bytes
+        ProvisionArtifact("vol-src", "Game.chd", content);
+        // Free space == exactly one artifact.
+        var target = ProvisionEmptyVolume("vol-target", plannedSizeBytes: content.Length);
+        var root   = VolumeRoot(target.Label);
+        Directory.CreateDirectory(root);
+
+        var fits = new AppendVolumePlanner(OpenCatalog()).PlanCore(
+            target.Id, target.Label, target.DatLineId!, target.PlatformId,
+            target.PlannedSizeBytes, target.ActualSizeBytes, root, _tmp, OpenStore(),
+            initialAllocatedBytes: 0, out _);
+        Assert.Equal(1, fits.PlannedCount);
+
+        // The whole budget was already consumed by an earlier leaf → this candidate no longer fits.
+        var full = new AppendVolumePlanner(OpenCatalog()).PlanCore(
+            target.Id, target.Label, target.DatLineId!, target.PlatformId,
+            target.PlannedSizeBytes, target.ActualSizeBytes, root, _tmp, OpenStore(),
+            initialAllocatedBytes: content.Length, out _);
+        Assert.Equal(0, full.PlannedCount);
+        Assert.Equal(1, full.TooLargeSkipped);
+    }
+
     // ── 1. FindsUnassignedLocalArchiveArtifact ────────────────────────────────
 
     [Fact]

@@ -41,6 +41,7 @@ public partial class AppendVolumeDialog : Window
     // ── State ─────────────────────────────────────────────────────────────────
 
     private readonly AppendVolumePlan                          _plan;
+    private readonly GroupAppendVolumePlan?                     _groupPlan;   // set only for Group Append
     private readonly CatalogService                            _catalog;
     private          bool                                      _executing;
 
@@ -71,6 +72,31 @@ public partial class AppendVolumeDialog : Window
         ProgressRowsList.ItemsSource = _progressRows;
 
         DisplayPlan(plan);
+    }
+
+    /// <summary>
+    /// Group Append: one aggregated preview (the synthetic <see cref="GroupAppendVolumePlan.Aggregate"/>) driving
+    /// the identical presentation; on Execute the real per-leaf plans run sequentially through the same
+    /// <see cref="AppendVolumeService"/>. No per-leaf confirmation dialogs.
+    /// </summary>
+    public AppendVolumeDialog(GroupAppendVolumePlan groupPlan, CatalogService catalog)
+    {
+        _groupPlan = groupPlan;
+        _plan      = groupPlan.Aggregate;
+        _catalog   = catalog;
+
+        InitializeComponent();
+
+        PlanRowsList.ItemsSource     = _planRows;
+        ProgressRowsList.ItemsSource = _progressRows;
+
+        DisplayPlan(_plan);
+
+        // Group presentation, without redesigning the dialog: ALWAYS show the collection identity (even for an
+        // empty/0-planned plan) and rewrite Single "DAT line" wording to "collection". totalLeaves = every group
+        // leaf considered (e.g. 410), not just leaves with planned entries.
+        PlanHint.Text = GroupAppendPresentation.ComposeHint(
+            groupPlan.CollectionDisplay, groupPlan.LeafPlans.Count, PlanHint.Text ?? "");
     }
 
     // ── Plan display ──────────────────────────────────────────────────────────
@@ -227,7 +253,9 @@ public partial class AppendVolumeDialog : Window
         AppendVolumeResult result;
         try
         {
-            result = await Task.Run(() => svc.Execute(_plan, progressHandler));
+            result = _groupPlan is null
+                ? await Task.Run(() => svc.Execute(_plan, progressHandler))
+                : await Task.Run(() => ExecuteGroup(svc, _groupPlan, progressHandler));
         }
         catch (Exception ex)
         {
@@ -263,6 +291,42 @@ public partial class AppendVolumeDialog : Window
 
             CloseButton.IsEnabled = true;
         });
+    }
+
+    // ── Group execution: run each non-empty leaf plan through the SAME executor, sequentially ──
+    // Planning was global; execution is leaf-scoped. Each leaf plan carries its exact DatLineId, so
+    // AppendVolumeService writes volume_artifacts.dat_line_id = leaf (never the GroupId). Results are summed.
+    // A per-entry failure follows the historical single-Append result semantics; an unexpected exception
+    // propagates (stopping further leaves) with earlier leaves' committed work retained (no rollback).
+    private static AppendVolumeResult ExecuteGroup(
+        AppendVolumeService svc, GroupAppendVolumePlan groupPlan,
+        IProgress<AppendVolumeProgress> progress)
+    {
+        int  copied = 0, errors = 0, deleted = 0, deleteFailed = 0;
+        long bytes  = 0;
+        var  logs   = new List<string>();
+
+        foreach (var leafPlan in groupPlan.LeafPlans)   // DatLineId Ordinal (planning order)
+        {
+            if (leafPlan.PlannedCount == 0) continue;
+            var r = svc.Execute(leafPlan, progress);
+            copied       += r.CopiedCount;
+            bytes        += r.BytesCopied;
+            errors       += r.ErrorCount;
+            deleted      += r.SourcesDeletedCount;
+            deleteFailed += r.SourceDeleteFailedCount;
+            logs.AddRange(r.LogLines);
+        }
+
+        return new AppendVolumeResult
+        {
+            CopiedCount             = copied,
+            BytesCopied             = bytes,
+            ErrorCount              = errors,
+            SourcesDeletedCount     = deleted,
+            SourceDeleteFailedCount = deleteFailed,
+            LogLines                = logs,
+        };
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

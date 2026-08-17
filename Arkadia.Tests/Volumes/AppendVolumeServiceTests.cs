@@ -173,8 +173,10 @@ public sealed class AppendVolumeServiceTests : IDisposable
         var plan = BuildPlan(vol, volRoot);
         Assert.True(plan.CanExecute, "plan must be executable");
 
-        // Remove volume root so File.Copy fails with DirectoryNotFoundException
-        Directory.Delete(volRoot, recursive: false);
+        // Force File.Copy to fail. The executor now creates the target's parent directory before copying
+        // (approved for Group nested leaf paths), so a missing volume root is no longer a failure trigger.
+        // Placing a DIRECTORY at the exact target file path makes File.Copy throw regardless.
+        Directory.CreateDirectory(Path.Combine(volRoot, "CopyFail.chd"));
 
         var result = new AppendVolumeService(OpenCatalog()).Execute(plan);
 

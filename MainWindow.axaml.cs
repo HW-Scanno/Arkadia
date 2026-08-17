@@ -3320,7 +3320,7 @@ public partial class MainWindow : Window
         VolActMake.IsEnabled     = isNotLost;
         VolActMove.IsEnabled     = hasVol && entry!.CanMoveVolume;   // physical source; owner-agnostic (V-G4)
         VolActResize.IsEnabled   = isNotLost;                // capacity-only — owner-agnostic
-        VolActAppend.IsEnabled   = isPhysical && isSingle;   // requires files on disk/workspace
+        VolActAppend.IsEnabled   = hasVol && entry!.CanAppendVolume;   // present; owner-agnostic (V-G6)
         VolActReabsorb.IsEnabled = isPhysical && isSingle;   // requires physical source
         VolActFillback.IsEnabled = isPhysical && isSingle    // source must be physical, have artifacts, valid DB
             && entry!.ArtifactCount > 0
@@ -5399,7 +5399,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath)) return;
+        // Single requires its leaf DB; Group has none (per-leaf DBs are resolved at planning time).
+        if (!entry.IsGroupOwned && (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath))) return;
 
         var appRoot = AppContext.BaseDirectory;
 
@@ -5434,11 +5435,34 @@ public partial class MainWindow : Window
             return;
         }
 
-        // ── Build plan ────────────────────────────────────────────────────
-        var store    = new DatLineStore(entry.DbPath);
-        var volume   = _catalog.GetVolumeById(entry.Id);
+        var volume = _catalog.GetVolumeById(entry.Id);
         if (volume is null) return;
 
+        if (entry.IsGroupOwned)
+        {
+            // ── Group Append: global planning + leaf-scoped Single execution ──
+            var leaves    = _catalog.GetLeavesForGroup(entry.GroupId!);
+            var groupPlan = Volumes.GroupAppendPlanningService.Plan(
+                _catalog, _dataDir, appRoot, volume, volumeRoot, entry.DatLineId, leaves);
+
+            if (groupPlan.BlockReason is not null)
+            {
+                await new InfoDialog("Append Volume Blocked", groupPlan.BlockReason).ShowDialog(this);
+                return;
+            }
+
+            var gdlg = new AppendVolumeDialog(groupPlan, _catalog);
+            await gdlg.ShowDialog(this);
+
+            var gResult = gdlg.ExecutionResult;
+            if (gResult is null || gResult.CopiedCount == 0) return;
+
+            RefreshAfterVolumeStorageMutation(entry.Id);
+            return;
+        }
+
+        // ── Single Append (unchanged) ─────────────────────────────────────
+        var store   = new DatLineStore(entry.DbPath);
         var planner = new Volumes.AppendVolumePlanner(_catalog);
         var plan    = planner.Plan(volume, volumeRoot, appRoot, store);
 

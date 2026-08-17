@@ -36,19 +36,55 @@ public sealed class AppendVolumePlanner
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Builds an append plan for <paramref name="volume"/>.
+    /// Builds an append plan for <paramref name="volume"/> (Single owner).
     /// <paramref name="archiveRoot"/> is the application base directory from which
-    /// <c>derived_artifacts.relative_path</c> values are resolved.
+    /// <c>derived_artifacts.relative_path</c> values are resolved. This is the authoritative Single wrapper —
+    /// it delegates to <see cref="PlanCore"/> with a zero starting allocation and its behavior is unchanged.
     /// </summary>
     public AppendVolumePlan Plan(
         VolumeRecord volume,
         string       volumeRootPath,
         string       archiveRoot,
         DatLineStore store)
+        => PlanCore(
+            volume.Id, volume.Label, volume.DatLineId!, volume.PlatformId,
+            volume.PlannedSizeBytes, volume.ActualSizeBytes,
+            volumeRootPath, archiveRoot, store,
+            initialAllocatedBytes: 0, out _);
+
+    /// <summary>
+    /// The reusable first-fit planning core over an explicit budget (V-G6 seam). Group Append threads ONE global
+    /// remaining-capacity budget across all leaves by passing each leaf's <paramref name="initialAllocatedBytes"/>
+    /// = the bytes already committed by earlier leaves, and reading back <paramref name="finalAllocatedBytes"/>.
+    /// The Single wrapper calls it with a zero start, so its result is unchanged. The algorithm is identical
+    /// first-fit in candidate order — never size-sorted. <paramref name="rootReachableOverride"/> decouples "is
+    /// the volume reachable" (Group: the group root exists) from a specific leaf sub-folder's existence; a missing
+    /// leaf folder is not a collision and is created at copy time. When null, reachability is the historical
+    /// <c>Directory.Exists(volumeRootPath)</c>. <paramref name="datLineId"/> is the OWNER written into every
+    /// planned entry — for Group this is the exact leaf id, never the GroupId.
+    /// </summary>
+    public AppendVolumePlan PlanCore(
+        string       volumeId,
+        string       volumeLabel,
+        string       datLineId,
+        string       platformId,
+        long         plannedSizeBytes,
+        long         actualSizeBytes,
+        string       volumeRootPath,
+        string       archiveRoot,
+        DatLineStore store,
+        long         initialAllocatedBytes,
+        out long     finalAllocatedBytes,
+        bool?        rootReachableOverride = null)
     {
         // ── Hard precondition ─────────────────────────────────────────────
-        if (!Directory.Exists(volumeRootPath))
-            return Empty(volume, volumeRootPath, archiveRoot);
+        bool rootReachable = rootReachableOverride ?? Directory.Exists(volumeRootPath);
+        if (!rootReachable)
+        {
+            finalAllocatedBytes = initialAllocatedBytes;
+            return Empty(volumeId, volumeLabel, datLineId, platformId,
+                         plannedSizeBytes, actualSizeBytes, volumeRootPath, archiveRoot);
+        }
 
         // ── DB candidates (all non-unwanted artifacts in this DAT line) ───
         var candidates       = store.GetAllWantedArtifactInfos();
@@ -56,13 +92,13 @@ public sealed class AppendVolumePlanner
         int totalDa          = candidates.Count + releaseUnwanted;
 
         // Volume label per assigned DA (value = "(stale assignment)" if volume deleted)
-        var assignedWithVolumes = _catalog.GetAssignedDerivedIdsWithVolumesByDatLine(volume.DatLineId!);
+        var assignedWithVolumes = _catalog.GetAssignedDerivedIdsWithVolumesByDatLine(datLineId);
 
-        long targetFree = volume.PlannedSizeBytes - volume.ActualSizeBytes;
-        long allocated  = 0;
+        long targetFree = plannedSizeBytes - actualSizeBytes;
+        long allocated  = initialAllocatedBytes;
 
         // ── Archive physical file count ───────────────────────────────────
-        var archiveDir = Path.Combine(archiveRoot, "archive", volume.PlatformId, volume.DatLineId!);
+        var archiveDir = Path.Combine(archiveRoot, "archive", platformId, datLineId);
         int physicalFileCount = Directory.Exists(archiveDir)
             ? Directory.GetFiles(archiveDir, "*", SearchOption.AllDirectories).Length
             : 0;
@@ -119,13 +155,13 @@ public sealed class AppendVolumePlanner
             }
 
             // ── Guard: already assigned to a volume ───────────────────────
-            if (assignedWithVolumes.TryGetValue(c.DerivedArtifactId, out var volumeLabel))
+            if (assignedWithVolumes.TryGetValue(c.DerivedArtifactId, out var assignedVolumeLabel))
             {
-                bool isStale   = volumeLabel == "(stale assignment)";
+                bool isStale   = assignedVolumeLabel == "(stale assignment)";
                 string key     = isStale ? SkipReason.StaleVolumeAssignment : SkipReason.AlreadyAssigned;
                 string reason  = isStale
                     ? $"{SkipReason.StaleVolumeAssignment}: previously assigned to a volume that no longer exists"
-                    : $"{SkipReason.AlreadyAssigned}: assigned to volume \"{volumeLabel}\"";
+                    : $"{SkipReason.AlreadyAssigned}: assigned to volume \"{assignedVolumeLabel}\"";
                 entries.Add(MakeSkip(c, "", "", reason, key));
                 Increment(skipReasonCounts, key);
                 alreadyAssigned++;
@@ -194,14 +230,16 @@ public sealed class AppendVolumePlanner
         int plannedCount = entries.Count(e => e.Action == AppendEntryAction.Copy);
         int skippedCount = entries.Count(e => e.Action == AppendEntryAction.Skip);
 
+        finalAllocatedBytes = allocated;
+
         return new AppendVolumePlan
         {
-            VolumeId              = volume.Id,
-            VolumeLabel           = volume.Label,
-            DatLineId             = volume.DatLineId!,
+            VolumeId              = volumeId,
+            VolumeLabel           = volumeLabel,
+            DatLineId             = datLineId,
             VolumeRootPath        = volumeRootPath,
-            TargetCapacityBytes   = volume.PlannedSizeBytes,
-            TargetUsedBytes       = volume.ActualSizeBytes,
+            TargetCapacityBytes   = plannedSizeBytes,
+            TargetUsedBytes       = actualSizeBytes,
             TargetFreeBytes       = targetFree,
             TotalDerivedArtifactsForDatLine = totalDa,
             ReleaseUnwantedSkipped  = releaseUnwanted,
@@ -214,10 +252,10 @@ public sealed class AppendVolumePlanner
             ExcludedIncomingSkipPath  = incomingSkipIgnored,
             ExcludedZeroOrInvalidSize = invalidSize,
             PlannedCount             = plannedCount,
-            PlannedBytes             = allocated,
+            PlannedBytes             = allocated - initialAllocatedBytes,   // bytes THIS leaf/plan contributes
             SkippedCount             = skippedCount,
-            RemainingTargetFreeBytes = targetFree - allocated,
-            TargetBytesAfter         = volume.ActualSizeBytes + allocated,
+            RemainingTargetFreeBytes = targetFree - allocated,             // global remaining after this plan
+            TargetBytesAfter         = actualSizeBytes + allocated,
             LargestCandidateBytes    = largestCandidateBytes,
             SmallestCandidateBytes   = smallestCandidateBytes,
             TotalCandidateBytes      = totalCandidateBytes,
@@ -232,22 +270,24 @@ public sealed class AppendVolumePlanner
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static AppendVolumePlan Empty(VolumeRecord volume, string volumeRoot, string archiveRoot)
+    private static AppendVolumePlan Empty(
+        string volumeId, string volumeLabel, string datLineId, string platformId,
+        long plannedSizeBytes, long actualSizeBytes, string volumeRoot, string archiveRoot)
     {
-        var archiveDir = Path.Combine(archiveRoot, "archive", volume.PlatformId, volume.DatLineId!);
+        var archiveDir = Path.Combine(archiveRoot, "archive", platformId, datLineId);
         int physCount  = Directory.Exists(archiveDir)
             ? Directory.GetFiles(archiveDir, "*", SearchOption.AllDirectories).Length
             : 0;
 
         return new AppendVolumePlan
         {
-            VolumeId              = volume.Id,
-            VolumeLabel           = volume.Label,
-            DatLineId             = volume.DatLineId!,
+            VolumeId              = volumeId,
+            VolumeLabel           = volumeLabel,
+            DatLineId             = datLineId,
             VolumeRootPath        = volumeRoot,
-            TargetCapacityBytes   = volume.PlannedSizeBytes,
-            TargetUsedBytes       = volume.ActualSizeBytes,
-            TargetFreeBytes       = volume.PlannedSizeBytes - volume.ActualSizeBytes,
+            TargetCapacityBytes   = plannedSizeBytes,
+            TargetUsedBytes       = actualSizeBytes,
+            TargetFreeBytes       = plannedSizeBytes - actualSizeBytes,
             TotalDerivedArtifactsForDatLine = 0,
             ReleaseUnwantedSkipped  = 0,
             TotalCandidates         = 0,
@@ -261,8 +301,8 @@ public sealed class AppendVolumePlanner
             PlannedCount             = 0,
             PlannedBytes             = 0,
             SkippedCount             = 0,
-            RemainingTargetFreeBytes = volume.PlannedSizeBytes - volume.ActualSizeBytes,
-            TargetBytesAfter         = volume.ActualSizeBytes,
+            RemainingTargetFreeBytes = plannedSizeBytes - actualSizeBytes,
+            TargetBytesAfter         = actualSizeBytes,
             LargestCandidateBytes    = 0,
             SmallestCandidateBytes   = 0,
             TotalCandidateBytes      = 0,
