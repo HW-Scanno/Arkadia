@@ -3318,7 +3318,7 @@ public partial class MainWindow : Window
         // Plan available for init + present. Owner-aware: Single → historical Make/Build workflow;
         // Group → read-only Group Plan preview (V-G2). OnMakeVolume branches by owner.
         VolActMake.IsEnabled     = isNotLost;
-        VolActMove.IsEnabled     = isPhysical && isSingle;   // requires physical source
+        VolActMove.IsEnabled     = hasVol && entry!.CanMoveVolume;   // physical source; owner-agnostic (V-G4)
         VolActResize.IsEnabled   = isNotLost;                // capacity-only — owner-agnostic
         VolActAppend.IsEnabled   = isPhysical && isSingle;   // requires files on disk/workspace
         VolActReabsorb.IsEnabled = isPhysical && isSingle;   // requires physical source
@@ -4320,7 +4320,8 @@ public partial class MainWindow : Window
             string dialogHeader,
             string logSubdir,
             string logLabel,
-            IReadOnlyDictionary<string, string>? expectedSha1ByFileName = null)
+            IReadOnlyDictionary<string, string>? expectedSha1ByFileName = null,
+            IReadOnlyDictionary<string, string>? expectedSha1ByRelPath  = null)
     {
         // ── Pre-enumerate source files ────────────────────────────────────
         var files = Directory
@@ -4442,9 +4443,14 @@ public partial class MainWindow : Window
                 foreach (var (srcPath, dstPath, relPath, size) in files)
                 {
                     var sizeLabel = FormatBytes(size);
-                    var fileName  = Path.GetFileName(relPath);
                     string? expectedSha1 = null;
-                    expectedSha1ByFileName?.TryGetValue(fileName, out expectedSha1);
+                    if (expectedSha1ByRelPath is not null)
+                        // Group: identity is the normalized volume-relative path (leaf-segment + '/' + file).
+                        expectedSha1ByRelPath.TryGetValue(
+                            Volumes.VolumeMoveFileVerifier.NormalizeRelativeKey(relPath), out expectedSha1);
+                    else
+                        // Single: historical filename-keyed identity (flat volume layout).
+                        expectedSha1ByFileName?.TryGetValue(Path.GetFileName(relPath), out expectedSha1);
 
                     if (!Volumes.VolumeMoveFileVerifier.VerifyFile(
                             srcPath, dstPath, size, expectedSha1,
@@ -5080,7 +5086,48 @@ public partial class MainWindow : Window
             // is built once, up front, so no DB read happens during the transfer. If the volume DB is
             // unavailable or the assigned-artifact snapshot cannot be built, the move is blocked here
             // — before any copy — rather than silently degrading the whole volume to source-vs-dst.
-            IReadOnlyDictionary<string, string> expectedSha1ByFileName;
+            //
+            // Single volumes are flat (filename-keyed identity); Group volumes nest artifacts under leaf
+            // segments (relative-path-keyed identity, resolved from each leaf's exact store). Exactly one of
+            // the two maps below is populated per ownership; both feed the same copy/verify engine.
+            IReadOnlyDictionary<string, string>? expectedSha1ByFileName = null;
+            IReadOnlyDictionary<string, string>? expectedSha1ByRelPath  = null;
+
+            if (entry.IsGroupOwned)
+            {
+                var volume = _catalog.GetVolumeById(entry.Id);
+                if (volume is null)
+                {
+                    await new InfoDialog("Move Volume Blocked",
+                        $"Volume \"{entry.Label}\" no longer exists.\n\nNo files were copied.")
+                        .ShowDialog(this);
+                    return;
+                }
+
+                Volumes.GroupVolumeMoveService.Snapshot snapshot;
+                try
+                {
+                    var leaves = _catalog.GetLeavesForGroup(entry.GroupId!);
+                    snapshot   = Volumes.GroupVolumeMoveService.Build(_catalog, _dataDir, volume, leaves);
+                }
+                catch (Exception ex)
+                {
+                    await new InfoDialog("Move Volume Blocked",
+                        $"Could not build the authoritative artifact-hash snapshot for Group volume " +
+                        $"\"{entry.Label}\":\n\n{ex.Message}\n\nNo files were copied.")
+                        .ShowDialog(this);
+                    return;
+                }
+
+                if (snapshot.BlockReason is not null)
+                {
+                    await new InfoDialog("Move Volume Blocked", snapshot.BlockReason).ShowDialog(this);
+                    return;
+                }
+
+                expectedSha1ByRelPath = snapshot.ExpectedSha1ByRelativePath;
+            }
+            else
             {
                 if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath))
                 {
@@ -5128,7 +5175,7 @@ public partial class MainWindow : Window
                 await RunCopyMoveAsync(
                     "Move Volume", srcFolder, dstFolder, header,
                     "volume-move", SafeFileName(entry.Label),
-                    expectedSha1ByFileName);
+                    expectedSha1ByFileName, expectedSha1ByRelPath);
 
             if (!success) return;
 

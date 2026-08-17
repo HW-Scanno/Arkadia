@@ -26,6 +26,25 @@ public sealed class VolumeEntryTests
         DiskLabel        = null,
     };
 
+    // Move-gating fixture: status/location/ownership drive the Move action's availability predicate.
+    private static VolumeEntry MoveCase(string status, string currentLocation, bool group) => new()
+    {
+        Id               = "v1",
+        Label            = "Test",
+        PlatformId       = "c64",
+        DatLineId        = "DAT Line",
+        RawDatLineId     = group ? null : "dl1",
+        GroupId          = group ? "c64-tosec" : null,
+        DbPath           = "",
+        Status           = status,
+        Health           = "ok",
+        PlannedSizeBytes = 1_000,
+        ActualSizeBytes  = 100,
+        CurrentLocation  = currentLocation,
+        DiskId           = currentLocation.StartsWith("disk:") ? "disk-1" : null,
+        DiskLabel        = null,
+    };
+
     // ── 30. VolumeEntry_FillRatio_IsZeroForEmptyVolume ────────────────────────
 
     [Fact]
@@ -52,4 +71,44 @@ public sealed class VolumeEntryTests
         var entry = Make(planned: 1_000, actual: 1_200);
         Assert.Equal(1.0, entry.FillRatio);
     }
+
+    // ── Move-action gating (V-G4 reachability): owner-agnostic; built (LOCAL/ON DISK) only ────
+
+    [Fact] // Single + LOCAL → Move enabled
+    public void CanMoveVolume_Single_Local_Enabled()
+        => Assert.True(MoveCase("present", "Local Archive", group: false).CanMoveVolume);
+
+    [Fact] // Single + ON DISK → Move enabled
+    public void CanMoveVolume_Single_OnDisk_Enabled()
+    {
+        var e = MoveCase("present", "disk:MyDisk", group: false);
+        Assert.Equal("ON DISK", e.StatusLabel);
+        Assert.True(e.CanMoveVolume);
+    }
+
+    [Fact] // Group + LOCAL → Move enabled (the V-G4 reachability fix)
+    public void CanMoveVolume_Group_Local_Enabled()
+    {
+        var e = MoveCase("present", "Local Archive", group: true);
+        Assert.True(e.IsGroupOwned);
+        Assert.Equal("LOCAL", e.StatusLabel);
+        Assert.True(e.CanMoveVolume);
+    }
+
+    [Fact] // Group + ON DISK → Move enabled
+    public void CanMoveVolume_Group_OnDisk_Enabled()
+    {
+        var e = MoveCase("present", "disk:MyDisk", group: true);
+        Assert.True(e.IsGroupOwned);
+        Assert.Equal("ON DISK", e.StatusLabel);
+        Assert.True(e.CanMoveVolume);
+    }
+
+    [Theory] // negative states stay disabled for both ownership kinds
+    [InlineData("init", false)]
+    [InlineData("init", true)]
+    [InlineData("lost", false)]
+    [InlineData("lost", true)]
+    public void CanMoveVolume_NotBuiltOrLost_Disabled(string status, bool group)
+        => Assert.False(MoveCase(status, "—", group).CanMoveVolume);
 }

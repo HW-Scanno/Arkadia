@@ -106,6 +106,55 @@ public static class VolumeMoveFileVerifier
         return true;
     }
 
+    // ── Group Move: relative-path-keyed expected snapshot (additive; Single filename path above unchanged) ──
+    // A Group volume nests artifacts under leaf segments (volumes/<label>/<leaf-segment>/<file>). The same
+    // FileName may recur under different leaves, so the verification identity is the normalized volume-relative
+    // path (leaf-segment + '/' + FileName) — NOT the basename. Single's filename-keyed map is left as-is.
+
+    /// <summary>One conflicting pair of assigned Group artifacts mapping to the same normalized relative path.</summary>
+    public sealed record GroupExpectedDuplicate(
+        string RelativePath,
+        string DatLineIdA, string DerivedArtifactIdA,
+        string DatLineIdB, string DerivedArtifactIdB);
+
+    /// <summary>
+    /// Deterministic volume-relative path key for comparison: separators normalized to '/', leading/trailing
+    /// separators trimmed. No absolute paths, no DisplayName — the caller composes it from the leaf segment and
+    /// FileName. Case-insensitive comparison is delegated to the (OrdinalIgnoreCase) dictionaries that store it.
+    /// </summary>
+    public static string NormalizeRelativeKey(string relativePath)
+        => relativePath.Replace('\\', '/').Trim('/');
+
+    /// <summary>
+    /// Builds the case-insensitive <c>normalized-relative-path → authoritative SHA1</c> snapshot for a Group
+    /// volume's assigned artifacts. Only non-empty, valid SHA1s are kept (a file without one ⇒ per-file legacy
+    /// fallback). Returns a non-null <see cref="GroupExpectedDuplicate"/> naming BOTH conflicting artifacts when
+    /// two assigned rows map to the same normalized relative path — the caller MUST block the move before copying.
+    /// Same FileName under DIFFERENT leaf segments is valid (distinct relative paths). Pure and DB-free.
+    /// </summary>
+    public static (Dictionary<string, string> Map, GroupExpectedDuplicate? Duplicate) BuildExpectedSha1MapByRelativePath(
+        IEnumerable<(string RelativePath, string ExpectedSha1, string DatLineId, string DerivedArtifactId)> assignedArtifacts)
+    {
+        var map  = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new Dictionary<string, (string DatLineId, string DaId)>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (relativePath, sha1, datLineId, daId) in assignedArtifacts)
+        {
+            if (string.IsNullOrEmpty(relativePath)) continue;
+            var key = NormalizeRelativeKey(relativePath);
+
+            if (seen.TryGetValue(key, out var prev))
+                return (new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                        new GroupExpectedDuplicate(key, prev.DatLineId, prev.DaId, datLineId, daId));
+
+            seen[key] = (datLineId, daId);
+            if (IsValidSha1(sha1))
+                map[key] = sha1;
+        }
+
+        return (map, null);
+    }
+
     /// <summary>True for a 40-character hex SHA1 string (either case). Empty/short/non-hex ⇒ false.</summary>
     public static bool IsValidSha1(string? sha1)
     {

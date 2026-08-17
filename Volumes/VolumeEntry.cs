@@ -27,6 +27,14 @@ public sealed class VolumeEntry
     /// <summary>True when this volume is Group-owned (no single leaf owner / no single DB path).</summary>
     public bool IsGroupOwned => GroupId is not null;
 
+    /// <summary>
+    /// True when Move Volume may run for this volume: it is built and physically materialized
+    /// (LOCAL or ON DISK ⇒ <c>Status == "present"</c>), regardless of ownership. INIT (not built) and LOST
+    /// volumes are excluded. Owner-agnostic — V-G4 ported the Move workflow to Group-owned volumes, so the
+    /// action is no longer restricted to Single. Mirrors the states accepted by the Move handler.
+    /// </summary>
+    public bool CanMoveVolume => Status == "present";
+
     public double FillRatio => PlannedSizeBytes > 0
         ? System.Math.Clamp((double)ActualSizeBytes / PlannedSizeBytes, 0, 1)
         : 0;
