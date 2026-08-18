@@ -182,13 +182,12 @@ public sealed class VolumeEntryTests
     // No DbPath and no ArtifactCount in the toolbar gate. A present Single volume with a missing DB is STILL
     // enabled (the handler's DbPath guard no-ops); an empty present volume stays enabled and no-ops.
 
-    [Theory] // Single: present → enabled regardless of DbPath/artifacts; INIT/LOST → disabled
-    [InlineData("present", 5, true,  true)]
-    [InlineData("present", 5, false, true)]    // DbPath unavailable → STILL enabled (restored historical)
-    [InlineData("present", 0, false, true)]    // empty present → still enabled (no ArtifactCount gate)
-    [InlineData("init",    5, true,  false)]
-    [InlineData("lost",    5, true,  false)]
-    public void CanReabsorbVolume_Single(string status, int artifacts, bool dbAvailable, bool expected)
+    [Theory] // Single: present → enabled regardless of DbPath/artifacts (gate is present-only); INIT/LOST → disabled
+    [InlineData("present", 5, true)]     // DbPath is NOT a gate input — present is sufficient (restored historical)
+    [InlineData("present", 0, true)]     // empty present → still enabled (no ArtifactCount gate)
+    [InlineData("init",    5, false)]
+    [InlineData("lost",    5, false)]
+    public void CanReabsorbVolume_Single(string status, int artifacts, bool expected)
         => Assert.Equal(expected, FillCase(group: false, status, artifacts).CanReabsorbVolume);
 
     [Theory] // Group: present → enabled without DbPath; INIT/LOST → disabled; no ArtifactCount gate

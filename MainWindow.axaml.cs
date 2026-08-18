@@ -11411,19 +11411,17 @@ public partial class MainWindow : Window
             var archiveExt = Path.GetExtension(archivePath).ToLowerInvariant();
             var isZip      = archiveExt == ".zip";
 
-            // For non-ZIP archives, resolve the bundled 7zip before doing anything else
-            string? sevenZipPath = null;
-            if (!isZip)
+            // Policy A: the bundled 7-Zip is the PREFERRED extractor for every supported container (it reads
+            // RomVault Zstandard ZIPs that System.IO.Compression cannot). Resolve it once. A .zip falls back to
+            // the managed extractor when 7-Zip is absent; a non-ZIP container with no 7-Zip is skipped as before.
+            string? sevenZipPath = ProviderHelpers.Find7zip();
+            if (!isZip && sevenZipPath is null)
             {
-                sevenZipPath = ProviderHelpers.Find7zip();
-                if (sevenZipPath is null)
-                {
-                    var skipOp = new IngestionOperation(archiveName, "extract-skipped",
-                        "7zip not found — place tools\\7zip\\7zip.exe to enable .7z and .rar extraction.");
-                    result.Operations.Add(skipOp);
-                    progress.Report(new IngestionProgress { NewOperation = skipOp });
-                    continue;
-                }
+                var skipOp = new IngestionOperation(archiveName, "extract-skipped",
+                    "7zip not found — place tools\\7zip\\7zip.exe to enable .7z and .rar extraction.");
+                result.Operations.Add(skipOp);
+                progress.Report(new IngestionProgress { NewOperation = skipOp });
+                continue;
             }
 
             // Check decompressed size and free space (ZIP only; 7z/rar skip this check)
@@ -11460,39 +11458,10 @@ public partial class MainWindow : Window
             }
             catch { /* DriveInfo unavailable — proceed; extraction will fail naturally if truly out of space */ }
 
-            // Extract
+            // Extract — bundled 7-Zip preferred (any container); managed ZIP fallback when 7-Zip is absent.
             try
             {
-                Directory.CreateDirectory(destFolder);
-                var fullDestRoot = Path.GetFullPath(destFolder) + Path.DirectorySeparatorChar;
-
-                if (isZip)
-                {
-                    // Explicit using-block so za is fully disposed before File.Delete runs.
-                    // 'using var' would defer disposal to end of the try-block, keeping
-                    // the handle open during the delete call.
-                    using (var za = ZipFile.OpenRead(archivePath))
-                    {
-                        foreach (var entry in za.Entries)
-                        {
-                            if (string.IsNullOrEmpty(entry.Name)) continue;  // directory entry
-                            var relPath  = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
-                            var fullPath = Path.GetFullPath(Path.Combine(destFolder, relPath));
-                            // path traversal guard
-                            if (!fullPath.StartsWith(fullDestRoot, StringComparison.OrdinalIgnoreCase))
-                                continue;
-                            Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-                            using var outStream   = new FileStream(fullPath, FileMode.Create, FileAccess.Write);
-                            using var entryStream = entry.Open();
-                            entryStream.CopyTo(outStream);
-                        }
-                    } // za disposed here — archive handle fully closed
-                }
-                else
-                {
-                    // 7zip handles path safety internally; sevenZipPath is non-null (checked above)
-                    ProviderHelpers.ExtractWith7zip(sevenZipPath!, archivePath, destFolder);
-                }
+                Ingestion.ArchiveExtractor.Extract(archivePath, destFolder, sevenZipPath);
 
                 var okOp = new IngestionOperation(archiveName, "extract-ok", folderName);
                 result.Operations.Add(okOp);
