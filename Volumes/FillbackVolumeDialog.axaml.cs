@@ -54,7 +54,12 @@ public partial class FillbackVolumeDialog : Window
     private readonly string                              _sourceDiskLabel;
     private readonly List<FillbackTargetCandidate>       _candidates;
     private readonly CatalogService                      _catalog;
-    private readonly DatLineStore                        _store;
+    private readonly DatLineStore?                       _store;
+
+    // Group Fillback seam: when set, the dialog builds the plan through this delegate (which merges leaf-nested
+    // candidates via GroupFillbackPlanningService) instead of the Single planner. Null ⇒ historical Single path.
+    private readonly Func<FillbackTargetCandidate, VolumeFillbackPlan?>? _planBuilder;
+    private readonly string?                             _collectionDisplay;
 
     private VolumeFillbackPlan?                          _currentPlan;
     private bool                                         _executing;
@@ -109,6 +114,46 @@ public partial class FillbackVolumeDialog : Window
         ProgressRowsList.ItemsSource = _progressRows;
     }
 
+    /// <summary>
+    /// Group Fillback constructor: same one-dialog flow (pick target → one preview → Execute once), but the plan
+    /// is built by <paramref name="planBuilder"/> (Group global planning across leaves) and the collection is
+    /// identified. No single leaf DB is needed (execution is store-agnostic).
+    /// </summary>
+    public FillbackVolumeDialog(
+        string                                             sourceVolumeId,
+        string                                             sourceVolumeLabel,
+        string                                             sourceRootPath,
+        string                                             sourceDiskLabel,
+        List<FillbackTargetCandidate>                      candidates,
+        CatalogService                                     catalog,
+        Func<FillbackTargetCandidate, VolumeFillbackPlan?> planBuilder,
+        string                                             collectionDisplay)
+    {
+        _sourceVolumeId    = sourceVolumeId;
+        _sourceVolumeLabel = sourceVolumeLabel;
+        _sourceRootPath    = sourceRootPath;
+        _sourceDiskLabel   = sourceDiskLabel;
+        _candidates        = candidates;
+        _catalog           = catalog;
+        _store             = null;
+        _planBuilder       = planBuilder;
+        _collectionDisplay = collectionDisplay;
+
+        InitializeComponent();
+
+        PlanSourceLabel.Text = sourceVolumeLabel;
+        PlanSourceDisk.Text  = sourceDiskLabel.Length > 0 ? sourceDiskLabel : "";
+
+        TargetComboBox.ItemsSource = candidates;
+        PlanHint.Text = candidates.Count == 0
+            ? $"Collection: {collectionDisplay} — no valid target volumes are available for this source."
+            : $"Collection: {collectionDisplay} — select a target volume to build the plan.";
+        if (candidates.Count == 0) ExecuteButton.IsEnabled = false;
+
+        PlanRowsList.ItemsSource     = _planRows;
+        ProgressRowsList.ItemsSource = _progressRows;
+    }
+
     // ── Plan phase ────────────────────────────────────────────────────────────
 
     private void OnTargetChanged(object? sender, SelectionChangedEventArgs e)
@@ -127,6 +172,22 @@ public partial class FillbackVolumeDialog : Window
 
     private void BuildAndDisplayPlan(FillbackTargetCandidate candidate)
     {
+        // Group path: build the merged leaf-nested plan through the injected builder.
+        if (_planBuilder is not null)
+        {
+            var groupPlan = _planBuilder(candidate);
+            if (groupPlan is null)
+            {
+                ClearPlan();
+                PlanHint.Text = "Volume record not found.";
+                return;
+            }
+            _currentPlan = groupPlan;
+            DisplayPlan(groupPlan);
+            return;
+        }
+
+        // Single path (historical, unchanged).
         var source = _catalog.GetVolumeById(_sourceVolumeId);
         var target = _catalog.GetVolumeById(candidate.VolumeId);
 
@@ -142,7 +203,7 @@ public partial class FillbackVolumeDialog : Window
             source, target,
             _sourceRootPath, candidate.RootPath,
             _sourceDiskLabel, candidate.DiskLabel,
-            _store);
+            _store!);
 
         DisplayPlan(_currentPlan);
     }

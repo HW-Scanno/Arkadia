@@ -54,6 +54,16 @@ public sealed class VolumeEntry
     /// </summary>
     public bool CanAppendVolume => Status == "present";
 
+    /// <summary>
+    /// Fillback readiness (owner-aware). Both kinds require a present volume with assigned artifacts. A Single
+    /// volume additionally requires its leaf DB (<paramref name="singleDbAvailable"/>) — the historical condition,
+    /// preserved exactly (for a Single owner <c>IsGroupOwned</c> is false, so this reduces to present + artifacts +
+    /// DB). A Group volume has no single <c>DbPath</c>; its leaf DBs / membership / target are validated when
+    /// Fillback opens. Pure — the caller supplies the filesystem probe result.
+    /// </summary>
+    public bool CanFillbackVolume(bool singleDbAvailable)
+        => Status == "present" && ArtifactCount > 0 && (IsGroupOwned || singleDbAvailable);
+
     public double FillRatio => PlannedSizeBytes > 0
         ? System.Math.Clamp((double)ActualSizeBytes / PlannedSizeBytes, 0, 1)
         : 0;

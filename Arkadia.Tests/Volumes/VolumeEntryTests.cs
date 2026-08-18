@@ -150,4 +150,31 @@ public sealed class VolumeEntryTests
     [InlineData("lost",    true,  false)]
     public void CanAppendVolume_PresentOnly_OwnerAgnostic(string status, bool group, bool expected)
         => Assert.Equal(expected, MoveCase(status, "workspace", group).CanAppendVolume);
+
+    // ── Fillback-action gating (V-G7): present + artifacts; Single also needs its leaf DB ────
+
+    [Theory] // Single: present AND artifacts>0 AND leaf DB available (historical truth table)
+    [InlineData("present", 1, true,  true)]
+    [InlineData("present", 1, false, false)]   // no DB → disabled
+    [InlineData("present", 0, true,  false)]   // no artifacts → disabled (present-but-empty)
+    [InlineData("init",    1, true,  false)]
+    [InlineData("lost",    1, true,  false)]
+    public void CanFillbackVolume_Single_TruthTableUnchanged(string status, int artifacts, bool dbAvailable, bool expected)
+        => Assert.Equal(expected, FillCase(group: false, status, artifacts).CanFillbackVolume(dbAvailable));
+
+    [Theory] // Group: present AND artifacts>0, no DbPath requirement
+    [InlineData("present", 1, false, true)]    // artifacts present, no DB probe → enabled
+    [InlineData("present", 0, false, false)]   // present but empty → disabled
+    [InlineData("init",    1, false, false)]
+    [InlineData("lost",    1, false, false)]
+    public void CanFillbackVolume_Group_PresentWithArtifacts(string status, int artifacts, bool dbAvailable, bool expected)
+        => Assert.Equal(expected, FillCase(group: true, status, artifacts).CanFillbackVolume(dbAvailable));
+
+    private static VolumeEntry FillCase(bool group, string status, int artifacts) => new()
+    {
+        Id = "v1", Label = "Test", PlatformId = "c64", DatLineId = "DAT Line",
+        RawDatLineId = group ? null : "dl1", GroupId = group ? "c64-tosec" : null, DbPath = "",
+        Status = status, Health = "ok", PlannedSizeBytes = 1_000, ActualSizeBytes = 100,
+        CurrentLocation = "workspace", DiskId = null, DiskLabel = null, ArtifactCount = artifacts,
+    };
 }

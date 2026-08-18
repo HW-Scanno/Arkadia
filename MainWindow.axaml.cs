@@ -3322,9 +3322,10 @@ public partial class MainWindow : Window
         VolActResize.IsEnabled   = isNotLost;                // capacity-only — owner-agnostic
         VolActAppend.IsEnabled   = hasVol && entry!.CanAppendVolume;   // present; owner-agnostic (V-G6)
         VolActReabsorb.IsEnabled = isPhysical && isSingle;   // requires physical source
-        VolActFillback.IsEnabled = isPhysical && isSingle    // source must be physical, have artifacts, valid DB
-            && entry!.ArtifactCount > 0
-            && entry.DbPath.Length > 0 && File.Exists(entry.DbPath);
+        // Owner-aware: Single keeps its exact historical condition (present + artifacts + available leaf DB);
+        // Group requires present + artifacts (leaf DBs / same-collection target validated when Fillback opens). V-G7.
+        VolActFillback.IsEnabled = hasVol
+            && entry!.CanFillbackVolume(entry.DbPath.Length > 0 && File.Exists(entry.DbPath));
         VolActMarkLost.IsEnabled    = isNotLost;  // already-lost volumes are no-ops — owner-agnostic
         VolActDeleteVolume.IsEnabled = hasVol;    // header delete — owner-agnostic; enforcement at click time
 
@@ -5811,7 +5812,8 @@ public partial class MainWindow : Window
     {
         var entry = VolumesList.SelectedItem as VolumeEntry;
         if (entry is null) return;
-        if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath)) return;
+        // Single requires its leaf DB; Group has none (leaf DBs resolved at planning time).
+        if (!entry.IsGroupOwned && (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath))) return;
         if (entry.ArtifactCount == 0) return;
 
         var appRoot = AppContext.BaseDirectory;
@@ -5828,7 +5830,14 @@ public partial class MainWindow : Window
         }
 
         var sourceDiskLabel = entry.DiskLabel ?? "";
-        var store           = new DatLineStore(entry.DbPath);
+
+        if (entry.IsGroupOwned)
+        {
+            await FillbackGroupVolumeAsync(entry, appRoot, sourceRoot, sourceDiskLabel);
+            return;
+        }
+
+        var store = new DatLineStore(entry.DbPath);
 
         // ── Build candidate target list ───────────────────────────────────────
         // Candidates: same DatLine (by RawDatLineId), status == present, different volume, accessible
@@ -5911,6 +5920,83 @@ public partial class MainWindow : Window
             var ts      = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
             var logPath = Path.Combine(logDir, $"{ts}-fillback-{slug}.log");
             File.WriteAllLines(logPath, result.LogLines);
+        }
+        catch { /* log write failure is non-fatal */ }
+    }
+
+    // ── Group Fillback (V-G7): same-GroupId Group → Group, one global plan, existing executor ──
+    private async System.Threading.Tasks.Task FillbackGroupVolumeAsync(
+        VolumeEntry entry, string appRoot, string sourceRoot, string sourceDiskLabel)
+    {
+        var groupId = entry.GroupId!;
+
+        // Candidates: SAME GroupId, present, different volume, physically accessible (workspace-first then disk).
+        var candidateVolumes = _catalog.GetVolumes()
+            .Where(v => v.Id != entry.Id && v.Status == "present" && v.GroupId == groupId)
+            .ToList();
+
+        var disks = Data.DiskDiscoveryService.DiscoverAll()
+            .Where(d => d.DiskId.Length > 0)
+            .ToDictionary(d => d.DiskId, StringComparer.Ordinal);
+
+        var candidates = new List<FillbackTargetCandidate>();
+        foreach (var v in candidateVolumes)
+        {
+            var wsRoot = Path.Combine(appRoot, "volumes", SafeFileName(v.Label));
+            if (Directory.Exists(wsRoot))
+            {
+                candidates.Add(new FillbackTargetCandidate
+                { VolumeId = v.Id, VolumeLabel = v.Label, RootPath = wsRoot, DiskLabel = "Local Archive" });
+                continue;
+            }
+
+            var loc = _catalog.GetCurrentLocation(v.Id);
+            if (loc?.DiskId is null) continue;
+            if (!disks.TryGetValue(loc.DiskId, out var rt)) continue;
+            var diskRoot = Path.Combine(rt.Mountpoint, SafeFileName(v.Label));
+            if (!Directory.Exists(diskRoot)) continue;
+
+            string diskLabel = _catalog.GetDisks().FirstOrDefault(d => d.Id == loc.DiskId)?.Label ?? loc.DiskId;
+            candidates.Add(new FillbackTargetCandidate
+            { VolumeId = v.Id, VolumeLabel = v.Label, RootPath = diskRoot, DiskLabel = diskLabel });
+        }
+
+        if (candidates.Count == 0)
+        {
+            await new InfoDialog("No Target Volumes",
+                $"No accessible volumes belonging to the same collection as \"{entry.Label}\" could be found.\n\n" +
+                "Ensure a target volume in the same collection is mounted, then try again.")
+                .ShowDialog<bool>(this);
+            return;
+        }
+
+        var leaves = _catalog.GetLeavesForGroup(groupId);
+        Func<FillbackTargetCandidate, Volumes.VolumeFillbackPlan?> planBuilder = candidate =>
+        {
+            var src = _catalog.GetVolumeById(entry.Id);
+            var tgt = _catalog.GetVolumeById(candidate.VolumeId);
+            if (src is null || tgt is null) return null;
+            return Volumes.GroupFillbackPlanningService.Plan(
+                _catalog, _dataDir, src, tgt, sourceRoot, candidate.RootPath,
+                sourceDiskLabel, candidate.DiskLabel, leaves);
+        };
+
+        var dialog = new FillbackVolumeDialog(
+            entry.Id, entry.Label, sourceRoot, sourceDiskLabel, candidates, _catalog, planBuilder, entry.DatLineId);
+
+        var ok = await dialog.ShowDialog<bool>(this);
+        if (!ok) return;
+        if (dialog.ExecutionResult is not { } result) return;
+
+        RefreshAfterVolumeStorageMutation(entry.Id);
+
+        try
+        {
+            var logDir = Path.Combine(appRoot, "logs", "volume-fillback");
+            Directory.CreateDirectory(logDir);
+            var slug = SafeFileName(entry.Label);
+            var ts   = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+            File.WriteAllLines(Path.Combine(logDir, $"{ts}-fillback-{slug}.log"), result.LogLines);
         }
         catch { /* log write failure is non-fatal */ }
     }

@@ -38,75 +38,91 @@ public sealed class VolumeFillbackPlanner
         string       targetDiskLabel,
         DatLineStore store)
     {
-        var issues   = new List<string>();
-        var warnings = new List<string>();
+        var issues = new List<string>();
 
         // ── Hard preconditions ────────────────────────────────────────────────
         if (source.Id == target.Id)
-        {
             issues.Add("Source and target volumes must be different.");
-            return CannotExecute(source, target, sourceRootPath, targetRootPath,
-                sourceDiskLabel, targetDiskLabel, issues, warnings);
-        }
-        if (source.DatLineId != target.DatLineId)
-        {
+        else if (source.DatLineId != target.DatLineId)
             issues.Add("Source and target volumes must belong to the same DAT line.");
-            return CannotExecute(source, target, sourceRootPath, targetRootPath,
-                sourceDiskLabel, targetDiskLabel, issues, warnings);
-        }
-        if (!Directory.Exists(sourceRootPath))
-        {
+        else if (!Directory.Exists(sourceRootPath))
             issues.Add("Source volume disk is not mounted.");
-            return CannotExecute(source, target, sourceRootPath, targetRootPath,
-                sourceDiskLabel, targetDiskLabel, issues, warnings);
-        }
-        if (!Directory.Exists(targetRootPath))
-        {
+        else if (!Directory.Exists(targetRootPath))
             issues.Add("Target volume disk is not mounted.");
+
+        if (issues.Count > 0)
             return CannotExecute(source, target, sourceRootPath, targetRootPath,
-                sourceDiskLabel, targetDiskLabel, issues, warnings);
-        }
+                sourceDiskLabel, targetDiskLabel, issues, []);
 
         // ── Operation mode ────────────────────────────────────────────────────
         var mode = IsSameDisk(sourceRootPath, targetRootPath)
             ? FillbackOperationMode.MoveSameDisk
             : FillbackOperationMode.CopyVerifyDeleteCrossDisk;
 
-        // ── Source artifact candidates ────────────────────────────────────────
+        // ── Source artifact candidates (flat single-volume layout) ─────────────
         var sourceVAs = _catalog.GetVolumeArtifacts(source.Id)
             .Where(va => va.Status == "present_in_final")
             .ToList();
 
         if (sourceVAs.Count == 0)
-        {
-            issues.Add("Source volume has no active artifacts.");
             return CannotExecute(source, target, sourceRootPath, targetRootPath,
-                sourceDiskLabel, targetDiskLabel, issues, warnings);
-        }
+                sourceDiskLabel, targetDiskLabel, ["Source volume has no active artifacts."], []);
 
         var daIds       = sourceVAs.Select(va => va.DerivedArtifactId).ToList();
         var verifyInfos = store.GetFillbackCandidateInfos(daIds);  // excludes unwanted
         var vaByDaId    = sourceVAs.ToDictionary(va => va.DerivedArtifactId, StringComparer.Ordinal);
 
-        // ── Build entries alphabetically ──────────────────────────────────────
+        var candidates = new List<FillbackCandidate>();
+        foreach (var vi in verifyInfos)
+        {
+            if (!vaByDaId.TryGetValue(vi.DerivedArtifactId, out var va)) continue;
+            var src = VolumeArtifactPathBuilder.GetFlatFullPath(sourceRootPath, vi.FileName);
+            var dst = VolumeArtifactPathBuilder.GetFlatFullPath(targetRootPath, vi.FileName);
+            candidates.Add(new FillbackCandidate(va, vi, src, dst));
+        }
+
+        return PlanCore(source, target, sourceRootPath, targetRootPath,
+            sourceDiskLabel, targetDiskLabel, mode, candidates);
+    }
+
+    /// <summary>
+    /// Shared planning core (V-G7 seam): the historical Fillback per-entry first-fit loop + plan assembly over a
+    /// pre-built candidate set. Single <see cref="Plan"/> supplies flat-path candidates from one store; Group
+    /// Fillback supplies leaf-nested-path candidates merged across leaves — both get the SAME ordering, target-free
+    /// accounting, collision handling, skip taxonomy, and TooLarge-continue behavior. Ordering is global by
+    /// <c>ReleaseName</c> then <c>FileName</c> (case-insensitive), with a <c>DatLineId</c>-Ordinal tie-break that is
+    /// inert for Single (one leaf) and deterministic for cross-leaf ties. <paramref name="mode"/> is one decision
+    /// for the whole plan (source vs target root filesystem).
+    /// </summary>
+    public VolumeFillbackPlan PlanCore(
+        VolumeRecord                     source,
+        VolumeRecord                     target,
+        string                           sourceRootPath,
+        string                           targetRootPath,
+        string                           sourceDiskLabel,
+        string                           targetDiskLabel,
+        FillbackOperationMode            mode,
+        IReadOnlyList<FillbackCandidate> candidates)
+    {
         long targetFree = target.PlannedSizeBytes - target.ActualSizeBytes;
         long allocated  = 0;
         int  skipped    = 0;
 
-        var entries         = new List<FillbackEntry>();
+        var entries          = new List<FillbackEntry>();
         var skipReasonCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        var warnings         = new List<string>();
 
-        foreach (var vi in verifyInfos
-            .OrderBy(v => v.ReleaseName, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(v => v.FileName,    StringComparer.OrdinalIgnoreCase))
+        foreach (var c in candidates
+            .OrderBy(c => c.Vi.ReleaseName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(c => c.Vi.FileName,     StringComparer.OrdinalIgnoreCase)
+            .ThenBy(c => c.Va.DatLineId,    StringComparer.Ordinal))
         {
-            if (!vaByDaId.TryGetValue(vi.DerivedArtifactId, out var va))
-                continue;
+            var va  = c.Va;
+            var vi  = c.Vi;
+            var src = c.SourcePath;
+            var dst = c.TargetPath;
 
-            var src = VolumeArtifactPathBuilder.GetFlatFullPath(sourceRootPath, vi.FileName);
-            var dst = VolumeArtifactPathBuilder.GetFlatFullPath(targetRootPath, vi.FileName);
-
-            // Source must physically exist (flat path only)
+            // Source must physically exist
             if (!File.Exists(src))
             {
                 var r = SkipReason.SourceFileMissing;
@@ -201,6 +217,17 @@ public sealed class VolumeFillbackPlanner
             CanExecute               = plannedCount > 0 && errorEntries.Count == 0,
         };
     }
+
+    /// <summary>
+    /// A source artifact considered for Fillback: its assignment row, DB verify metadata, and the resolved source
+    /// and target physical paths (flat for Single, leaf-nested for Group). The path shape is the ONLY difference
+    /// between Single and Group; identity/ordering/capacity all flow through <see cref="PlanCore"/> unchanged.
+    /// </summary>
+    public readonly record struct FillbackCandidate(
+        VolumeArtifactRecord Va,
+        ArtifactVerifyInfo   Vi,
+        string               SourcePath,
+        string               TargetPath);
 
     // ── Skip-reason codes ─────────────────────────────────────────────────────
 

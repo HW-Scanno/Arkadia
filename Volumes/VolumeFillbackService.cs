@@ -27,7 +27,7 @@ public sealed class VolumeFillbackService
 
     public VolumeFillbackResult Execute(
         VolumeFillbackPlan            plan,
-        DatLineStore                  store,
+        DatLineStore?                 store    = null,   // retained for signature compatibility; unused by execution
         IProgress<FillbackProgress>?  progress = null)
     {
         var log    = new List<string>();
@@ -107,6 +107,7 @@ public sealed class VolumeFillbackService
         // Move (overwrite:false is the default for File.Move with new overload, use false explicitly)
         try
         {
+            EnsureTargetParent(entry.TargetFullPath);
             File.Move(entry.SourceFullPath, entry.TargetFullPath, overwrite: false);
         }
         catch (Exception ex)
@@ -199,6 +200,7 @@ public sealed class VolumeFillbackService
         bool copyCreatedTarget = false;
         try
         {
+            EnsureTargetParent(entry.TargetFullPath);
             File.Copy(entry.SourceFullPath, entry.TargetFullPath, overwrite: false);
             copyCreatedTarget = true;
         }
@@ -292,6 +294,18 @@ public sealed class VolumeFillbackService
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Ensures the planned target's parent directory exists before the physical write. For Single flat volumes
+    /// the parent is the volume root (already present — a no-op); for Group nested layout it is the leaf-segment
+    /// folder, which may not exist yet. Only the planned target's own parent is created — never an arbitrary path.
+    /// The physical transfer algorithm (move / copy-verify-delete) is otherwise unchanged.
+    /// </summary>
+    private static void EnsureTargetParent(string targetFullPath)
+    {
+        var dir = Path.GetDirectoryName(targetFullPath);
+        if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+    }
 
     private static string Short(string sha1)
         => sha1.Length >= 8 ? sha1[..8] : sha1;
