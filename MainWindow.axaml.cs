@@ -3321,7 +3321,9 @@ public partial class MainWindow : Window
         VolActMove.IsEnabled     = hasVol && entry!.CanMoveVolume;   // physical source; owner-agnostic (V-G4)
         VolActResize.IsEnabled   = isNotLost;                // capacity-only — owner-agnostic
         VolActAppend.IsEnabled   = hasVol && entry!.CanAppendVolume;   // present; owner-agnostic (V-G6)
-        VolActReabsorb.IsEnabled = isPhysical && isSingle;   // requires physical source
+        // Historical Single gate (present; no DbPath, no ArtifactCount) made owner-agnostic for Group. The
+        // handler's own DbPath guard remains authoritative for Single. V-G8.
+        VolActReabsorb.IsEnabled = hasVol && entry!.CanReabsorbVolume;
         // Owner-aware: Single keeps its exact historical condition (present + artifacts + available leaf DB);
         // Group requires present + artifacts (leaf DBs / same-collection target validated when Fillback opens). V-G7.
         VolActFillback.IsEnabled = hasVol
@@ -5484,7 +5486,8 @@ public partial class MainWindow : Window
         var entry = VolumesList.SelectedItem as VolumeEntry;
         if (entry is null) return;
         if (entry.StatusLabel is not ("LOCAL" or "ON DISK")) return;
-        if (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath)) return;
+        // Single requires its leaf DB; Group has none (per-leaf DBs resolved during candidate building).
+        if (!entry.IsGroupOwned && (entry.DbPath.Length == 0 || !File.Exists(entry.DbPath))) return;
 
         var appRoot = AppContext.BaseDirectory;
 
@@ -5499,31 +5502,57 @@ public partial class MainWindow : Window
             return;
         }
 
-        // ── STEP 1B: Load assignments — filter LOST ────────────────────────
-        var store           = new DatLineStore(entry.DbPath);
-        var assignments     = _catalog.GetVolumeArtifacts(entry.Id);
-        if (assignments.Count == 0) return;
+        // ── STEP 1B: Build reabsorb candidates (owner-aware) ───────────────
+        // Single: one leaf store, flat source paths. Group: assignments grouped by exact leaf, per-leaf stores,
+        // leaf-nested source paths. Both produce the SAME ReabsorbCandidate set; the physical loop is shared.
+        List<Volumes.ReabsorbCandidate> candidates;
+        int lostCount;
+        int assignmentCount;
 
-        var lostAssignments   = assignments.Where(va => va.Status == "lost").ToList();
-        var activeAssignments = assignments.Where(va => va.Status != "lost").ToList();
+        if (entry.IsGroupOwned)
+        {
+            var leaves = _catalog.GetLeavesForGroup(entry.GroupId!);
+            var gp = Volumes.GroupReabsorbPlanningService.Plan(
+                _catalog, _dataDir, entry.Id, entry.GroupId!, volumeRoot, appRoot, leaves);
 
-        var daIds      = activeAssignments.Select(va => va.DerivedArtifactId).ToList();
-        var buildInfos = store.GetArtifactBuildInfos(daIds);
-        var infoById   = buildInfos.ToDictionary(b => b.DerivedArtifactId, StringComparer.Ordinal);
-
-        // Build candidate list: only artifacts physically present on the volume
-        var candidates = activeAssignments
-            .Where(va => infoById.ContainsKey(va.DerivedArtifactId))
-            .Select(va =>
+            if (gp.BlockReason is not null)
             {
-                var info = infoById[va.DerivedArtifactId];
-                var src  = Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, info.FileName);
-                var dst  = Path.Combine(appRoot,
-                    info.RelativePath.Replace('/', Path.DirectorySeparatorChar));
-                return (Info: info, Src: src, Dst: dst);
-            })
-            .Where(x => File.Exists(x.Src))
-            .ToList();
+                await new InfoDialog("Reabsorb Blocked", gp.BlockReason).ShowDialog(this);
+                return;
+            }
+            candidates      = gp.Candidates.ToList();
+            lostCount       = gp.LostCount;
+            assignmentCount = gp.AssignmentCount;
+        }
+        else
+        {
+            var store           = new DatLineStore(entry.DbPath);
+            var assignments     = _catalog.GetVolumeArtifacts(entry.Id);
+            assignmentCount     = assignments.Count;
+            lostCount           = assignments.Count(va => va.Status == "lost");
+            var activeAssignments = assignments.Where(va => va.Status != "lost").ToList();
+
+            var daIds    = activeAssignments.Select(va => va.DerivedArtifactId).ToList();
+            var infoById = store.GetArtifactBuildInfos(daIds)
+                                .ToDictionary(b => b.DerivedArtifactId, StringComparer.Ordinal);
+
+            candidates = activeAssignments
+                .Where(va => infoById.ContainsKey(va.DerivedArtifactId))
+                .Select(va =>
+                {
+                    var info = infoById[va.DerivedArtifactId];
+                    return new Volumes.ReabsorbCandidate(
+                        info.DerivedArtifactId, va.DatLineId ?? "", info.FileName, info.SizeBytes,
+                        Volumes.VolumeArtifactPathBuilder.GetFlatFullPath(volumeRoot, info.FileName),
+                        Path.Combine(appRoot, info.RelativePath.Replace('/', Path.DirectorySeparatorChar)),
+                        entry.DbPath);
+                })
+                .Where(x => File.Exists(x.SourcePath))
+                .ToList();
+        }
+
+        // Historical no-op: a volume with no assignments does nothing (not a decommission action).
+        if (assignmentCount == 0) return;
 
         if (candidates.Count == 0)
         {
@@ -5537,9 +5566,9 @@ public partial class MainWindow : Window
         // ── STEP 1C: Pre-categorize CASE A (already local) vs CASE B (copy needed)
         // CASE A: dst already exists in Local Archive — verify only, no copy
         // CASE B: dst absent — must copy from volume
-        var caseACount = candidates.Count(x => File.Exists(x.Dst));
-        var caseBList  = candidates.Where(x => !File.Exists(x.Dst)).ToList();
-        long caseBBytes = caseBList.Sum(x => x.Info.SizeBytes);
+        var caseACount = candidates.Count(x => File.Exists(x.ArchiveDestPath));
+        var caseBList  = candidates.Where(x => !File.Exists(x.ArchiveDestPath)).ToList();
+        long caseBBytes = caseBList.Sum(x => x.SizeBytes);
 
         // ── STEP 1D: Free space check (CASE B bytes only) ──────────────────
         if (caseBBytes > 0)
@@ -5563,14 +5592,16 @@ public partial class MainWindow : Window
         // ── Confirm ────────────────────────────────────────────────────────
         var confirmMsg = new System.Text.StringBuilder();
         confirmMsg.AppendLine($"Volume:  {entry.Label}");
+        if (entry.IsGroupOwned)
+            confirmMsg.AppendLine($"Collection:  {entry.DatLineId}");
         confirmMsg.AppendLine($"Source:  {volumeRoot}");
         confirmMsg.AppendLine();
         if (caseBList.Count > 0)
             confirmMsg.AppendLine($"To copy:          {caseBList.Count} file(s)  ({FormatBytes(caseBBytes)})");
         if (caseACount > 0)
             confirmMsg.AppendLine($"Already local:    {caseACount} file(s)  (verify only)");
-        if (lostAssignments.Count > 0)
-            confirmMsg.AppendLine($"Skipped (LOST):   {lostAssignments.Count} file(s)");
+        if (lostCount > 0)
+            confirmMsg.AppendLine($"Skipped (LOST):   {lostCount} file(s)");
         confirmMsg.AppendLine();
         confirmMsg.Append("Files will be verified and removed from the volume. " +
             "The volume record is deleted only if all artifacts are successfully reabsorbed.");
@@ -5579,212 +5610,79 @@ public partial class MainWindow : Window
             .ShowDialog<bool>(this);
         if (!confirmed) return;
 
-        // ── Run per-artifact transfer on background thread ─────────────────
-        bool logEnabled = _catalog.GetBoolSetting("log_on_copy", true);
-        var  sb         = logEnabled ? new System.Text.StringBuilder() : null;
-        var  startTime  = DateTime.UtcNow;
-        var  volSlug    = SafeFileName(entry.Label);
-
-        if (sb is not null)
-        {
-            sb.AppendLine("Volume Reabsorb");
-            sb.AppendLine($"Started:         {startTime:o}");
-            sb.AppendLine($"Volume:          {entry.Label}");
-            sb.AppendLine($"Source:          {volumeRoot}");
-            sb.AppendLine($"To copy:         {caseBList.Count}");
-            sb.AppendLine($"Already local:   {caseACount}");
-            sb.AppendLine($"Skipped (LOST):  {lostAssignments.Count}");
-            sb.AppendLine();
-            foreach (var va in lostAssignments)
-                sb.AppendLine($"skipped-lost  {va.DerivedArtifactId}");
-            if (lostAssignments.Count > 0) sb.AppendLine();
-        }
-
+        // ── Run per-artifact transfer via the shared Reabsorb executor ─────
         var header     = $"Reabsorb Volume  —  {entry.Label}  —  {candidates.Count} file(s)";
         var progDialog = new WriteVolumeToDiskDialog(header, caseBBytes, candidates.Count);
         var dlgTask    = progDialog.ShowDialog<bool>(this);
+        var startTime  = DateTime.UtcNow;
 
-        string? abortReason    = null;
-        bool    cleanupFailed  = false;
-        long    copiedBytes    = 0, verifiedBytes = 0;
-        int     filesProcessed = 0;
-        var     recoveredDaIds = new List<string>();
+        long uiVerified = 0; int uiFiles = 0;
+        var progress = new Progress<Volumes.ReabsorbProgress>(p =>
+        {
+            progDialog.AppendRow(p.Action, p.FileName, p.Detail);
+            if (p.Action is "verify-ok")
+            {
+                var cand = candidates.FirstOrDefault(x =>
+                    string.Equals(x.FileName, p.FileName, StringComparison.OrdinalIgnoreCase));
+                if (cand is not null) uiVerified += cand.SizeBytes;
+                uiFiles++;
+                progDialog.UpdateStats(uiVerified, uiVerified, uiFiles, DateTime.UtcNow - startTime);
+            }
+        });
 
+        Volumes.VolumeReabsorbResult result;
         try
         {
-            await Task.Run(async () =>
-            {
-                // ── Per-artifact: copy → verify → delete (strict per-file order) ──
-                foreach (var (info, src, dst) in candidates)
-                {
-                    var sizeLabel = FormatBytes(info.SizeBytes);
-                    bool dstExists = File.Exists(dst);
-
-                    if (dstExists)
-                    {
-                        // ── CASE A: artifact already present in Local Archive ──
-                        sb?.AppendLine($"already-present-local  {info.FileName}  ({sizeLabel})");
-                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                            progDialog.AppendRow("already-local", info.FileName, sizeLabel));
-
-                        var sha1Dst = ComputeFileSha1(dst);
-                        var sha1Src = ComputeFileSha1(src);
-
-                        if (string.Equals(sha1Dst, sha1Src, StringComparison.OrdinalIgnoreCase))
-                        {
-                            // Local copy valid — mark recovered, then delete volume copy
-                            sb?.AppendLine($"verify-ok  {info.FileName}  sha1={sha1Dst}");
-                            recoveredDaIds.Add(info.DerivedArtifactId);
-                            try
-                            {
-                                File.Delete(src);
-                                sb?.AppendLine($"delete-from-volume  {info.FileName}");
-                            }
-                            catch (Exception ex)
-                            {
-                                sb?.AppendLine($"delete-from-volume-failed  {info.FileName}  {ex.Message}");
-                                cleanupFailed = true;
-                                return;
-                            }
-                            verifiedBytes += info.SizeBytes;
-                            filesProcessed++;
-                            var el1 = DateTime.UtcNow - startTime;
-                            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                            {
-                                progDialog.AppendRow("verify-ok", info.FileName, sizeLabel);
-                                progDialog.UpdateStats(copiedBytes, verifiedBytes, filesProcessed, el1);
-                            });
-                            continue;
-                        }
-
-                        // Local copy invalid — fall through to CASE B (overwrite)
-                        sb?.AppendLine($"local-invalid  {info.FileName}  " +
-                            $"sha1-local={sha1Dst}  sha1-vol={sha1Src}  — re-copying");
-                    }
-
-                    // ── CASE B: copy from volume → Local Archive ───────────
-                    sb?.AppendLine($"copy-start  {info.FileName}  ({sizeLabel})");
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                        progDialog.AppendRow("copy-start", info.FileName, sizeLabel));
-
-                    Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
-                    File.Copy(src, dst, overwrite: true);
-                    copiedBytes += info.SizeBytes;
-                    filesProcessed++;
-                    var elCopy = DateTime.UtcNow - startTime;
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                        progDialog.UpdateStats(copiedBytes, verifiedBytes, filesProcessed, elCopy));
-
-                    // Verify copy
-                    var sha1S = ComputeFileSha1(src);
-                    var sha1D = ComputeFileSha1(dst);
-
-                    if (!string.Equals(sha1S, sha1D, StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Verification failed — abort, leave src intact
-                        sb?.AppendLine($"verify-failed  {info.FileName}  " +
-                            $"sha1-src={sha1S}  sha1-dst={sha1D}");
-                        abortReason = $"SHA1 mismatch: {info.FileName}";
-                        await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                            progDialog.AppendRow("verify-failed", info.FileName, sizeLabel));
-                        return;
-                    }
-
-                    // Copy verified — mark recovered, then delete volume copy
-                    sb?.AppendLine($"verify-ok  {info.FileName}  sha1={sha1D}");
-                    verifiedBytes += info.SizeBytes;
-                    recoveredDaIds.Add(info.DerivedArtifactId);
-                    try
-                    {
-                        File.Delete(src);
-                        sb?.AppendLine($"delete-from-volume  {info.FileName}");
-                    }
-                    catch (Exception ex)
-                    {
-                        sb?.AppendLine($"delete-from-volume-failed  {info.FileName}  {ex.Message}");
-                        cleanupFailed = true;
-                        return;
-                    }
-
-                    var elVerify = DateTime.UtcNow - startTime;
-                    await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                    {
-                        progDialog.AppendRow("verify-ok", info.FileName, sizeLabel);
-                        progDialog.UpdateStats(copiedBytes, verifiedBytes, filesProcessed, elVerify);
-                    });
-                }
-            });
+            var svc = new Volumes.VolumeReabsorbService(_catalog);
+            result = await Task.Run(() => svc.Execute(entry.Id, volumeRoot, candidates, progress));
         }
-        catch (Exception ex) { abortReason = ex.Message; }
-
-        bool fullSuccess = abortReason is null && !cleanupFailed;
+        catch (Exception ex)
+        {
+            result = new Volumes.VolumeReabsorbResult { AbortReason = ex.Message };
+        }
 
         // ── Write log ──────────────────────────────────────────────────────
-        if (sb is not null)
+        if (_catalog.GetBoolSetting("log_on_copy", true))
         {
-            var endTime = DateTime.UtcNow;
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("Volume Reabsorb");
+            sb.AppendLine($"Started:         {startTime:o}");
+            sb.AppendLine($"Volume:          {entry.Label}");
+            if (entry.IsGroupOwned) sb.AppendLine($"Collection:      {entry.DatLineId}");
+            sb.AppendLine($"Source:          {volumeRoot}");
+            sb.AppendLine($"To copy:         {caseBList.Count}");
+            sb.AppendLine($"Already local:   {caseACount}");
+            sb.AppendLine($"Skipped (LOST):  {lostCount}");
+            sb.AppendLine();
+            foreach (var line in result.LogLines) sb.AppendLine(line);
             sb.AppendLine();
             sb.AppendLine(
-                fullSuccess   ? "reabsorb-complete" :
-                cleanupFailed ? "reabsorb-cleanup-failed" :
-                                $"reabsorb-aborted  {abortReason}");
-            sb.AppendLine($"Completed:   {endTime:o}");
-            sb.AppendLine($"Duration:    {(endTime - startTime).TotalSeconds:F1}s");
-            sb.AppendLine($"Transferred: {recoveredDaIds.Count} / {candidates.Count}");
+                result.FullSuccess   ? "reabsorb-complete" :
+                result.CleanupFailed ? "reabsorb-cleanup-failed" :
+                                       $"reabsorb-aborted  {result.AbortReason}");
+            sb.AppendLine($"Completed:   {DateTime.UtcNow:o}");
+            sb.AppendLine($"Transferred: {result.RecoveredCount} / {candidates.Count}");
             try
             {
                 var logDir  = Path.Combine(appRoot, "logs", "volume-reabsorb");
                 Directory.CreateDirectory(logDir);
                 var logFile = Path.Combine(logDir,
-                    $"{startTime:yyyyMMdd-HHmmss}-volume-reabsorb-{volSlug}.log");
+                    $"{startTime:yyyyMMdd-HHmmss}-volume-reabsorb-{SafeFileName(entry.Label)}.log");
                 File.WriteAllText(logFile, sb.ToString());
             }
             catch { /* non-fatal */ }
         }
 
-        // ── DB updates — apply for all verified artifacts regardless of delete outcome ─
-        if (recoveredDaIds.Count > 0)
-        {
-            store.BatchUpdateDerivedArtifactStatus(recoveredDaIds, "present");
-            store.RecalculateReleaseStatusForArtifacts(recoveredDaIds);
-        }
-
-        if (fullSuccess)
-        {
-            // ── Full success: delete volume directory + DB record ──────────
-            try
-            {
-                if (Directory.Exists(volumeRoot))
-                {
-                    foreach (var dir in Directory.GetDirectories(
-                                 volumeRoot, "*", SearchOption.AllDirectories)
-                                 .OrderByDescending(d => d.Length))
-                    {
-                        if (!Directory.EnumerateFileSystemEntries(dir).Any())
-                            Directory.Delete(dir);
-                    }
-                    if (!Directory.EnumerateFileSystemEntries(volumeRoot).Any())
-                        Directory.Delete(volumeRoot);
-                }
-            }
-            catch { /* non-fatal — dir cleanup failed; DB cleanup proceeds */ }
-
-            _catalog.DeleteVolume(entry.Id);
-
-            progDialog.SetCompleted(recoveredDaIds.Count, copiedBytes, appRoot,
-                $"reabsorb-complete — {recoveredDaIds.Count} file(s) transferred. Volume deleted.");
-        }
+        if (result.FullSuccess)
+            progDialog.SetCompleted(result.RecoveredCount, result.CopiedBytes, appRoot,
+                $"reabsorb-complete — {result.RecoveredCount} file(s) transferred. Volume deleted.");
         else
         {
-            // Partial: remove transferred artifact mappings from volume; retain volume record
-            if (recoveredDaIds.Count > 0)
-                _catalog.RemoveVolumeArtifacts(entry.Id, recoveredDaIds);
-
-            var failReason = cleanupFailed
+            var failReason = result.CleanupFailed
                 ? "cleanup failure — source file(s) could not be deleted from volume"
-                : abortReason ?? "unknown error";
+                : result.AbortReason ?? "unknown error";
             progDialog.SetFailed($"reabsorb-aborted — {failReason}\n" +
-                $"{recoveredDaIds.Count}/{candidates.Count} file(s) transferred. Volume retained.");
+                $"{result.RecoveredCount}/{candidates.Count} file(s) transferred. Volume retained.");
         }
 
         await dlgTask;

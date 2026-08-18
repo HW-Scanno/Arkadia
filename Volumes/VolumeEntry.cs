@@ -64,6 +64,15 @@ public sealed class VolumeEntry
     public bool CanFillbackVolume(bool singleDbAvailable)
         => Status == "present" && ArtifactCount > 0 && (IsGroupOwned || singleDbAvailable);
 
+    /// <summary>
+    /// Reabsorb readiness — present only, owner-agnostic. This is the EXACT historical Single toolbar gate
+    /// (<c>isPhysical &amp;&amp; isSingle</c> reduces to <c>Status == "present"</c> for a Single owner): no
+    /// <c>DbPath</c> and <b>no ArtifactCount</b> in the toolbar gate. A present Single volume with a missing DB is
+    /// still enabled and no-ops via the handler's own DbPath guard; an empty present volume is enabled and no-ops
+    /// via the zero-assignment early return. Group needs no <c>DbPath</c> (leaf DBs resolved when Reabsorb runs).
+    /// </summary>
+    public bool CanReabsorbVolume => Status == "present";
+
     public double FillRatio => PlannedSizeBytes > 0
         ? System.Math.Clamp((double)ActualSizeBytes / PlannedSizeBytes, 0, 1)
         : 0;
