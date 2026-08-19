@@ -75,7 +75,10 @@ public static class ResumableStagingDetector
             if (r.ExpectedFiles.Count == 0)
             { skipped.Add((r.ReleaseId, "no-expected-files")); continue; }
 
-            var complete = r.ExpectedFiles.All(f => File.Exists(Path.Combine(folder, f)));
+            // rom names may be relative paths inside the release; resolve safely below the staging folder (an
+            // invalid/escaping name resolves to "not present" ⇒ incomplete-staging).
+            var complete = r.ExpectedFiles.All(f =>
+                IngestionPaths.TryResolveReleaseChild(folder, f, out var p) && File.Exists(p));
             if (!complete)
             { skipped.Add((r.ReleaseId, "incomplete-staging")); continue; }
 

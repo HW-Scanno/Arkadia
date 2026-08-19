@@ -79,14 +79,18 @@ public static class LeafFinalizationEngine
 
             if (expectedFiles.Count == 0) continue;
 
-            bool complete = expectedFiles.All(f =>
-                File.Exists(Path.Combine(stagingDir, f.RomName)));
+            // rom.name may be a relative path inside the release; resolve it safely below the staging root. An
+            // invalid/escaping name (never legitimately present) resolves to "not present" ⇒ incomplete.
+            bool Staged(ReleaseFileRecord f) =>
+                IngestionPaths.TryResolveReleaseChild(stagingDir, f.RomName, out var p) && File.Exists(p);
+
+            bool complete = expectedFiles.All(Staged);
 
             if (!complete)
             {
                 incompleteReleases.Add(releaseId);
                 var missingFiles = expectedFiles
-                    .Where(f => !File.Exists(Path.Combine(stagingDir, f.RomName)))
+                    .Where(f => !Staged(f))
                     .Select(f => f.RomName)
                     .ToList();
                 var incompleteOp = new IngestionOperation(
@@ -105,13 +109,18 @@ public static class LeafFinalizationEngine
                 Directory.CreateDirectory(sourceDir);
                 foreach (var f in expectedFiles)
                 {
-                    var src  = Path.Combine(stagingDir, f.RomName);
-                    var dest = Path.Combine(sourceDir,  f.RomName);
+                    // Preserve the DAT relative path on both sides; create the destination's parent for nested
+                    // rom.name values. ResolveReleaseChild throws on an escaping name → caught below → the release
+                    // fails assembly and its incoming is retained (no external write).
+                    var src  = IngestionPaths.ResolveReleaseChild(stagingDir, f.RomName);
+                    var dest = IngestionPaths.ResolveReleaseChild(sourceDir,  f.RomName);
+                    Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                     File.Move(src, dest, overwrite: true);
                 }
-                // Remove empty staging folder (best-effort)
-                if (!Directory.EnumerateFileSystemEntries(stagingDir).Any())
-                    try { Directory.Delete(stagingDir); } catch { }
+                // Drain the staging release tree (best-effort). Nested rom.name paths leave empty subdirectories
+                // after promotion; collapse them bottom-up and remove the release dir itself once empty. Files are
+                // never deleted — any branch still holding unresolved material (and its ancestors) is preserved.
+                IngestionPaths.RemoveEmptyDirectoriesBottomUp(stagingDir);
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {

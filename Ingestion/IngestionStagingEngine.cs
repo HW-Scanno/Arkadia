@@ -131,12 +131,17 @@ public static class IngestionStagingEngine
                 var relName    = releases.TryGetValue(releaseId, out var rel) ? rel.Name : releaseId;
                 var safeFolder = safeFileName(relName);
                 var stagingDir = Path.Combine(stagingRoot, safeFolder);
-                var destPath   = Path.Combine(stagingDir, romName);
 
                 Directory.CreateDirectory(stagingDir);
 
                 try
                 {
+                    // rom.name may be a RELATIVE path inside the release (e.g. TIME-PILOT\assets\bank001.au).
+                    // Resolve it safely below the release root (rejecting traversal/absolute names) and create its
+                    // parent directory so nested paths stage. Flat names resolve to stagingDir exactly as before.
+                    var destPath = IngestionPaths.ResolveReleaseChild(stagingDir, romName);
+                    Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+
                     // Move when this is the sole remaining target and paths share a volume
                     // (same-volume File.Move is an atomic NTFS rename — no byte copy).
                     // Copy otherwise (fan-out to multiple releases, or cross-volume).

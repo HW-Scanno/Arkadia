@@ -215,10 +215,17 @@ public static class GroupIngestionPlanner
 
     private static bool RomSecured(string stagingRoot, string sourceRoot, string safeFolder, ReleaseFileRecord f, string releaseStatus)
     {
-        if (File.Exists(Path.Combine(stagingRoot, safeFolder, f.RomName))) return true;
+        // rom.name may be a relative path inside the release; resolve safely below each release root (an
+        // invalid/escaping name resolves to "not present" ⇒ not secured).
+        var stagingReleaseRoot = Path.Combine(stagingRoot, safeFolder);
+        var sourceReleaseRoot  = Path.Combine(sourceRoot,  safeFolder);
 
-        var sourcePath = Path.Combine(sourceRoot, safeFolder, f.RomName);
-        if (!File.Exists(sourcePath)) return false;
+        if (IngestionPaths.TryResolveReleaseChild(stagingReleaseRoot, f.RomName, out var stagingPath)
+            && File.Exists(stagingPath))
+            return true;
+
+        if (!IngestionPaths.TryResolveReleaseChild(sourceReleaseRoot, f.RomName, out var sourcePath)
+            || !File.Exists(sourcePath)) return false;
         if (releaseStatus != "present") return false;   // transform-failed retry → re-stage (not secured)
 
         if (long.TryParse(f.Size, out var sz) && sz > 0)
