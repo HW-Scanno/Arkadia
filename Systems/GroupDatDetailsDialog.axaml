@@ -3,8 +3,8 @@
         xmlns:sys="using:Arkadia.Systems"
         x:Class="Arkadia.GroupDatDetailsDialog"
         Title="Arkadia - Group DAT"
-        Width="720" Height="560"
-        MinWidth="520" MinHeight="360"
+        Width="760" Height="560"
+        MinWidth="560" MinHeight="360"
         CanResize="True"
         WindowStartupLocation="CenterOwner"
         Background="#0F0F14"
@@ -12,31 +12,46 @@
 
     <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="20,18,20,16">
 
-        <!-- Header + loading indicator -->
-        <StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,12">
-            <TextBlock x:Name="HeaderName"
-                       FontSize="15" FontWeight="SemiBold" Foreground="#E8E8F0"/>
-            <TextBlock x:Name="HeaderSub"
-                       FontSize="12" Foreground="#888899"/>
-            <StackPanel x:Name="LoadingRow" Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
-                <ProgressBar x:Name="LoadSpinner" IsIndeterminate="True"
-                             Width="120" Height="6"
-                             Foreground="#7B68EE" Background="#242433"
-                             VerticalAlignment="Center"/>
-                <TextBlock x:Name="LoadStatus" FontSize="11" Foreground="#888899"
-                           VerticalAlignment="Center" Text="Loading leaf details…"/>
+        <!-- Header + loading indicator + Missing filter -->
+        <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+            <StackPanel Grid.Column="0" Spacing="2">
+                <TextBlock x:Name="HeaderName"
+                           FontSize="15" FontWeight="SemiBold" Foreground="#E8E8F0"/>
+                <TextBlock x:Name="HeaderSub"
+                           FontSize="12" Foreground="#888899"/>
+                <StackPanel x:Name="LoadingRow" Orientation="Horizontal" Spacing="10" Margin="0,8,0,0">
+                    <ProgressBar x:Name="LoadSpinner" IsIndeterminate="True"
+                                 Width="120" Height="6"
+                                 Foreground="#7B68EE" Background="#242433"
+                                 VerticalAlignment="Center"/>
+                    <TextBlock x:Name="LoadStatus" FontSize="11" Foreground="#888899"
+                               VerticalAlignment="Center" Text="Loading leaf details…"/>
+                </StackPanel>
             </StackPanel>
-        </StackPanel>
+            <ToggleButton x:Name="MissingToggle"
+                          Grid.Column="1"
+                          Content="Missing"
+                          IsEnabled="False"
+                          VerticalAlignment="Top"
+                          FontSize="11"
+                          Background="#1E1E2C" Foreground="#AAAACC"
+                          BorderBrush="#2A2A3C" BorderThickness="1"
+                          Padding="14,6" CornerRadius="6"
+                          IsCheckedChanged="OnMissingToggled"
+                          ToolTip.Tip="Show only leaf DATs that are not yet 100% complete."/>
+        </Grid>
 
         <!-- Column headers -->
         <Border Grid.Row="1" Background="#14141C" CornerRadius="4,4,0,0" Padding="10,7"
                 BorderBrush="#1E1E2E" BorderThickness="1,1,1,0">
-            <Grid ColumnDefinitions="2*,4*,2*,Auto">
+            <Grid ColumnDefinitions="2*,4*,2*,Auto,Auto">
                 <TextBlock Grid.Column="0" Text="LEAF DAT"    FontSize="10" LetterSpacing="1" Foreground="#666677"/>
                 <TextBlock Grid.Column="1" Text="SOURCE PATH" FontSize="10" LetterSpacing="1" Foreground="#666677"/>
                 <TextBlock Grid.Column="2" Text="MEDIA TYPE"  FontSize="10" LetterSpacing="1" Foreground="#666677"/>
                 <TextBlock Grid.Column="3" Text="RELEASES"    FontSize="10" LetterSpacing="1" Foreground="#666677"
                            Width="72" TextAlignment="Right"/>
+                <TextBlock Grid.Column="4" Text="COMPLETE"    FontSize="10" LetterSpacing="1" Foreground="#666677"
+                           Width="64" TextAlignment="Right"/>
             </Grid>
         </Border>
 
@@ -52,7 +67,7 @@
                      ScrollViewer.VerticalScrollBarVisibility="Auto">
                 <ListBox.ItemTemplate>
                     <DataTemplate x:DataType="sys:GroupDatDetailsRow">
-                        <Grid ColumnDefinitions="2*,4*,2*,Auto">
+                        <Grid ColumnDefinitions="2*,4*,2*,Auto,Auto">
                             <TextBlock Grid.Column="0" Text="{Binding LeafId}"
                                        FontSize="11" Foreground="#C8C8E0"
                                        FontFamily="Consolas,Courier New,monospace"
@@ -68,6 +83,9 @@
                             <TextBlock Grid.Column="3" Text="{Binding Releases}"
                                        FontSize="11" Foreground="#AAAACC"
                                        Width="72" TextAlignment="Right"/>
+                            <TextBlock Grid.Column="4" Text="{Binding CompletionText}"
+                                       FontSize="11" Foreground="#AAAACC"
+                                       Width="64" TextAlignment="Right"/>
                         </Grid>
                     </DataTemplate>
                 </ListBox.ItemTemplate>

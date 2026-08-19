@@ -2432,6 +2432,33 @@ public sealed class CatalogService
         };
     }
 
+    /// <summary>
+    /// The ownership keys of every volume whose CURRENT location is the local workspace ("LOCAL"). One query used
+    /// by the Systems storage-lifecycle badges to distinguish READY TO MOVE (a relevant volume is still local)
+    /// from ARCHIVED (none is). Each row carries the volume's single owner (dat_line_id XOR group_id) and its
+    /// hardware_family_id, so callers derive per-Single, per-Group, and per-System "any LOCAL volume" by simple
+    /// set membership without a per-volume location lookup. Persisted catalog state only — no disk discovery.
+    /// </summary>
+    public List<(string? DatLineId, string? GroupId, string PlatformId)> GetLocalWorkspaceVolumeOwners()
+    {
+        var list = new List<(string?, string?, string)>();
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT v.dat_line_id, v.group_id, v.hardware_family_id
+            FROM volumes v
+            JOIN volume_locations vl ON vl.volume_id = v.id
+            WHERE vl.is_current = 1 AND vl.location_type = 'workspace'
+            """;
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+            list.Add((
+                r.IsDBNull(0) ? null : r.GetString(0),
+                r.IsDBNull(1) ? null : r.GetString(1),
+                r.GetString(2)));
+        return list;
+    }
+
     // ── Volume Artifacts ──────────────────────────────────────────────────────
 
     /// <summary>
@@ -2454,6 +2481,30 @@ public sealed class CatalogService
         while (r.Read())
             set.Add(r.GetString(0));
         return set;
+    }
+
+    /// <summary>
+    /// Bulk form of <see cref="GetAssignedDerivedIdsByDatLine"/>: one query returning, for every dat_line that has
+    /// any assignment, the set of its assigned derived_artifact_ids. Used by the lazy Group storage-lifecycle
+    /// enrichment so a 410-leaf group needs a single catalog query instead of 410 — the leaf-DB present-derived
+    /// scan then subtracts each leaf's set to get its unassigned count. Leaves with no assignments are simply
+    /// absent from the map (callers treat missing as an empty set).
+    /// </summary>
+    public Dictionary<string, System.Collections.Generic.HashSet<string>> GetAllAssignedDerivedIdsByDatLine()
+    {
+        var result = new Dictionary<string, System.Collections.Generic.HashSet<string>>(StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT DISTINCT dat_line_id, derived_artifact_id FROM volume_artifacts";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            var dlId = r.GetString(0);
+            if (!result.TryGetValue(dlId, out var set))
+                result[dlId] = set = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+            set.Add(r.GetString(1));
+        }
+        return result;
     }
 
     /// <summary>

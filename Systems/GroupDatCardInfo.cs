@@ -24,11 +24,30 @@ public sealed record GroupDatCardInfo(
     /// </summary>
     public bool CoveragePending { get; init; }
 
+    // ── Archive-lifecycle facts (leaf-DB half from GroupStorageFacts; catalog/FS half from the caller) ──
+    /// <summary>Σ present derived artifacts owned across the group's leaves (leaf-DB; valid only when not pending).</summary>
+    public int  OwnedPresentDerived { get; init; }
+    /// <summary>Σ present derived artifacts not assigned to any volume (leaf-DB; valid only when not pending).</summary>
+    public int  Unassigned          { get; init; }
+    /// <summary>True if any Group-owned volume's current location is the local workspace (catalog; always known).</summary>
+    public bool AnyLocalVolume      { get; init; }
+    /// <summary>True if any of the group's leaves has staging material on disk (filesystem; always known).</summary>
+    public bool HasStaging          { get; init; }
+
     /// <summary>Wanted coverage percent, or null when pending / when there are no wanted releases (same rule as SystemPlatform).</summary>
-    public int? CoveragePercent => CoveragePending ? null : (WantedSum > 0 ? PresentSum * 100 / WantedSum : (int?)null);
+    public int? CoveragePercent => CoveragePending ? null : CompletionMath.PercentFromWanted(PresentSum, WantedSum);
 
     /// <summary>Coverage as a display string; "N/A" when there are no wanted releases (not used while pending — UI shows a spinner).</summary>
-    public string CoverageText => CoveragePending ? "…" : (CoveragePercent is { } pct ? $"{pct}%" : "N/A");
+    public string CoverageText => CoveragePending ? "…" : CompletionMath.Text(CoveragePercent);
+
+    /// <summary>
+    /// Archive lifecycle for the group. <see cref="ArchiveLifecycle.None"/> while coverage/facts are pending
+    /// (so a partial load never renders a false ARCHIVED/NEEDS VOLUME) — the caller omits the badge then and
+    /// re-renders when the lazy facts land.
+    /// </summary>
+    public ArchiveLifecycle Lifecycle => CoveragePending
+        ? ArchiveLifecycle.None
+        : StorageLifecycle.Derive(OwnedPresentDerived, Unassigned, AnyLocalVolume);
 
     /// <summary>Second card line, e.g. "TOSEC · 410 leaf DATs".</summary>
     public string Subtitle => $"{Authority} · {LeafCount} leaf DAT{(LeafCount == 1 ? "" : "s")}";

@@ -1,0 +1,77 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:sys="using:Arkadia.Systems"
+        x:Class="Arkadia.SingleDatDetailsDialog"
+        Title="Arkadia - DAT Details"
+        Width="640" Height="480"
+        MinWidth="480" MinHeight="300"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="20,18,20,16">
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Spacing="2" Margin="0,0,0,12">
+            <TextBlock x:Name="HeaderName" FontSize="15" FontWeight="SemiBold" Foreground="#E8E8F0"/>
+            <TextBlock x:Name="HeaderSub"  FontSize="12" Foreground="#888899"/>
+        </StackPanel>
+
+        <!-- Column headers -->
+        <Border Grid.Row="1" Background="#14141C" CornerRadius="4,4,0,0" Padding="10,7"
+                BorderBrush="#1E1E2E" BorderThickness="1,1,1,0">
+            <Grid ColumnDefinitions="3*,Auto,Auto,2*">
+                <TextBlock Grid.Column="0" Text="VOLUME"    FontSize="10" LetterSpacing="1" Foreground="#666677"/>
+                <TextBlock Grid.Column="1" Text="ARTIFACTS" FontSize="10" LetterSpacing="1" Foreground="#666677"
+                           Width="84" TextAlignment="Right"/>
+                <TextBlock Grid.Column="2" Text="SIZE"      FontSize="10" LetterSpacing="1" Foreground="#666677"
+                           Width="96" TextAlignment="Right"/>
+                <TextBlock Grid.Column="3" Text="DISK"      FontSize="10" LetterSpacing="1" Foreground="#666677"
+                           Margin="16,0,0,0"/>
+            </Grid>
+        </Border>
+
+        <!-- Rows -->
+        <Border Grid.Row="2" BorderBrush="#1E1E2E" BorderThickness="1,0,1,1" CornerRadius="0,0,4,4">
+            <Panel>
+                <ListBox x:Name="VolumesList"
+                         Background="Transparent" BorderThickness="0" Padding="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="sys:SingleDatVolumeRow">
+                            <Grid ColumnDefinitions="3*,Auto,Auto,2*">
+                                <TextBlock Grid.Column="0" Text="{Binding Volume}"
+                                           FontSize="11" Foreground="#C8C8E0"
+                                           TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Grid.Column="1" Text="{Binding Artifacts}"
+                                           FontSize="11" Foreground="#AAAACC"
+                                           Width="84" TextAlignment="Right"/>
+                                <TextBlock Grid.Column="2" Text="{Binding Size}"
+                                           FontSize="11" Foreground="#AAAACC"
+                                           Width="96" TextAlignment="Right"/>
+                                <TextBlock Grid.Column="3" Text="{Binding Disk}"
+                                           FontSize="11" Foreground="#AAAACC"
+                                           Margin="16,0,0,0" TextTrimming="CharacterEllipsis"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock x:Name="EmptyState" IsVisible="False"
+                           Text="This DAT has no volumes yet."
+                           FontSize="12" Foreground="#666677"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Panel>
+        </Border>
+
+        <!-- Footer -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,14,0,0">
+            <Button Content="Close"
+                    Background="#1E1E2C" Foreground="#AAAACC"
+                    BorderBrush="#2A2A3C" BorderThickness="1"
+                    Padding="20,8" CornerRadius="6"
+                    Click="OnClose"/>
+        </StackPanel>
+    </Grid>
+</Window>

@@ -969,6 +969,30 @@ public sealed class DatLineStore
     }
 
     /// <summary>
+    /// Present derived-artifact totals in a single scan: the total number of derived artifacts with status
+    /// 'present' (the owned/materialized artifacts in the Local Archive), and how many of those are NOT in
+    /// <paramref name="assignedIds"/> (unassigned to any volume). Used by the Systems storage-lifecycle badges —
+    /// <c>TotalPresent == 0 &amp;&amp; Unassigned == 0</c> means an untouched DAT (no lifecycle badge);
+    /// <c>Unassigned &gt; 0</c> is the NEEDS VOLUME trigger. Read-only; one query.
+    /// </summary>
+    public (int TotalPresent, int Unassigned) GetPresentDerivedAssignmentStats(
+        System.Collections.Generic.IReadOnlySet<string> assignedIds)
+    {
+        int total = 0, unassigned = 0;
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT id FROM derived_artifacts WHERE status = 'present'";
+        using var r = cmd.ExecuteReader();
+        while (r.Read())
+        {
+            total++;
+            if (!assignedIds.Contains(r.GetString(0)))
+                unassigned++;
+        }
+        return (total, unassigned);
+    }
+
+    /// <summary>
     /// Returns other releases in this DAT line that share file content (by SHA1/MD5) with the
     /// given release. Results are sorted by shared-file count DESC, then release name ASC.
     /// </summary>

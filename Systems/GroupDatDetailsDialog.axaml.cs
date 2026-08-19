@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using Arkadia.Systems;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -17,6 +18,7 @@ namespace Arkadia;
 public partial class GroupDatDetailsDialog : Window
 {
     private bool _rowsLoaded;
+    private IReadOnlyList<GroupDatDetailsRow> _allRows = System.Array.Empty<GroupDatDetailsRow>();
 
     /// <summary>The authoritative dat_line id chosen via "Go to Library"; null if the dialog was just closed.</summary>
     public string? SelectedLeafId { get; private set; }
@@ -41,10 +43,33 @@ public partial class GroupDatDetailsDialog : Window
     /// <summary>Final population: show the rows, stop the spinner, and report the loaded count.</summary>
     public void SetRows(IReadOnlyList<GroupDatDetailsRow> rows)
     {
+        _allRows               = rows;
         LeavesList.ItemsSource = rows;
         LoadSpinner.IsVisible  = false;
         LoadStatus.Text        = $"{rows.Count} / {rows.Count} loaded";
         _rowsLoaded            = true;
+
+        // "Missing (N)" = leaves with wanted releases that are not yet complete (completion only — never storage
+        // lifecycle). Disabled when nothing is missing. All filtering is in-memory over the already-loaded rows.
+        int missing = rows.Count(r => r.IsIncomplete);
+        MissingToggle.Content   = $"Missing ({missing})";
+        MissingToggle.IsEnabled = missing > 0;
+
+        UpdateGoToLibraryState();
+    }
+
+    // In-memory Missing filter: toggle between all rows and the incomplete subset. No DB re-query. Selection is
+    // preserved when the selected leaf survives the filter.
+    private void OnMissingToggled(object? sender, RoutedEventArgs e)
+    {
+        if (!_rowsLoaded) return;
+        var keep = SelectedRow?.LeafId;
+        LeavesList.ItemsSource = MissingToggle.IsChecked == true
+            ? _allRows.Where(r => r.IsIncomplete).ToList()
+            : _allRows;
+        if (keep is not null)
+            LeavesList.SelectedItem = (LeavesList.ItemsSource as IEnumerable<GroupDatDetailsRow>)?
+                .FirstOrDefault(r => r.LeafId == keep);
         UpdateGoToLibraryState();
     }
 

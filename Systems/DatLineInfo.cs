@@ -20,4 +20,21 @@ public sealed record DatLineInfo(
     int     Outdated              = 0,
     string  TransformStrategyType = "none",
     string  FolderTransformId     = "",
-    string  FileHandling          = "archives_pre_extraction");
+    string  FileHandling          = "archives_pre_extraction",
+    // ── Completion + archive-lifecycle facts (from the same leaf-DB open that reads Outdated) ──
+    int     Present               = 0,
+    int     Unwanted              = 0,
+    int     OwnedPresentDerived   = 0,
+    int     Unassigned            = 0,
+    bool    AnyLocalVolume        = false,
+    bool    HasStaging            = false)
+{
+    /// <summary>Wanted-coverage percent for this DAT (present ÷ max(0, releases − unwanted)); null ⇒ "N/A".</summary>
+    public int? CompletionPercent => CompletionMath.Percent(Present, Releases, Unwanted);
+
+    /// <summary>Completion as a display string; "N/A" when there are no wanted releases.</summary>
+    public string CompletionText => CompletionMath.Text(CompletionPercent);
+
+    /// <summary>Archive lifecycle for this Single DAT (all facts are known — no pending state).</summary>
+    public ArchiveLifecycle Lifecycle => StorageLifecycle.Derive(OwnedPresentDerived, Unassigned, AnyLocalVolume);
+}

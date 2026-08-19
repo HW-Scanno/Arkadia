@@ -103,14 +103,17 @@ public sealed class GroupDatStartupCostTests : IDisposable
     {
         var c      = SeedGroupWithLeafDbs(50);
         var leaves = c.GetLeavesForGroup("c64-tosec")
-            .Select(l => (l.DatLine.DataStorePath, l.DatLine.ReleaseCount)).ToList();
+            .Select(l => (l.DatLine.Id, l.DatLine.DataStorePath, l.DatLine.ReleaseCount)).ToList();
 
         DatLineStore.ConstructionCount = 0;
-        var (present, unwanted) = GroupCoverageLoader.Compute(leaves, _dataDir);
+        // Coverage AND lifecycle facts (owned/unassigned) are gathered in the SAME pass — still one leaf open each.
+        var facts = GroupCoverageLoader.Compute(leaves, _dataDir, c.GetAllAssignedDerivedIdsByDatLine());
 
-        Assert.Equal(50, DatLineStore.ConstructionCount);  // one open per leaf, no more
-        Assert.Equal(0, present);                          // freshly built → all 'missing'
-        Assert.Equal(0, unwanted);
+        Assert.Equal(50, DatLineStore.ConstructionCount);  // one open per leaf, no more (badges add no extra opens)
+        Assert.Equal(0, facts.Present);                    // freshly built → all 'missing'
+        Assert.Equal(0, facts.Unwanted);
+        Assert.Equal(0, facts.OwnedPresentDerived);        // no present derived artifacts yet
+        Assert.Equal(0, facts.Unassigned);
     }
 
     [Fact]  // (4) lazy completion reproduces the M5 formula: Σ present / Σ (releases − unwanted)
@@ -123,15 +126,15 @@ public sealed class GroupDatStartupCostTests : IDisposable
         MarkStatuses("c64-tosec-001", unwanted: 2);
 
         var leaves = c.GetLeavesForGroup("c64-tosec")
-            .Select(l => (l.DatLine.DataStorePath, l.DatLine.ReleaseCount)).ToList();
-        var (present, unwanted) = GroupCoverageLoader.Compute(leaves, _dataDir);
+            .Select(l => (l.DatLine.Id, l.DatLine.DataStorePath, l.DatLine.ReleaseCount)).ToList();
+        var facts = GroupCoverageLoader.Compute(leaves, _dataDir, c.GetAllAssignedDerivedIdsByDatLine());
 
         int releaseSum = leaves.Sum(l => l.ReleaseCount);   // 30
-        int wanted     = releaseSum - unwanted;             // 30 − 2 = 28
-        var card = new GroupDatCardInfo("c64-tosec", "G", "TOSEC", "c64", 3, present, wanted);
+        int wanted     = releaseSum - facts.Unwanted;       // 30 − 2 = 28
+        var card = new GroupDatCardInfo("c64-tosec", "G", "TOSEC", "c64", 3, facts.Present, wanted);
 
-        Assert.Equal(5, present);
-        Assert.Equal(2, unwanted);
+        Assert.Equal(5, facts.Present);
+        Assert.Equal(2, facts.Unwanted);
         Assert.Equal(17, card.CoveragePercent);             // 5 / 28 = 17% (integer), NOT an average of leaf %s
     }
 

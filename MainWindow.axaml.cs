@@ -118,11 +118,11 @@ public partial class MainWindow : Window
     private List<GroupDatCardInfo> _groupCards   = [];
     private HashSet<string>        _groupLeafIds = new(StringComparer.OrdinalIgnoreCase);
 
-    // Lazy Group coverage: leaf DBs are opened OFF the UI thread on demand; results cached for the session.
-    private readonly Dictionary<string, (int Present, int Unwanted)> _groupCoverageCache = new(StringComparer.OrdinalIgnoreCase);
+    // Lazy Group coverage + lifecycle facts: leaf DBs are opened OFF the UI thread on demand; cached for the session.
+    private readonly Dictionary<string, Systems.GroupStorageFacts> _groupCoverageCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _groupCoverageInFlight = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _groupCoverageFailed   = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, List<(string DataStorePath, int ReleaseCount)>> _groupLeafDbInfo = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, List<(string DatLineId, string DataStorePath, int ReleaseCount)>> _groupLeafDbInfo = new(StringComparer.OrdinalIgnoreCase);
 
     private void InitSystems()
     {
@@ -187,23 +187,52 @@ public partial class MainWindow : Window
         var groupMeta   = new Dictionary<string, GroupMeta>(StringComparer.OrdinalIgnoreCase);
         var groupLeafCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var groupReleaseSum = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var groupLeafIdList = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         _groupLeafDbInfo.Clear();
         foreach (var g in _catalog.LoadDatGroups())
         {
             groupMeta[g.Id.Value] = new GroupMeta(g.DisplayName, GetAuthorityName(g.Authority), g.HardwareFamilyId);
-            var dbInfo = new List<(string DataStorePath, int ReleaseCount)>();
+            var dbInfo = new List<(string DatLineId, string DataStorePath, int ReleaseCount)>();
+            var idList = new List<string>();
             int relSum = 0;
             foreach (var leaf in _catalog.GetLeavesForGroup(g.Id.Value))
             {
                 leafToGroup[leaf.DatLine.Id] = g.Id.Value;
-                dbInfo.Add((leaf.DatLine.DataStorePath, leaf.DatLine.ReleaseCount));
+                dbInfo.Add((leaf.DatLine.Id, leaf.DatLine.DataStorePath, leaf.DatLine.ReleaseCount));
+                idList.Add(leaf.DatLine.Id);
                 relSum += leaf.DatLine.ReleaseCount;
             }
             _groupLeafDbInfo[g.Id.Value] = dbInfo;
             groupLeafCount[g.Id.Value]   = dbInfo.Count;
             groupReleaseSum[g.Id.Value]  = relSum;
+            groupLeafIdList[g.Id.Value]  = idList;
         }
         _groupLeafIds = new HashSet<string>(leafToGroup.Keys, StringComparer.OrdinalIgnoreCase);
+
+        // Storage-lifecycle inputs that need NO leaf DB open: LOCAL-workspace volume owners (catalog) and the
+        // bulk assigned-artifact map (catalog). Both are single queries reused across every platform below.
+        var appRoot          = AppContext.BaseDirectory;
+        var localOwners      = _catalog.GetLocalWorkspaceVolumeOwners();
+        var localDatLines    = new HashSet<string>(
+            localOwners.Where(o => o.DatLineId is not null).Select(o => o.DatLineId!), StringComparer.Ordinal);
+        var localGroups      = new HashSet<string>(
+            localOwners.Where(o => o.GroupId is not null).Select(o => o.GroupId!), StringComparer.OrdinalIgnoreCase);
+        var assignedByDatLine = _catalog.GetAllAssignedDerivedIdsByDatLine();
+        var emptyAssigned     = new HashSet<string>(StringComparer.Ordinal);
+
+        // One live staging probe per platform, reused for System and Group cards (STAGING is a filesystem flag).
+        var platformIdsForStaging = _catalog.LoadPlatforms().Select(p => p.Id).Distinct(StringComparer.Ordinal);
+        var stagingByPlatform     = platformIdsForStaging.ToDictionary(
+            pid => pid, pid => Systems.StagingSnapshot.LeafIdsWithStaging(appRoot, pid), StringComparer.Ordinal);
+        HashSet<string> StagingFor(string pid) =>
+            stagingByPlatform.TryGetValue(pid, out var set) ? set : new HashSet<string>(StringComparer.Ordinal);
+
+        // Per-group LOCAL flag (catalog only). Group lifecycle facts (owned/unassigned) come from the lazy cache.
+        var groupLifecycle = new Dictionary<string, ArchiveLifecycle>(StringComparer.OrdinalIgnoreCase);
+        foreach (var gid in groupMeta.Keys)
+            if (_groupCoverageCache.TryGetValue(gid, out var gf))
+                groupLifecycle[gid] = StorageLifecycle.Derive(
+                    gf.OwnedPresentDerived, gf.Unassigned, localGroups.Contains(gid));
 
         _systemsPlatforms = _catalog.LoadPlatforms()
             .Select(platform =>
@@ -212,18 +241,28 @@ public partial class MainWindow : Window
                 var total   = platformDatLines.Sum(dl => dl.ReleaseCount);
                 int present = 0, outdated = 0, unwanted = 0, lost = 0;
 
-                // Single (non-group) leaves keep the exact historical behaviour: open each DB for counts.
+                // Live staging snapshot for this platform (precomputed; maps leaf ids → staging presence).
+                var stagingLeaves = StagingFor(platform.Id);
+                var childLifecycles = new List<ArchiveLifecycle>();
+
+                // Single (non-group) leaves keep the exact historical behaviour: open each DB for counts, and in
+                // the SAME open read present-derived assignment stats for the per-DAT lifecycle (no extra open).
                 foreach (var dl in platformDatLines)
                 {
                     if (leafToGroup.ContainsKey(dl.Id)) continue;   // group leaf — never opened on this path
                     if (dl.DataStorePath.Length == 0) continue;
                     var absPath = Path.Combine(_dataDir, dl.DataStorePath);
                     if (!File.Exists(absPath)) continue;
-                    var c = new DatLineStore(absPath).GetAllStatusCounts();
+                    var store = new DatLineStore(absPath);
+                    var c = store.GetAllStatusCounts();
                     present  += c.Present;
                     outdated += c.Outdated;
                     unwanted += c.Unwanted;
                     lost     += c.Lost;
+
+                    var assigned = assignedByDatLine.TryGetValue(dl.Id, out var s) ? s : emptyAssigned;
+                    var (ownedDl, unassignedDl) = store.GetPresentDerivedAssignmentStats(assigned);
+                    childLifecycles.Add(StorageLifecycle.Derive(ownedDl, unassignedDl, localDatLines.Contains(dl.Id)));
                 }
 
                 // Fold in group leaves ONLY from already-loaded cache; otherwise mark coverage pending.
@@ -236,6 +275,7 @@ public partial class MainWindow : Window
                     {
                         present  += cov.Present;
                         unwanted += cov.Unwanted;
+                        childLifecycles.Add(groupLifecycle[gid]);
                     }
                     else if (!_groupCoverageFailed.Contains(gid))
                     {
@@ -246,36 +286,52 @@ public partial class MainWindow : Window
                 int wanted = Math.Max(0, total - unwanted);
                 return new SystemPlatform
                 {
-                    Id              = platform.Id,
-                    Name            = platform.Name,
-                    Manufacturer    = platform.Manufacturer,
-                    HardwareType    = _hardwareTypeMap.TryGetValue(platform.HardwareTypeId, out var ht) ? ht : "",
-                    DatLines        = platformDatLines.Count,
-                    TotalTitles     = total,
-                    Present         = present,
-                    Outdated        = outdated,
-                    Missing         = Math.Max(0, wanted - present - outdated - lost),
-                    Lost            = lost,
-                    Unwanted        = unwanted,
-                    CoveragePending = coveragePending,
+                    Id               = platform.Id,
+                    Name             = platform.Name,
+                    Manufacturer     = platform.Manufacturer,
+                    HardwareType     = _hardwareTypeMap.TryGetValue(platform.HardwareTypeId, out var ht) ? ht : "",
+                    DatLines         = platformDatLines.Count,
+                    TotalTitles      = total,
+                    Present          = present,
+                    Outdated         = outdated,
+                    Missing          = Math.Max(0, wanted - present - outdated - lost),
+                    Lost             = lost,
+                    Unwanted         = unwanted,
+                    CoveragePending  = coveragePending,
+                    // Lifecycle is the fold of known child states; omit (pending) while any group is still loading
+                    // so a partial load never renders a false ARCHIVED/NEEDS VOLUME.
+                    LifecyclePending = coveragePending,
+                    Lifecycle        = coveragePending ? ArchiveLifecycle.None : StorageLifecycle.Fold(childLifecycles),
+                    HasStaging       = stagingLeaves.Count > 0,
                 };
             })
             .ToList();
 
         // Group cards: computed from cache when available; failed → N/A (0,0); otherwise pending (spinner) —
-        // never a false 0%.
+        // never a false 0%. Lifecycle facts (owned/unassigned) come from the same cache; LOCAL from catalog;
+        // staging from one filesystem probe per group's platform.
         _groupCards = groupMeta.Select(kv =>
         {
             var (gid, m) = (kv.Key, kv.Value);
             int leaves = groupLeafCount.TryGetValue(gid, out var lc) ? lc : 0;
+            var stagingSet = StagingFor(m.HardwareFamilyId);
+            bool hasStaging = groupLeafIdList.TryGetValue(gid, out var ids) && ids.Any(stagingSet.Contains);
             if (_groupCoverageCache.TryGetValue(gid, out var cov))
             {
                 int wanted = Math.Max(0, (groupReleaseSum.TryGetValue(gid, out var rs) ? rs : 0) - cov.Unwanted);
-                return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, cov.Present, wanted);
+                return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, cov.Present, wanted)
+                {
+                    OwnedPresentDerived = cov.OwnedPresentDerived,
+                    Unassigned          = cov.Unassigned,
+                    AnyLocalVolume      = localGroups.Contains(gid),
+                    HasStaging          = hasStaging,
+                };
             }
             if (_groupCoverageFailed.Contains(gid))
-                return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, 0, 0);   // → "N/A"
-            return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, 0, 0) { CoveragePending = true };
+                return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, 0, 0)
+                    { HasStaging = hasStaging };   // → "N/A", no lifecycle badge
+            return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, 0, 0)
+                { CoveragePending = true, HasStaging = hasStaging };
         }).ToList();
 
         BuildTree();
@@ -317,8 +373,11 @@ public partial class MainWindow : Window
             var targetGid    = gid;
             var dataDir      = _dataDir;
 
+            // Assigned-artifact map (catalog) is read off the UI thread too, so the whole enrichment — coverage
+            // AND lifecycle facts — is one background pass that opens each leaf DB exactly once.
             var work = System.Threading.Tasks.Task.Run(() =>
-                Systems.GroupCoverageLoader.Compute(leafSnapshot, dataDir));
+                Systems.GroupCoverageLoader.Compute(
+                    leafSnapshot, dataDir, _catalog.GetAllAssignedDerivedIdsByDatLine()));
 
             _ = work.ContinueWith(t =>
                 Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -430,6 +489,52 @@ public partial class MainWindow : Window
         }
     }
 
+    // ── Storage attention badges (compact pills; the row itself is never painted) ──────────────
+    // One pill per active flag: the independent STAGING flag, then the mutually-exclusive archive-lifecycle
+    // label. A pending lifecycle (Group facts still loading) contributes no pill — never a false state.
+    private static Border MakeBadgePill(string text, string hex, string? tooltip)
+    {
+        var color = Color.Parse(hex);
+        var pill = new Border
+        {
+            Background        = new SolidColorBrush(Color.FromArgb(0x22, color.R, color.G, color.B)),
+            BorderBrush       = new SolidColorBrush(color),
+            BorderThickness   = new Avalonia.Thickness(1),
+            CornerRadius      = new Avalonia.CornerRadius(3),
+            Padding           = new Avalonia.Thickness(6, 1),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Child             = new TextBlock
+            {
+                Text              = text,
+                FontSize          = 9,
+                FontWeight        = FontWeight.SemiBold,
+                Foreground        = new SolidColorBrush(color),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            },
+        };
+        if (tooltip is not null) ToolTip.SetTip(pill, tooltip);
+        return pill;
+    }
+
+    /// <summary>Horizontal strip of active storage badges (may be empty). STAGING is independent of lifecycle.</summary>
+    private static StackPanel MakeBadgeStrip(bool hasStaging, ArchiveLifecycle lifecycle, bool lifecyclePending)
+    {
+        var strip = new StackPanel
+        {
+            Orientation       = Avalonia.Layout.Orientation.Horizontal,
+            Spacing           = 4,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+        };
+        if (hasStaging)
+            strip.Children.Add(MakeBadgePill(
+                Systems.StorageBadgePolicy.StagingLabel, Systems.StorageBadgePolicy.StagingColor,
+                Systems.StorageBadgePolicy.StagingTooltip));
+        if (!lifecyclePending && Systems.StorageBadgePolicy.Label(lifecycle) is { } label)
+            strip.Children.Add(MakeBadgePill(
+                label, Systems.StorageBadgePolicy.Color(lifecycle)!, Systems.StorageBadgePolicy.Tooltip(lifecycle)));
+        return strip;
+    }
+
     private Border MakePlatformNode(SystemPlatform p, bool isSelected)
     {
         var bgColor   = isSelected ? Color.Parse("#1E1E32") : Color.Parse("#111118");
@@ -492,14 +597,20 @@ public partial class MainWindow : Window
             Margin            = new Avalonia.Thickness(10, 0, 0, 0),
         };
 
+        var badgeStrip = MakeBadgeStrip(p.HasStaging, p.Lifecycle, p.LifecyclePending);
+        badgeStrip.Margin = new Avalonia.Thickness(8, 0, 0, 0);
+
         var textRow = new Grid { Margin = new Avalonia.Thickness(10, 0, 10, 0) };
         textRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-        textRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        textRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        textRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));  // badges
+        textRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));  // coverage
+        textRow.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));  // dat count
         Grid.SetColumn(nameBlock,     0);
-        Grid.SetColumn(coverageBlock, 1);
-        Grid.SetColumn(datCountBlock, 2);
+        Grid.SetColumn(badgeStrip,    1);
+        Grid.SetColumn(coverageBlock, 2);
+        Grid.SetColumn(datCountBlock, 3);
         textRow.Children.Add(nameBlock);
+        textRow.Children.Add(badgeStrip);
         textRow.Children.Add(coverageBlock);
         textRow.Children.Add(datCountBlock);
 
@@ -597,16 +708,67 @@ public partial class MainWindow : Window
         var bgColor  = isSelected ? Color.Parse("#1A1A2E") : Color.Parse("#0D0D18");
         var bdrColor = isSelected ? Color.Parse("#44448A") : Color.Parse("#181826");
 
-        // Line 1 — name
+        // Line 1 — name + storage badges + Details + completion %
         var nameBlock = new TextBlock
         {
-            Text         = d.Name,
-            FontSize     = 12,
-            FontWeight   = isSelected ? FontWeight.SemiBold : FontWeight.Normal,
-            Foreground   = new SolidColorBrush(Color.Parse(isSelected ? "#D8D8F0" : "#AAAACC")),
-            TextTrimming = Avalonia.Media.TextTrimming.CharacterEllipsis,
-            TextWrapping = Avalonia.Media.TextWrapping.NoWrap,
+            Text              = d.Name,
+            FontSize          = 12,
+            FontWeight        = isSelected ? FontWeight.SemiBold : FontWeight.Normal,
+            Foreground        = new SolidColorBrush(Color.Parse(isSelected ? "#D8D8F0" : "#AAAACC")),
+            TextTrimming      = Avalonia.Media.TextTrimming.CharacterEllipsis,
+            TextWrapping      = Avalonia.Media.TextWrapping.NoWrap,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
+
+        var datBadges = MakeBadgeStrip(d.HasStaging, d.Lifecycle, lifecyclePending: false);
+        datBadges.Margin = new Avalonia.Thickness(8, 0, 0, 0);
+
+        var detailsBtn = new Button
+        {
+            Content           = "Details",
+            FontSize          = 11,
+            Padding           = new Avalonia.Thickness(12, 4),
+            CornerRadius      = new Avalonia.CornerRadius(4),
+            BorderThickness   = new Avalonia.Thickness(1),
+            BorderBrush       = new SolidColorBrush(Color.Parse("#3A3A5A")),
+            Background        = new SolidColorBrush(Color.Parse("#181826")),
+            Foreground        = new SolidColorBrush(Color.Parse("#AAAACC")),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin            = new Avalonia.Thickness(8, 0, 0, 0),
+            Cursor            = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+        };
+        ToolTip.SetTip(detailsBtn, "Show which volumes and disks store this DAT's artifacts.");
+        var detailDat = d;
+        var detailPid = platformId;
+        detailsBtn.Click += (_, _) => OpenSingleDatDetails(detailDat, detailPid);
+
+        var completionBlock = new TextBlock
+        {
+            Text              = d.CompletionText,
+            FontSize          = 11,
+            Foreground        = new SolidColorBrush(Color.Parse(
+                                    Systems.SystemsCoverageColorPolicy.HexFor(d.CompletionPercent))),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            Margin            = new Avalonia.Thickness(12, 0, 0, 0),
+            MinWidth          = 40,
+            TextAlignment     = Avalonia.Media.TextAlignment.Right,
+        };
+        ToolTip.SetTip(completionBlock, Systems.StorageBadgePolicy.CompletionTooltip(
+            Systems.StorageBadgePolicy.SingleCompletionTooltip, d.CompletionPercent));
+
+        var line1 = new Grid();
+        line1.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+        line1.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));  // badges
+        line1.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));  // Details
+        line1.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));  // completion %
+        Grid.SetColumn(nameBlock,       0);
+        Grid.SetColumn(datBadges,       1);
+        Grid.SetColumn(detailsBtn,      2);
+        Grid.SetColumn(completionBlock, 3);
+        line1.Children.Add(nameBlock);
+        line1.Children.Add(datBadges);
+        line1.Children.Add(detailsBtn);
+        line1.Children.Add(completionBlock);
 
         // Line 2 — releases · strategy · mappings
         var stratLabel = d.TransformStrategyType switch
@@ -639,7 +801,7 @@ public partial class MainWindow : Window
         };
 
         var content = new StackPanel { Margin = new Avalonia.Thickness(28, 8, 10, 8) };
-        content.Children.Add(nameBlock);
+        content.Children.Add(line1);
         content.Children.Add(subBlock);
 
         var row = new Border
@@ -732,16 +894,26 @@ public partial class MainWindow : Window
                   MinWidth          = 40,
                   TextAlignment     = Avalonia.Media.TextAlignment.Right,
               };
-        ToolTip.SetTip(coverageCtrl, card.CoveragePending ? "Computing wanted coverage…" : null);
+        ToolTip.SetTip(coverageCtrl, card.CoveragePending
+            ? "Computing wanted coverage…"
+            : Systems.StorageBadgePolicy.CompletionTooltip(
+                Systems.StorageBadgePolicy.GroupCompletionTooltip, card.CoveragePercent));
+
+        // Lifecycle is omitted while coverage is pending (facts not yet loaded); STAGING is always known.
+        var groupBadges = MakeBadgeStrip(card.HasStaging, card.Lifecycle, lifecyclePending: card.CoveragePending);
+        groupBadges.Margin = new Avalonia.Thickness(8, 0, 0, 0);
 
         var grid = new Grid { Margin = new Avalonia.Thickness(28, 8, 10, 8) };
         grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
-        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
-        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));  // badges
+        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));  // Details
+        grid.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Auto));  // coverage
         Grid.SetColumn(textStack,    0);
-        Grid.SetColumn(detailsBtn,   1);
-        Grid.SetColumn(coverageCtrl, 2);
+        Grid.SetColumn(groupBadges,  1);
+        Grid.SetColumn(detailsBtn,   2);
+        Grid.SetColumn(coverageCtrl, 3);
         grid.Children.Add(textStack);
+        grid.Children.Add(groupBadges);
         grid.Children.Add(detailsBtn);
         grid.Children.Add(coverageCtrl);
 
@@ -769,20 +941,36 @@ public partial class MainWindow : Window
         var dialog  = new GroupDatDetailsDialog(card);
         var groupId = card.GroupId;
         var catalog = _catalog;
+        var dataDir = _dataDir;
         var progress = new Progress<(int Loaded, int Total)>(p => dialog.SetProgress(p.Loaded, p.Total));
 
+        // Per-leaf completion is loaded ONCE here, off the UI thread: each leaf DB is opened a single time for its
+        // present/unwanted counts (the meaningful "173 / 410" progress). Missing filtering later is purely
+        // in-memory over the produced rows — no DB re-query.
         var load = System.Threading.Tasks.Task.Run(() =>
         {
             var leaves     = catalog.GetLeavesForGroup(groupId);                    // single catalog query
             var mediaNames = catalog.GetMediaTypes().ToDictionary(m => m.Id, m => m.Name, StringComparer.OrdinalIgnoreCase);
-            var rows       = new List<Systems.GroupDatDetailsRow>(leaves.Count);
-            var mapped     = Systems.GroupDatDetails.BuildRows(leaves, mediaNames);
-            for (int i = 0; i < mapped.Count; i++)
+            var presentByLeaf  = new Dictionary<string, int>(StringComparer.Ordinal);
+            var unwantedByLeaf = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < leaves.Count; i++)
             {
-                rows.Add(mapped[i]);
-                if ((i & 0x1F) == 0 || i == mapped.Count - 1)
-                    ((IProgress<(int, int)>)progress).Report((i + 1, mapped.Count));
+                var leaf = leaves[i];
+                var dsp  = leaf.DatLine.DataStorePath;
+                if (dsp.Length > 0)
+                {
+                    var abs = Path.Combine(dataDir, dsp);
+                    if (File.Exists(abs))
+                    {
+                        var c = new DatLineStore(abs).GetAllStatusCounts();
+                        presentByLeaf[leaf.DatLine.Id]  = c.Present;
+                        unwantedByLeaf[leaf.DatLine.Id] = c.Unwanted;
+                    }
+                }
+                if ((i & 0x1F) == 0 || i == leaves.Count - 1)
+                    ((IProgress<(int, int)>)progress).Report((i + 1, leaves.Count));
             }
+            var rows = Systems.GroupDatDetails.BuildRows(leaves, mediaNames, presentByLeaf, unwantedByLeaf);
             return (IReadOnlyList<Systems.GroupDatDetailsRow>)rows;
         });
 
@@ -797,6 +985,30 @@ public partial class MainWindow : Window
         var goToLibrary = await dialog.ShowDialog<bool>(this);
         if (goToLibrary && dialog.SelectedLeafId is { } leafId)
             OpenLibraryForDatLine(leafId);
+    }
+
+    // Single DAT Details: read-only "where is this DAT physically stored?" table. Reuses existing catalog volume
+    // queries (few volumes, on-demand) — no leaf DB open, no disk discovery. Disk labels come from persisted
+    // catalog location only; workspace shows LOCAL, no current location shows an em dash.
+    private async void OpenSingleDatDetails(DatLineInfo d, string platformId)
+    {
+        if (d.CatalogId is not { } datLineId) return;
+
+        var disks = _catalog.GetDisks().ToDictionary(x => x.Id, x => x.Label, StringComparer.Ordinal);
+        var rows  = new List<Systems.SingleDatVolumeRow>();
+        foreach (var v in _catalog.GetVolumes().Where(v => v.DatLineId == datLineId))
+        {
+            var loc       = _catalog.GetCurrentLocation(v.Id);
+            string? diskLabel = loc?.DiskId is not null && disks.TryGetValue(loc.DiskId, out var dl) ? dl : null;
+            var disk      = Systems.SingleDatDetails.DiskDisplay(loc?.LocationType, diskLabel);
+            int artifacts = _catalog.GetVolumeArtifacts(v.Id).Count;
+            rows.Add(new Systems.SingleDatVolumeRow(
+                v.Label, artifacts, v.ActualSizeBytes, FormatBytes(v.ActualSizeBytes), disk));
+        }
+
+        var sub    = $"{rows.Count} volume{(rows.Count == 1 ? "" : "s")}";
+        var dialog = new SingleDatDetailsDialog(d.Name, sub, rows);
+        await dialog.ShowDialog(this);
     }
 
     // Navigate the existing Single-DAT Library directly to one leaf (by authoritative dat_line id). The
@@ -1428,17 +1640,35 @@ public partial class MainWindow : Window
     }
 
     private List<DatLineInfo> BuildDatLineInfos(string platformId)
-        => _catalog.LoadDatLines()
+    {
+        // Storage-lifecycle inputs that need no leaf DB open, computed once for this platform's Single DATs.
+        var appRoot        = AppContext.BaseDirectory;
+        var stagingLeaves  = Systems.StagingSnapshot.LeafIdsWithStaging(appRoot, platformId);
+        var localDatLines  = new HashSet<string>(
+            _catalog.GetLocalWorkspaceVolumeOwners().Where(o => o.DatLineId is not null).Select(o => o.DatLineId!),
+            StringComparer.Ordinal);
+        var emptyAssigned  = new HashSet<string>(StringComparer.Ordinal);
+
+        return _catalog.LoadDatLines()
             .Where(dl => dl.HardwareFamilyId == platformId)
             .Where(dl => !_groupLeafIds.Contains(dl.Id))   // group leaves are shown via the Group card, not here
             .Select(dl =>
             {
-                int outdated = 0;
+                int outdated = 0, present = 0, unwanted = 0, owned = 0, unassigned = 0;
                 if (dl.DataStorePath.Length > 0)
                 {
                     var absPath = Path.Combine(_dataDir, dl.DataStorePath);
                     if (File.Exists(absPath))
-                        outdated = new DatLineStore(absPath).GetStatusCounts().Outdated;
+                    {
+                        var store = new DatLineStore(absPath);
+                        var c = store.GetAllStatusCounts();
+                        outdated = c.Outdated;
+                        present  = c.Present;
+                        unwanted = c.Unwanted;
+                        var assigned = _catalog.GetAssignedDerivedIdsByDatLine(dl.Id);
+                        (owned, unassigned) = store.GetPresentDerivedAssignmentStats(
+                            assigned.Count > 0 ? assigned : emptyAssigned);
+                    }
                 }
                 return new DatLineInfo(
                     Name:                  FormatDatLineName(dl.Authority, dl.MediaTypeId),
@@ -1453,9 +1683,16 @@ public partial class MainWindow : Window
                     CatalogPlatformId:     dl.HardwareFamilyId,
                     TransformStrategyType: dl.TransformStrategyType,
                     FolderTransformId:     dl.FolderTransformId,
-                    FileHandling:          dl.FileHandling);
+                    FileHandling:          dl.FileHandling,
+                    Present:               present,
+                    Unwanted:              unwanted,
+                    OwnedPresentDerived:   owned,
+                    Unassigned:            unassigned,
+                    AnyLocalVolume:        localDatLines.Contains(dl.Id),
+                    HasStaging:            stagingLeaves.Contains(dl.Id));
             })
             .ToList();
+    }
 
     // ── Action bar event handlers ─────────────────────────────────────────────
 
