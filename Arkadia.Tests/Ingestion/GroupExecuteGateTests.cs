@@ -63,4 +63,30 @@ public sealed class GroupExecuteGateTests
     public void Decide_EqualNothingToDo_NothingToDo()
         => Assert.Equal(GroupExecuteDecision.NothingToDo, GroupExecuteGate.Decide(
             new[] { "a" }, new[] { "a" }, GroupIngestionReadiness.NothingToDo));
+
+    // ── Reuse-the-preview-plan call-site contract (no second full re-plan) ────
+    // ExecuteGroupIngestionAsync no longer builds a fresh GroupIngestionPlan. It now feeds Decide the REUSED
+    // previewPlan's Readiness plus a cheap LIVE leaf-id fetch (membership re-check). These pin the exact argument
+    // meanings the new call site relies on: readiness is the reviewed snapshot; membership is live.
+
+    [Fact] // retained-plan happy path: live membership matches the reviewed set + reused Ready → Proceed
+    public void Decide_ReusedReadyPlan_LiveMembershipMatches_Proceed()
+        => Assert.Equal(GroupExecuteDecision.Proceed, GroupExecuteGate.Decide(
+            previewExpected:  new[] { "a", "b", "c" },   // the reviewed plan's ExpectedLeafIds
+            freshExpected:    new[] { "c", "b", "a" },   // a fresh live GetLeavesForGroup() fetch (order-agnostic)
+            freshReadiness:   GroupIngestionReadiness.Ready));   // reused previewPlan.Readiness — NOT re-derived
+
+    [Fact] // membership drift since preview still blocks even though the reused plan was Ready
+    public void Decide_ReusedReadyPlan_LiveMembershipDrifted_AbortMembershipChanged()
+        => Assert.Equal(GroupExecuteDecision.AbortMembershipChanged, GroupExecuteGate.Decide(
+            previewExpected:  new[] { "a", "b" },
+            freshExpected:    new[] { "a", "b", "c" },   // a leaf appeared after the preview
+            freshReadiness:   GroupIngestionReadiness.Ready));
+
+    [Fact] // a reused NON-Ready plan can never mutate (guards the CanExecute gate at preview time being bypassed)
+    public void Decide_ReusedBlockedPlan_LiveMembershipMatches_AbortBlocked()
+        => Assert.Equal(GroupExecuteDecision.AbortBlocked, GroupExecuteGate.Decide(
+            previewExpected:  new[] { "a", "b" },
+            freshExpected:    new[] { "a", "b" },
+            freshReadiness:   GroupIngestionReadiness.Blocked));
 }

@@ -1610,9 +1610,10 @@ public partial class MainWindow : Window
     }
 
     // ── M9C2B: Group ingestion runtime bridge ────────────────────────────────
-    // Reached ONLY after explicit Execute on a Ready preview. Guards membership drift, re-plans read-only,
-    // runs shared pre-extraction once, enumerates real candidates, then drives the already-tested
-    // GroupIngestionExecutor (allowMove=false) binding GroupLeafFinalizer to the existing FinalizeConfiguredLeaf.
+    // Reached ONLY after explicit Execute on a Ready preview. Guards membership drift, then REUSES the reviewed
+    // previewPlan as the execution snapshot (no second full leaf preparation), runs shared pre-extraction once,
+    // enumerates real incoming candidates fresh, then drives the already-tested GroupIngestionExecutor
+    // (allowMove=false) binding GroupLeafFinalizer to the existing FinalizeConfiguredLeaf.
     // No stale cleanups (Group v1). Successful-container cleanup + RunPostIngest run only for a non-aborted run.
     private async System.Threading.Tasks.Task ExecuteGroupIngestionAsync(
         string groupId, Ingestion.GroupIngestionPlan previewPlan)
@@ -1648,24 +1649,28 @@ public partial class MainWindow : Window
 
         var workTask = System.Threading.Tasks.Task.Run(() =>
         {
-            // ── Fresh read-only re-plan (still BEFORE first mutation) ──────────
+            // ── Reuse the reviewed plan — NO second full leaf preparation ──────
+            // The modal preview is the accepted staleness boundary for leaf state (wanted / release / DA /
+            // configuration / readiness / missing-target plan): previewPlan IS the execution snapshot, so the
+            // second full GroupIngestionPlanner.Plan (a duplicate ~N-leaf DB-opening pass) is gone. Only a cheap
+            // live membership re-check runs here, re-fetched to close the narrow window between the outer guard
+            // and the first mutation. Incoming filesystem contents are NOT part of this snapshot — they are
+            // enumerated fresh after pre-extraction below.
             progress.Report(new IngestionProgress { PhaseText = "Revalidating Group…", IsIndeterminate = true });
-            var freshPlan = Ingestion.GroupIngestionPlanner.Plan(
-                _catalog, dataDir, appRoot, groupId, displayName, platformId, leaves, null,
-                new Progress<Ingestion.GroupIngestionPlanProgress>(gp =>
-                    progress.Report(new IngestionProgress { PhaseText = gp.PhaseText, IsIndeterminate = true })));
+            var liveExpected = _catalog.GetLeavesForGroup(groupId).Select(l => l.DatLine.Id);
 
-            // Pre-mutation decision — membership equality (fresh vs previewed) is enforced here too, closing the
-            // window where membership drifts between the initial live guard and the fresh plan. No mutation yet.
+            // Pre-mutation decision — membership equality (live vs previewed) is enforced here too, closing the
+            // window where membership drifts between the initial live guard and this point. Readiness is the
+            // reviewed snapshot (previewPlan). No mutation yet.
             switch (Ingestion.GroupExecuteGate.Decide(
-                        previewPlan.ExpectedLeafIds, freshPlan.ExpectedLeafIds, freshPlan.Readiness))
+                        previewPlan.ExpectedLeafIds, liveExpected, previewPlan.Readiness))
             {
                 case Ingestion.GroupExecuteDecision.AbortMembershipChanged:
                     membershipChanged = true;
                     return;   // no mutation
                 case Ingestion.GroupExecuteDecision.AbortBlocked:
-                    blockedMessage = freshPlan.Diagnostics.Length > 0
-                        ? string.Join("\n", freshPlan.Diagnostics.Select(d =>
+                    blockedMessage = previewPlan.Diagnostics.Length > 0
+                        ? string.Join("\n", previewPlan.Diagnostics.Select(d =>
                               d.DatLineId.Length > 0 ? $"{d.DatLineId}: {d.Reason}" : d.Reason))
                         : "The Group is no longer ready to ingest.";
                     return;   // no mutation
@@ -1681,7 +1686,7 @@ public partial class MainWindow : Window
             // ── Shared archive pre-extraction — once, platform-scoped ──────────
             var preResult = new IngestionResult();
             var attemptedContainers = new List<string>();
-            if (freshPlan.FileHandling == "archives_pre_extraction")
+            if (previewPlan.FileHandling == "archives_pre_extraction")
             {
                 attemptedContainers = Ingestion.GroupIngestionCandidateSource.SnapshotContainers(incomingDir);
                 progress.Report(new IngestionProgress { PhaseText = "Preparing incoming archives…", IsIndeterminate = true });
@@ -1692,7 +1697,7 @@ public partial class MainWindow : Window
 
             // ── Candidate enumeration — frozen AFTER pre-extraction ────────────
             progress.Report(new IngestionProgress { PhaseText = "Inspecting candidates…", IsIndeterminate = true });
-            var candidates = Ingestion.GroupIngestionCandidateSource.EnumerateCandidates(incomingDir, freshPlan.FileHandling);
+            var candidates = Ingestion.GroupIngestionCandidateSource.EnumerateCandidates(incomingDir, previewPlan.FileHandling);
 
             // ── Finalizer binding: writable leaf store opens ONLY here, per finalized leaf ─
             var finalizationSummaries = new List<(string DatLineId, Ingestion.LeafFinalizationResult R)>();
@@ -1722,7 +1727,7 @@ public partial class MainWindow : Window
 
             // ── Execute the already-tested core (allowMove=false, one final cleanup) ─
             var exec = Ingestion.GroupIngestionExecutor.Execute(
-                freshPlan, candidates, appRoot, finalizer,
+                previewPlan, candidates, appRoot, finalizer,
                 new Progress<Ingestion.GroupIngestionProgress>(gp => progress.Report(new IngestionProgress
                 {
                     PhaseText = $"{gp.PhaseText} {gp.Index}/{gp.Total}",
