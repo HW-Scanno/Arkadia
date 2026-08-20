@@ -117,11 +117,16 @@ public partial class MainWindow : Window
     // Group DAT view state, rebuilt on every RefreshSystems (catalog-only — no leaf DB opens here).
     private List<GroupDatCardInfo> _groupCards   = [];
     private HashSet<string>        _groupLeafIds = new(StringComparer.OrdinalIgnoreCase);
+    // Group-leaf dat_line id → owning group id (rebuilt each RefreshSystems). Lets leaf-release mutations
+    // (wanted/unwanted/purge/restore) invalidate the correct Group aggregate.
+    private Dictionary<string, string> _leafToGroup = new(StringComparer.OrdinalIgnoreCase);
 
-    // Lazy Group coverage + lifecycle facts: leaf DBs are opened OFF the UI thread on demand; cached for the session.
-    private readonly Dictionary<string, Systems.GroupStorageFacts> _groupCoverageCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _groupCoverageInFlight = new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _groupCoverageFailed   = new(StringComparer.OrdinalIgnoreCase);
+    // Lazy Group coverage + lifecycle facts: leaf DBs are opened OFF the UI thread on demand; cached for the
+    // session. The serialized state machine (cache / in-flight / failed / generation / pending order, MAX
+    // CONCURRENCY = 1) lives in the pure, unit-tested Systems.GroupCoverageQueue; MainWindow just drives the
+    // off-thread compute around it. _groupCoverageBusy gates the single worker on the UI thread.
+    private readonly Systems.GroupCoverageQueue _groupCoverage = new();
+    private bool _groupCoverageBusy;
     private readonly Dictionary<string, List<(string DatLineId, string DataStorePath, int ReleaseCount)>> _groupLeafDbInfo = new(StringComparer.OrdinalIgnoreCase);
 
     private void InitSystems()
@@ -141,6 +146,13 @@ public partial class MainWindow : Window
         RefreshSystems();
         if (_systemsPlatforms.Count > 0)
             SelectPlatform(_systemsPlatforms[0].Id);
+
+        // Autonomous convergence: after the initial UI is rendered, enqueue EVERY pending Group aggregate (all
+        // platforms) so they compute in the background without a click. Deferred to Background priority so the
+        // Systems UI paints first; the queue itself is serialized (one Group at a time) and opens zero leaf DBs
+        // on this synchronous path.
+        Avalonia.Threading.Dispatcher.UIThread.Post(
+            EnqueueAllPendingGroupCoverage, Avalonia.Threading.DispatcherPriority.Background);
     }
 
     private void RefreshSystemsKeepSelection(string? platformId)
@@ -208,6 +220,7 @@ public partial class MainWindow : Window
             groupLeafIdList[g.Id.Value]  = idList;
         }
         _groupLeafIds = new HashSet<string>(leafToGroup.Keys, StringComparer.OrdinalIgnoreCase);
+        _leafToGroup  = leafToGroup;
 
         // Storage-lifecycle inputs that need NO leaf DB open: LOCAL-workspace volume owners (catalog) and the
         // bulk assigned-artifact map (catalog). Both are single queries reused across every platform below.
@@ -230,7 +243,7 @@ public partial class MainWindow : Window
         // Per-group LOCAL flag (catalog only). Group lifecycle facts (owned/unassigned) come from the lazy cache.
         var groupLifecycle = new Dictionary<string, ArchiveLifecycle>(StringComparer.OrdinalIgnoreCase);
         foreach (var gid in groupMeta.Keys)
-            if (_groupCoverageCache.TryGetValue(gid, out var gf))
+            if (_groupCoverage.TryGet(gid, out var gf))
                 groupLifecycle[gid] = StorageLifecycle.Derive(
                     gf.OwnedPresentDerived, gf.Unassigned, localGroups.Contains(gid));
 
@@ -265,19 +278,23 @@ public partial class MainWindow : Window
                     childLifecycles.Add(StorageLifecycle.Derive(ownedDl, unassignedDl, localDatLines.Contains(dl.Id)));
                 }
 
-                // Fold in group leaves ONLY from already-loaded cache; otherwise mark coverage pending.
-                // A failed load is "resolved" (no contribution, not pending) so the header shows N/A, not a
-                // perpetual spinner.
+                // Fold in group leaves ONLY from already-loaded cache; otherwise mark coverage pending (spinner)
+                // or, if the background compute faulted, failed (warning marker). Pending wins over failed.
                 bool coveragePending = false;
+                bool anyGroupFailed  = false;
                 foreach (var gid in groupMeta.Keys.Where(k => groupMeta[k].HardwareFamilyId == platform.Id))
                 {
-                    if (_groupCoverageCache.TryGetValue(gid, out var cov))
+                    if (_groupCoverage.TryGet(gid, out var cov))
                     {
                         present  += cov.Present;
                         unwanted += cov.Unwanted;
                         childLifecycles.Add(groupLifecycle[gid]);
                     }
-                    else if (!_groupCoverageFailed.Contains(gid))
+                    else if (_groupCoverage.IsFailed(gid))
+                    {
+                        anyGroupFailed = true;   // its compute faulted — the System aggregate is incomplete
+                    }
+                    else
                     {
                         coveragePending = true;   // its leaves are still loading off the UI thread
                     }
@@ -298,10 +315,11 @@ public partial class MainWindow : Window
                     Lost             = lost,
                     Unwanted         = unwanted,
                     CoveragePending  = coveragePending,
-                    // Lifecycle is the fold of known child states; omit (pending) while any group is still loading
-                    // so a partial load never renders a false ARCHIVED/NEEDS VOLUME.
-                    LifecyclePending = coveragePending,
-                    Lifecycle        = coveragePending ? ArchiveLifecycle.None : StorageLifecycle.Fold(childLifecycles),
+                    CoverageFailed   = !coveragePending && anyGroupFailed,
+                    // Lifecycle is the fold of known child states; omit while any group is pending OR failed so a
+                    // partial load never renders a false ARCHIVED/NEEDS VOLUME.
+                    LifecyclePending = coveragePending || anyGroupFailed,
+                    Lifecycle        = (coveragePending || anyGroupFailed) ? ArchiveLifecycle.None : StorageLifecycle.Fold(childLifecycles),
                     HasStaging       = stagingLeaves.Count > 0,
                 };
             })
@@ -316,7 +334,7 @@ public partial class MainWindow : Window
             int leaves = groupLeafCount.TryGetValue(gid, out var lc) ? lc : 0;
             var stagingSet = StagingFor(m.HardwareFamilyId);
             bool hasStaging = groupLeafIdList.TryGetValue(gid, out var ids) && ids.Any(stagingSet.Contains);
-            if (_groupCoverageCache.TryGetValue(gid, out var cov))
+            if (_groupCoverage.TryGet(gid, out var cov))
             {
                 int wanted = Math.Max(0, (groupReleaseSum.TryGetValue(gid, out var rs) ? rs : 0) - cov.Unwanted);
                 return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, cov.Present, wanted)
@@ -327,9 +345,9 @@ public partial class MainWindow : Window
                     HasStaging          = hasStaging,
                 };
             }
-            if (_groupCoverageFailed.Contains(gid))
+            if (_groupCoverage.IsFailed(gid))
                 return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, 0, 0)
-                    { HasStaging = hasStaging };   // → "N/A", no lifecycle badge
+                    { CoverageFailed = true, HasStaging = hasStaging };   // → warning marker, retry on select
             return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, 0, 0)
                 { CoveragePending = true, HasStaging = hasStaging };
         }).ToList();
@@ -351,46 +369,113 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Loads Group coverage for the selected platform's groups OFF the UI thread (opening their leaf DBs),
-    /// caches the result, then re-renders so the spinner is replaced by the real percentage. Never blocks
-    /// the UI; a failure resolves the group to N/A (non-blocking). Uses the same simple Task.Run + Dispatcher
-    /// pattern as the rest of the app — no async framework, no per-leaf catalog query.
+    /// Selection priority: the selected platform's groups jump to the FRONT of the shared bounded queue. Also
+    /// gives a failed group ONE retry (clears its failed state) — one explicit selection = one retry opportunity.
+    /// Cached / in-flight groups are never recomputed. Uses the same single queue as the background sweep, so
+    /// selection never bypasses the MAX-CONCURRENCY=1 bound.
     /// </summary>
     private void EnsureGroupCoverageForPlatformAsync(string platformId)
     {
-        var pending = _groupCards
-            .Where(c => c.HardwareFamilyId == platformId && c.CoveragePending && !_groupCoverageInFlight.Contains(c.GroupId))
-            .Select(c => c.GroupId)
-            .ToList();
-        if (pending.Count == 0) return;
-
-        foreach (var gid in pending)
+        bool enqueued = false;
+        foreach (var c in _groupCards.Where(c => c.HardwareFamilyId == platformId))
         {
-            if (!_groupLeafDbInfo.TryGetValue(gid, out var leaves)) continue;
-            _groupCoverageInFlight.Add(gid);
-
-            var leafSnapshot = leaves;
-            var targetGid    = gid;
-            var dataDir      = _dataDir;
-
-            // Assigned-artifact map (catalog) is read off the UI thread too, so the whole enrichment — coverage
-            // AND lifecycle facts — is one background pass that opens each leaf DB exactly once.
-            var work = System.Threading.Tasks.Task.Run(() =>
-                Systems.GroupCoverageLoader.Compute(
-                    leafSnapshot, dataDir, _catalog.GetAllAssignedDerivedIdsByDatLine()));
-
-            _ = work.ContinueWith(t =>
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    _groupCoverageInFlight.Remove(targetGid);
-                    if (t.IsCompletedSuccessfully) _groupCoverageCache[targetGid] = t.Result;
-                    else                           _groupCoverageFailed.Add(targetGid);
-                    // Re-render (no group DB opens now — the value is cached / marked failed).
-                    if (_selectedPlatformId == platformId)
-                        RefreshSystemsKeepSelection(_selectedPlatformId);
-                }),
-                System.Threading.Tasks.TaskContinuationOptions.None);
+            _groupCoverage.Retry(c.GroupId);   // one retry-on-select (no-op if it wasn't failed)
+            _groupCoverage.Enqueue(c.GroupId, priority: true, _groupLeafDbInfo.ContainsKey);
+            enqueued = true;
         }
+        if (enqueued) DrainGroupCoverageQueue();
+    }
+
+    /// <summary>Enqueues every not-yet-resolved Group aggregate across ALL platforms for autonomous background
+    /// convergence. Failed groups are NOT auto-requeued (only an explicit selection retries them).</summary>
+    private void EnqueueAllPendingGroupCoverage()
+    {
+        foreach (var c in _groupCards)
+            _groupCoverage.Enqueue(c.GroupId, priority: false, _groupLeafDbInfo.ContainsKey);
+        DrainGroupCoverageQueue();
+    }
+
+    /// <summary>
+    /// Serialized worker (MAX CONCURRENCY = 1): pulls ONE pending Group from the queue, computes its aggregate
+    /// off the UI thread (opening its leaves once, sequentially, inside <see cref="Systems.GroupCoverageLoader"/>),
+    /// records it on the UI thread, re-renders, and pulls the next. Autonomous — it refreshes regardless of which
+    /// platform is selected, so even a never-clicked System converges. The queue's generation token rejects an
+    /// obsolete result (a group invalidated while its old compute was in flight).
+    /// </summary>
+    private void DrainGroupCoverageQueue()
+    {
+        if (_groupCoverageBusy) return;
+        if (_groupCoverage.Begin(_groupLeafDbInfo.ContainsKey) is not { } started) return;
+
+        _groupCoverageBusy = true;
+        var (targetGid, startGen) = started;
+        var leafSnapshot = _groupLeafDbInfo[targetGid];
+        var dataDir      = _dataDir;
+
+        var work = System.Threading.Tasks.Task.Run(() =>
+            Systems.GroupCoverageLoader.Compute(
+                leafSnapshot, dataDir, _catalog.GetAllAssignedDerivedIdsByDatLine()));
+
+        _ = work.ContinueWith(t =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                _groupCoverageBusy = false;
+
+                // The queue applies the generation guard: an obsolete result (invalidated mid-flight) returns
+                // false and is discarded → re-enqueue for a fresh compute.
+                if (t.IsCompletedSuccessfully)
+                {
+                    if (!_groupCoverage.Complete(targetGid, startGen, t.Result))
+                        _groupCoverage.Enqueue(targetGid, priority: false, _groupLeafDbInfo.ContainsKey);
+                }
+                else
+                {
+                    _groupCoverage.Fail(targetGid, startGen);   // warning marker + retry-on-select
+                }
+
+                // Autonomous refresh (never gated on the current selection); preserves selection, no jumps.
+                RefreshSystemsKeepSelection(_selectedPlatformId);
+                DrainGroupCoverageQueue();   // continue with the next pending group
+            }),
+            System.Threading.Tasks.TaskContinuationOptions.None);
+    }
+
+    /// <summary>
+    /// Targeted invalidation at a genuine mutation boundary: drops the group's cached/failed state and bumps its
+    /// generation so any in-flight compute is discarded, making it pending again. Does NOT enqueue or refresh —
+    /// the caller pairs this with <see cref="RefreshSystemsKeepSelection"/> (whose SelectPlatform enqueues the now
+    /// pending group with priority). Never call this from inside RefreshSystemsKeepSelection (would loop).
+    /// </summary>
+    private void InvalidateGroupCoverage(string groupId) => _groupCoverage.Invalidate(groupId);
+
+    /// <summary>
+    /// Converges the Systems view after a volume mutation. For a Group-owned volume, an assignment-changing op
+    /// (Append/Build/Reabsorb/Fillback/Verify — <paramref name="assignmentChanged"/> true) invalidates the Group
+    /// aggregate so it recomputes; a location-only op (Move) does not (<c>AnyLocalVolume</c> is re-read fresh from
+    /// the catalog on every Systems refresh). Always refreshes Systems so lifecycle/location facts reread and the
+    /// row converges (the SelectPlatform inside re-enqueues any now-pending group with priority). Single-owned
+    /// volumes only get the refresh — Single facts are already recomputed fresh each RefreshSystems.
+    /// </summary>
+    private void ConvergeSystemsAfterVolumeMutation(VolumeEntry entry, bool assignmentChanged)
+    {
+        if (entry.IsGroupOwned && assignmentChanged)
+            InvalidateGroupCoverage(entry.GroupId!);
+        RefreshSystemsKeepSelection(entry.PlatformId);
+    }
+
+    /// <summary>
+    /// Converges the Systems view after a leaf-release mutation that changes Present/Unwanted/owned (wanted /
+    /// unwanted / purge / restore). If the leaf belongs to a Group, its aggregate is invalidated so the row goes
+    /// pending and recomputes; then Systems refreshes. Single leaves just refresh (their facts are already fresh).
+    /// Visibility-only changes (Hide/Show in catalog) do NOT call this — they don't affect the aggregates.
+    /// </summary>
+    private void ConvergeSystemsAfterLeafReleaseMutation(string datLineId, string platformId)
+    {
+        if (datLineId.Length == 0) return;
+        if (_leafToGroup.TryGetValue(datLineId, out var gid))
+            InvalidateGroupCoverage(gid);
+        if (platformId.Length > 0)
+            RefreshSystemsKeepSelection(platformId);
     }
 
     private void SelectDatLine(DatLineInfo d, string platformId)
@@ -535,6 +620,44 @@ public partial class MainWindow : Window
         return strip;
     }
 
+    // Coverage/completion cell for a System or Group row. Three states, precedence pending > failed > resolved:
+    //   pending → the rotating clockwise spinner (active work);
+    //   failed  → a compact ⚠ warning marker with a retry tooltip (never a fake %/N/A);
+    //   else    → the completion % (or "N/A") coloured by the coverage policy.
+    private static Control MakeCoverageVisual(
+        bool pending, bool failed, string percentText, int? percent, string? completionTooltip)
+    {
+        if (pending)
+            return new Systems.PendingSpinner { VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+
+        if (failed)
+        {
+            var warn = new TextBlock
+            {
+                Text              = "⚠",
+                FontSize          = 12,
+                Foreground        = new SolidColorBrush(Color.Parse("#FFB300")),
+                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+                MinWidth          = 40,
+                TextAlignment     = Avalonia.Media.TextAlignment.Right,
+            };
+            ToolTip.SetTip(warn, "Status calculation failed. Select this system to retry.");
+            return warn;
+        }
+
+        var block = new TextBlock
+        {
+            Text              = percentText,
+            FontSize          = 11,
+            Foreground        = new SolidColorBrush(Color.Parse(Systems.SystemsCoverageColorPolicy.HexFor(percent))),
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            MinWidth          = 40,
+            TextAlignment     = Avalonia.Media.TextAlignment.Right,
+        };
+        if (completionTooltip is not null) ToolTip.SetTip(block, completionTooltip);
+        return block;
+    }
+
     private Border MakePlatformNode(SystemPlatform p, bool isSelected)
     {
         var bgColor   = isSelected ? Color.Parse("#1E1E32") : Color.Parse("#111118");
@@ -570,23 +693,12 @@ public partial class MainWindow : Window
                 Foreground = new SolidColorBrush(hwColor),
             });
 
-        // While this system's Group leaves are still loading off the UI thread, show a loading indicator
-        // ("…") rather than a partial (false) percentage over only the non-group leaves.
-        var coverageBlock = new TextBlock
-        {
-            Text              = p.CoveragePending ? "…" : p.WantedCoverage,
-            FontSize          = 11,
-            Foreground        = new SolidColorBrush(Color.Parse(p.CoveragePending
-                                    ? "#888899"
-                                    : Systems.SystemsCoverageColorPolicy.HexFor(p.WantedCoveragePercent))),
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Margin            = new Avalonia.Thickness(8, 0, 0, 0),
-        };
-        ToolTip.SetTip(coverageBlock, p.CoveragePending
-            ? "Computing wanted coverage…"
-            : p.WantedCoveragePercent is null
-                ? "Wanted coverage: N/A — no wanted releases"
-                : $"Wanted coverage: {p.WantedCoverage} (excludes unwanted)");
+        // Group facts pending → rotating spinner; compute failed → ⚠ marker; else the wanted-coverage % — never
+        // a partial (false) percentage over only the non-group leaves.
+        var coverageBlock = MakeCoverageVisual(
+            p.CoveragePending, p.CoverageFailed, p.WantedCoverage, p.WantedCoveragePercent,
+            Systems.StorageBadgePolicy.CompletionTooltip(Systems.StorageBadgePolicy.SystemCompletionTooltip, p.WantedCoveragePercent));
+        coverageBlock.Margin = new Avalonia.Thickness(8, 0, 0, 0);
 
         var datCountBlock = new TextBlock
         {
@@ -871,36 +983,15 @@ public partial class MainWindow : Window
         var pId     = platformId;
         detailsBtn.Click += (_, _) => OpenGroupDetails(theCard, pId);
 
-        // While coverage is loading off the UI thread, show a small indeterminate spinner (never 0%).
-        Control coverageCtrl = card.CoveragePending
-            ? new ProgressBar
-              {
-                  IsIndeterminate   = true,
-                  Width             = 40,
-                  Height            = 6,
-                  Foreground        = new SolidColorBrush(Color.Parse("#7B68EE")),
-                  Background         = new SolidColorBrush(Color.Parse("#242433")),
-                  VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                  Margin            = new Avalonia.Thickness(12, 0, 0, 0),
-              }
-            : new TextBlock
-              {
-                  Text              = card.CoverageText,
-                  FontSize          = 11,
-                  Foreground        = new SolidColorBrush(Color.Parse(
-                                          Systems.SystemsCoverageColorPolicy.HexFor(card.CoveragePercent))),
-                  VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-                  Margin            = new Avalonia.Thickness(12, 0, 0, 0),
-                  MinWidth          = 40,
-                  TextAlignment     = Avalonia.Media.TextAlignment.Right,
-              };
-        ToolTip.SetTip(coverageCtrl, card.CoveragePending
-            ? "Computing wanted coverage…"
-            : Systems.StorageBadgePolicy.CompletionTooltip(
-                Systems.StorageBadgePolicy.GroupCompletionTooltip, card.CoveragePercent));
+        // Coverage cell: rotating spinner while pending, ⚠ on compute failure, else the % (never a false 0%).
+        var coverageCtrl = MakeCoverageVisual(
+            card.CoveragePending, card.CoverageFailed, card.CoverageText, card.CoveragePercent,
+            Systems.StorageBadgePolicy.CompletionTooltip(Systems.StorageBadgePolicy.GroupCompletionTooltip, card.CoveragePercent));
+        coverageCtrl.Margin = new Avalonia.Thickness(12, 0, 0, 0);
 
-        // Lifecycle is omitted while coverage is pending (facts not yet loaded); STAGING is always known.
-        var groupBadges = MakeBadgeStrip(card.HasStaging, card.Lifecycle, lifecyclePending: card.CoveragePending);
+        // Lifecycle is omitted while coverage is pending OR failed (facts unknown); STAGING is always known.
+        var groupBadges = MakeBadgeStrip(card.HasStaging, card.Lifecycle,
+            lifecyclePending: card.CoveragePending || card.CoverageFailed);
         groupBadges.Margin = new Avalonia.Thickness(8, 0, 0, 0);
 
         var grid = new Grid { Margin = new Avalonia.Thickness(28, 8, 10, 8) };
@@ -2021,6 +2112,10 @@ public partial class MainWindow : Window
         // Refresh views using existing non-blocking mechanisms (no synchronous 410-leaf aggregate rebuild).
         if (summary is not null && !summary.Aborted)
         {
+            // Group facts (present/owned/unassigned) changed — invalidate the cache so the row goes pending and
+            // the queue recomputes it. RefreshSystemsKeepSelection re-renders (spinner) and its SelectPlatform
+            // re-enqueues the now-pending group with priority → autonomous convergence, no restart/click.
+            InvalidateGroupCoverage(groupId);
             RebuildLibraryDatasets();
             ResolveFlagImages();
             RefreshSystemsKeepSelection(platformId);
@@ -3588,7 +3683,9 @@ public partial class MainWindow : Window
 
     }
 
-    private void RefreshAfterVolumeStorageMutation(string preserveVolumeId)
+    // preserveVolumeId keeps the Volumes-list selection; mutatedEntry drives Systems convergence (this helper
+    // backs assignment-changing storage ops — Append / Fillback — so the owning Group aggregate is invalidated).
+    private void RefreshAfterVolumeStorageMutation(string preserveVolumeId, VolumeEntry mutatedEntry)
     {
         RebuildLibraryDatasets();
         RefreshVolumes();
@@ -3605,6 +3702,8 @@ public partial class MainWindow : Window
         {
             UpdateVolumeDetailPanel(null);
         }
+
+        ConvergeSystemsAfterVolumeMutation(mutatedEntry, assignmentChanged: true);
     }
 
     private async void OnVolumeArtifactsDetails(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -3776,6 +3875,7 @@ public partial class MainWindow : Window
                 RefreshVolumes();
                 RefreshAnalyticsIfBuilt();
                 RefreshDiskDetailIfSelected();
+                ConvergeSystemsAfterVolumeMutation(entry, assignmentChanged: true);   // verify may drop stale assignments
             });
         }
 
@@ -5034,6 +5134,7 @@ public partial class MainWindow : Window
 
         await dialog.ShowDialog<bool>(this);
         RefreshVolumes();   // an Apply & Build inside the dialog mutates volume/leaf state — reflect it.
+        ConvergeSystemsAfterVolumeMutation(entry, assignmentChanged: true);   // group Build/Apply → owned/unassigned changed
     }
 
     private async void OnMakeVolume(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -5482,6 +5583,7 @@ public partial class MainWindow : Window
             RebuildLibraryDatasets();
             RefreshAnalyticsIfBuilt();
             RefreshDiskDetailIfSelected();
+            ConvergeSystemsAfterVolumeMutation(entry, assignmentChanged: false);   // location-only → reread LOCAL/lifecycle
 
             var updatedEntry = _filteredVolumes.FirstOrDefault(v => v.Id == entry.Id);
             if (updatedEntry is not null)
@@ -5702,7 +5804,7 @@ public partial class MainWindow : Window
             var gResult = gdlg.ExecutionResult;
             if (gResult is null || gResult.CopiedCount == 0) return;
 
-            RefreshAfterVolumeStorageMutation(entry.Id);
+            RefreshAfterVolumeStorageMutation(entry.Id, entry);
             return;
         }
 
@@ -5718,7 +5820,7 @@ public partial class MainWindow : Window
         var result = dlg.ExecutionResult;
         if (result is null || result.CopiedCount == 0) return;
 
-        RefreshAfterVolumeStorageMutation(entry.Id);
+        RefreshAfterVolumeStorageMutation(entry.Id, entry);
     }
 
     // ── Volume Reabsorb ───────────────────────────────────────────────────────
@@ -5933,6 +6035,7 @@ public partial class MainWindow : Window
         RefreshVolumes();
         RefreshAnalyticsIfBuilt();
         RefreshDiskDetailIfSelected();
+        ConvergeSystemsAfterVolumeMutation(entry, assignmentChanged: true);   // reabsorb → unassigned changed
 
         var updated = _filteredVolumes.FirstOrDefault(v => v.Id == entry.Id);
         if (updated is not null)
@@ -6049,7 +6152,7 @@ public partial class MainWindow : Window
         if (result is null) return;
 
         // ── Refresh UI ────────────────────────────────────────────────────────
-        RefreshAfterVolumeStorageMutation(entry.Id);
+        RefreshAfterVolumeStorageMutation(entry.Id, entry);
 
         // ── Write log ─────────────────────────────────────────────────────────
         try
@@ -6128,7 +6231,7 @@ public partial class MainWindow : Window
         if (!ok) return;
         if (dialog.ExecutionResult is not { } result) return;
 
-        RefreshAfterVolumeStorageMutation(entry.Id);
+        RefreshAfterVolumeStorageMutation(entry.Id, entry);
 
         try
         {
@@ -6903,6 +7006,7 @@ public partial class MainWindow : Window
                 RebuildLibraryDatasets();
                 BuildAnalytics();
                 ApplyLibraryFilter();
+                ConvergeSystemsAfterLeafReleaseMutation(entry.DatLineId, entry.HardwareFamilyId);
             };
             DetailActionsPanel.Children.Add(restoreBtn);
 
@@ -6948,6 +7052,7 @@ public partial class MainWindow : Window
                 RebuildLibraryDatasets();
                 BuildAnalytics();
                 ApplyLibraryFilter();
+                ConvergeSystemsAfterLeafReleaseMutation(entry.DatLineId, entry.HardwareFamilyId);
             };
             DetailActionsPanel.Children.Add(unwantedBtn);
         }
@@ -7050,6 +7155,7 @@ public partial class MainWindow : Window
         BuildAnalytics();
         ApplyLibraryFilter();
         RefreshDiskDetailIfSelected();
+        ConvergeSystemsAfterLeafReleaseMutation(entry.DatLineId, entry.HardwareFamilyId);
     }
 
     private static Button MakeActionButton(string label, string hexColor)

@@ -24,6 +24,13 @@ public sealed record GroupDatCardInfo(
     /// </summary>
     public bool CoveragePending { get; init; }
 
+    /// <summary>
+    /// True when the background coverage computation for this group FAILED (faulted). The UI shows a compact
+    /// warning marker (never "N/A" as if it succeeded, never a spinner) and offers retry-on-select. Mutually
+    /// exclusive with <see cref="CoveragePending"/> in practice (pending takes precedence at render time).
+    /// </summary>
+    public bool CoverageFailed { get; init; }
+
     // ── Archive-lifecycle facts (leaf-DB half from GroupStorageFacts; catalog/FS half from the caller) ──
     /// <summary>Σ present derived artifacts owned across the group's leaves (leaf-DB; valid only when not pending).</summary>
     public int  OwnedPresentDerived { get; init; }

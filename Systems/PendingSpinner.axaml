@@ -1,0 +1,29 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Arkadia.Systems.PendingSpinner"
+             Width="14" Height="14"
+             ToolTip.Tip="Calculating status…">
+    <!-- Compact clockwise circular-arrow indicator: a 270° arc + arrowhead, rotated 0→360° forever.
+         Pure Avalonia animation (no dependency); reused for pending System and Group rows. -->
+    <Canvas Width="14" Height="14" RenderTransformOrigin="0.5,0.5">
+        <Canvas.RenderTransform>
+            <RotateTransform/>
+        </Canvas.RenderTransform>
+        <Canvas.Styles>
+            <Style Selector="Canvas">
+                <Style.Animations>
+                    <Animation Duration="0:0:0.85" IterationCount="INFINITE">
+                        <KeyFrame Cue="0%">
+                            <Setter Property="(RotateTransform.Angle)" Value="0"/>
+                        </KeyFrame>
+                        <KeyFrame Cue="100%">
+                            <Setter Property="(RotateTransform.Angle)" Value="360"/>
+                        </KeyFrame>
+                    </Animation>
+                </Style.Animations>
+            </Style>
+        </Canvas.Styles>
+        <Path Data="M 7,2 A 5,5 0 1 1 2,7" Stroke="#7B68EE" StrokeThickness="1.6"/>
+        <Path Data="M 0.4,6 L 2,9 L 3.6,6 Z" Fill="#7B68EE"/>
+    </Canvas>
+</UserControl>

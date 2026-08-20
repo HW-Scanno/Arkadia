@@ -151,6 +151,66 @@ public sealed class GroupDatStartupCostTests : IDisposable
         Assert.Equal("N/A", zero.CoverageText);
     }
 
+    [Fact]  // the serialized queue itself opens ZERO leaf DBs — DB work happens only when the caller computes
+    public void Queue_OpsOpenNoLeafDatabases()
+    {
+        var q = new GroupCoverageQueue();
+        DatLineStore.ConstructionCount = 0;
+
+        q.Enqueue("c64-tosec", priority: false, _ => true);
+        var started = q.Begin(_ => true);            // marks in-flight; does NOT compute
+        Assert.NotNull(started);
+        q.Complete("c64-tosec", started!.Value.Generation, new GroupStorageFacts(1, 0, 1, 0));
+
+        Assert.Equal(0, DatLineStore.ConstructionCount);   // pure state machine — no DB opened
+    }
+
+    [Fact]  // ingestion stale-cache regression: cached present=0, leaf changes, invalidate → recompute is current
+    public void StaleCache_Invalidated_RecomputesFresh()
+    {
+        var c = SeedGroupWithLeafDbs(3, releasesPerLeaf: 10);   // 30 releases, all 'missing'
+        var q = new GroupCoverageQueue();
+        var leaves = c.GetLeavesForGroup("c64-tosec")
+            .Select(l => (l.DatLine.Id, l.DatLine.DataStorePath, l.DatLine.ReleaseCount)).ToList();
+
+        // First compute: nothing present yet → cached present 0 (the stale state the runtime showed).
+        var facts0 = GroupCoverageLoader.Compute(leaves, _dataDir, c.GetAllAssignedDerivedIdsByDatLine());
+        q.Enqueue("c64-tosec", false, _ => true);
+        var b0 = q.Begin(_ => true)!;
+        q.Complete("c64-tosec", b0.Value.Generation, facts0);
+        Assert.True(q.TryGet("c64-tosec", out var cached0));
+        Assert.Equal(0, cached0.Present);
+
+        // Underlying leaf state changes (as ingestion would), then the mutation boundary invalidates.
+        MarkStatuses("c64-tosec-000", present: 6);
+        q.Invalidate("c64-tosec");
+        Assert.False(q.IsCached("c64-tosec"));
+
+        // Recompute (re-admitted) → the cache is now current, no restart/selection needed.
+        var facts1 = GroupCoverageLoader.Compute(leaves, _dataDir, c.GetAllAssignedDerivedIdsByDatLine());
+        q.Enqueue("c64-tosec", false, _ => true);
+        var b1 = q.Begin(_ => true)!;
+        q.Complete("c64-tosec", b1.Value.Generation, facts1);
+        Assert.True(q.TryGet("c64-tosec", out var cached1));
+        Assert.Equal(6, cached1.Present);
+    }
+
+    [Fact]  // parent-pending semantics: a pending Group aggregate never renders a final lifecycle/percentage
+    public void ParentPending_NoFinalStateExposed()
+    {
+        var pending = new SystemPlatform
+        {
+            Id = "c64", Name = "C64", Manufacturer = "", HardwareType = "",
+            DatLines = 1, TotalTitles = 10, Present = 0, Outdated = 0, Missing = 10, Lost = 0,
+            CoveragePending = true, LifecyclePending = true, Lifecycle = ArchiveLifecycle.None,
+        };
+        // While pending the row renders the spinner (CoveragePending) and no lifecycle badge (LifecyclePending),
+        // never a fabricated final lifecycle.
+        Assert.True(pending.CoveragePending);
+        Assert.True(pending.LifecyclePending);
+        Assert.Equal(ArchiveLifecycle.None, pending.Lifecycle);
+    }
+
     private void MarkStatuses(string leafId, int present = 0, int unwanted = 0)
     {
         var store = new DatLineStore(Path.Combine(_dataDir, "systems", "c64", leafId + ".db"));

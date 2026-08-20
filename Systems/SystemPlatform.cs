@@ -46,6 +46,13 @@ public sealed class SystemPlatform
     public bool HasStaging { get; init; }
 
     /// <summary>
+    /// True when a Group aggregate this System depends on FAILED to compute (and none is still pending). The
+    /// System shows a compact warning marker instead of a (fabricated, partial) percentage/badge; selecting the
+    /// System retries. Pending takes precedence over failed at render time.
+    /// </summary>
+    public bool CoverageFailed { get; init; }
+
+    /// <summary>
     /// Releases we intend to keep = all titles minus the unwanted curator veto.
     /// Coverage answers "of the releases I want to keep, how complete is this system?",
     /// so the denominator must exclude unwanted (not merely-hidden catalog rows).
