@@ -516,6 +516,9 @@ public partial class MainWindow : Window
         SysActUpdateDat.IsEnabled     = hasDat;
         SysActVerifyAll.IsEnabled     = datHasStore;
         SysActDeleteDat.IsEnabled     = hasDat;
+        // Enabled purely on selection type — NO per-leaf DB IO here (a 410-leaf Group must stay instant to select).
+        // The authoritative deletability gate runs only when Delete Group is invoked.
+        SysActDeleteGroup.IsEnabled   = hasGroup;
         SysActIngestFiles.IsEnabled   = datHasStore || hasGroup;
         SysActVerifyArchive.IsEnabled = datHasStore;
     }
@@ -1884,6 +1887,58 @@ public partial class MainWindow : Window
         var d = _selectedDatLine;
         if (d.CatalogId is null || d.CatalogPlatformId is null) return;
         await OnDeleteDatLine(d.CatalogId, d.CatalogPlatformId, d);
+    }
+
+    // Undo-only Delete Group: removes a mistaken Group + its leaf DAT catalogs, but ONLY when the Group has no
+    // ingested / assigned / physical state (validated authoritatively at invoke time — never on selection). Never
+    // deletes archive/volume/staging/incoming files; blocks instead. Single Delete DAT is unaffected.
+    private async void OnSysDeleteGroup(object? sender, RoutedEventArgs e)
+    {
+        if (_selectedGroupId is not { } groupId) return;
+
+        var card       = _groupCards.FirstOrDefault(c => c.GroupId == groupId);
+        var group      = _catalog.GetDatGroup(Data.Identifiers.DatGroupId.FromPersisted(groupId));
+        if (card is null && group is null) return;
+        var name       = card?.DisplayName ?? group!.DisplayName;
+        var authority  = card?.Authority   ?? GetAuthorityName(group!.Authority);
+        var leafCount  = card?.LeafCount   ?? _catalog.GetLeavesForGroup(groupId).Count;
+        var platformId = card?.HardwareFamilyId ?? group!.HardwareFamilyId;
+
+        var confirmed = await new ConfirmDialog(
+            "Delete Group",
+            $"Delete Group \"{name}\"?\n\n" +
+            $"Authority:  {authority}\n" +
+            $"Leaf DATs:  {leafCount}\n\n" +
+            "This removes the Group and its leaf DAT catalogs. It is only allowed when the Group has no " +
+            "ingested, staged, archived, or volume-assigned content.\n\nThis cannot be undone.")
+            .ShowDialog<bool>(this);
+        if (!confirmed) return;
+
+        var appRoot = AppContext.BaseDirectory;
+        var dataDir = _dataDir;
+        // Authoritative gate + delete off the UI thread (a large Group's per-leaf preflight must not block the UI).
+        var outcome = await System.Threading.Tasks.Task.Run(
+            () => Data.GroupDeleteService.Delete(_catalog, dataDir, appRoot, groupId));
+
+        if (!outcome.Deleted)
+        {
+            await new InfoDialog("Delete Group", outcome.Message).ShowDialog(this);
+            return;
+        }
+
+        // Success: the deleted Group no longer exists — drop any cached coverage, clear its selection, and refresh
+        // (its card disappears; the parent System and all other Groups/Single DATs remain).
+        InvalidateGroupCoverage(groupId);
+        _selectedGroupId = null;
+        RebuildLibraryDatasets();
+        ResolveFlagImages();
+        RefreshSystemsKeepSelection(platformId);
+
+        if (outcome.FileDeleteFailures.Count > 0)
+            await new InfoDialog("Delete Group",
+                $"Group \"{name}\" was removed from the catalog, but {outcome.FileDeleteFailures.Count} leaf " +
+                "database file(s) could not be deleted (they may be locked). They can be removed manually.")
+                .ShowDialog(this);
     }
 
     private void OnSysIngestFiles(object? sender, RoutedEventArgs e)

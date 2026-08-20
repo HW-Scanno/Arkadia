@@ -1919,6 +1919,46 @@ public sealed class CatalogService
         }
     }
 
+    /// <summary>
+    /// Catalog-only removal of a whole Group in ONE transaction: deletes every leaf <c>dat_lines</c> row FIRST
+    /// (so the <c>dat_lines.group_id → dat_groups(id) ON DELETE RESTRICT</c> FK is satisfied), then the
+    /// <c>dat_groups</c> row. Foreign keys are enabled before the transaction (defence-in-depth: a still-referenced
+    /// group — e.g. a group-owned volume — makes the group-row delete throw and the whole transaction roll back,
+    /// leaving the catalog unchanged). Does NOT touch leaf DB files or any physical artifact — the caller
+    /// (<see cref="GroupDeleteService"/>) validates safety first and best-effort deletes the leaf DB files AFTER a
+    /// successful commit, matching Single Delete DAT filesystem semantics. No PRAGMA is disabled.
+    /// </summary>
+    public void DeleteDatGroupCatalog(string groupId, IReadOnlyList<string> leafDatLineIds)
+    {
+        using var conn = Open();
+        using (var pragma = conn.CreateCommand())
+        {
+            pragma.CommandText = "PRAGMA foreign_keys = ON;";   // must be set BEFORE BeginTransaction
+            pragma.ExecuteNonQuery();
+        }
+
+        using var tx = conn.BeginTransaction();
+
+        foreach (var leafId in leafDatLineIds)
+        {
+            using var del = conn.CreateCommand();
+            del.Transaction = tx;
+            del.CommandText = "DELETE FROM dat_lines WHERE id = $id";
+            del.Parameters.AddWithValue("$id", leafId);
+            del.ExecuteNonQuery();
+        }
+
+        using (var delGroup = conn.CreateCommand())
+        {
+            delGroup.Transaction = tx;
+            delGroup.CommandText = "DELETE FROM dat_groups WHERE id = $gid";
+            delGroup.Parameters.AddWithValue("$gid", groupId);
+            delGroup.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+    }
+
     // ── Disks ─────────────────────────────────────────────────────────────────
 
     public List<DiskRecord> GetDisks()

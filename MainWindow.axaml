@@ -695,6 +695,8 @@
                                 Content="Verify ALL"    Click="OnSysVerifyAll"/>
                         <Button x:Name="SysActDeleteDat"    Classes="view-toggle danger"
                                 Content="Delete DAT"    Click="OnSysDeleteDat"/>
+                        <Button x:Name="SysActDeleteGroup"  Classes="view-toggle danger"
+                                Content="Delete Group"  Click="OnSysDeleteGroup"/>
                         <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
                                 Margin="10,2" VerticalAlignment="Stretch"/>
                         <Button x:Name="SysActIngestFiles" Classes="view-toggle"
