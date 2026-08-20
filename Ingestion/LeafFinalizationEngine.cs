@@ -154,6 +154,15 @@ public static class LeafFinalizationEngine
             }
         }
 
+        // Drain the now-empty staging structure (DIRECTORY-ONLY, never files). The per-release loop above removed
+        // each completed release tree; this prunes the empty leaf staging root and — when the platform's last leaf
+        // drains — the platform staging root too. Any incomplete/resumable release keeps its files, its release
+        // dir, the leaf dir, and the platform dir (RemoveEmptyDirectoriesBottomUp only collapses empty branches).
+        // Safe here because all staging completes before any leaf is finalized.
+        IngestionPaths.RemoveEmptyDirectoriesBottomUp(stagingRoot);
+        if (Path.GetDirectoryName(stagingRoot) is { } platformStagingRoot)
+            IngestionPaths.RemoveEmptyDirectoriesBottomUp(platformStagingRoot);
+
         return new LeafFinalizationResult
         {
             IncompleteReleaseIds      = incompleteReleases,
