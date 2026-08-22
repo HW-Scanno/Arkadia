@@ -514,7 +514,11 @@ public partial class MainWindow : Window
         // Configure is available for a Single DAT (with a store) OR a selected Group DAT (uniform apply).
         SysActConfigureDat.IsEnabled   = datHasStore || hasGroup;
         SysActUpdateDat.IsEnabled     = hasDat;
-        SysActVerifyAll.IsEnabled     = datHasStore;
+        // "Verify ALL" (SysActVerifyDat) is the GLOBAL archive-output policy validation — always available.
+        SysActVerifyDat.IsEnabled     = true;
+        // Contextual "Verify" (SysActVerifyAll): a Single DAT with a store, or a selected Group (sequential leaves).
+        // No per-leaf DB IO here — the authoritative per-leaf verification runs only on invocation.
+        SysActVerifyAll.IsEnabled     = datHasStore || hasGroup;
         SysActDeleteDat.IsEnabled     = hasDat;
         // Enabled purely on selection type — NO per-leaf DB IO here (a 410-leaf Group must stay instant to select).
         // The authoritative deletability gate runs only when Delete Group is invoked.
@@ -1845,10 +1849,106 @@ public partial class MainWindow : Window
         _ = OnUpdateDatLine(_selectedDatLine);
     }
 
-    private void OnSysVerifyAll(object? sender, RoutedEventArgs e)
+    // Contextual "Verify": a Group runs the SAME single-DAT verifier sequentially over its leaves; a Single DAT
+    // runs it once. NEVER global (that is "Verify ALL"/OnSysVerifyDat). Group takes precedence when both are set.
+    private void OnSysVerify(object? sender, RoutedEventArgs e)
     {
-        if (_selectedDatLine is null) return;
-        _ = OnVerifyAllDatLine(_selectedDatLine);
+        if (_selectedGroupId is { } groupId) { _ = VerifyGroupAsync(groupId); return; }
+        if (_selectedDatLine is not null) _ = OnVerifyAllDatLine(_selectedDatLine);
+    }
+
+    // A no-op progress sink for the single-DAT verifier when driven inside Group Verify — the Group dialog shows
+    // index-based progress instead. RunVerifyAllDatLine still marshals these onto the UI thread.
+    private sealed class NullDatLineVerifyProgress : IDatLineVerifyProgress
+    {
+        public void SetStatus(string text) { }
+        public void AppendRow(string volume, string result, string path, string detail) { }
+        public void UpdateStats(int a, int b, int c, int d, int e, int f, int g) { }
+        public void SetCompleted(string summary) { }
+    }
+
+    // Sequential Group Verify: verify EVERY leaf of the selected group (scoped strictly by group_id), one at a
+    // time, reusing the existing single-DAT verifier. On a leaf failure it pauses with Retry/Stop. Never touches
+    // other Groups/Singles. Targeted Systems refresh at the end (and after Stop).
+    private async System.Threading.Tasks.Task VerifyGroupAsync(string groupId)
+    {
+        var group = _catalog.GetDatGroup(Data.Identifiers.DatGroupId.FromPersisted(groupId));
+        if (group is null) { await new InfoDialog("Verify", "That Group no longer exists.").ShowDialog(this); return; }
+
+        var card       = _groupCards.FirstOrDefault(c => c.GroupId == groupId);
+        var groupName  = card?.DisplayName ?? group.DisplayName;
+        var platformId = group.HardwareFamilyId;
+
+        // Authoritative membership by group_id, in the catalog's deterministic order.
+        var leaves = _catalog.GetLeavesForGroup(groupId);
+        if (leaves.Count == 0) { await new InfoDialog("Verify", "This Group has no leaf DATs to verify.").ShowDialog(this); return; }
+
+        var leafById = leaves.ToDictionary(l => l.DatLine.Id, StringComparer.Ordinal);
+        var leafIds  = leaves.Select(l => l.DatLine.Id).ToList();
+        var dataDir  = _dataDir;
+
+        string LeafName(string id) => leafById.TryGetValue(id, out var l)
+            ? FormatDatLineName(l.DatLine.Authority, l.DatLine.MediaTypeId) : id;
+
+        var dialog  = new GroupVerifyDialog(groupName);
+        var dlgTask = dialog.ShowDialog(this);
+
+        // verifyLeaf: run the single-DAT verifier for this leaf off the UI thread. "Fail" = an exception (a
+        // transient external problem the PO can fix, then Retry). A completed reconciliation is a PASS.
+        async System.Threading.Tasks.Task<Ingestion.GroupVerifyLeafOutcome> VerifyLeaf(
+            string leafId, int index, System.Threading.CancellationToken ct)
+        {
+            var leaf = leafById[leafId];
+            var dsp  = leaf.DatLine.DataStorePath;
+            var dbPath = dsp.Length > 0 ? Path.Combine(dataDir, dsp) : "";
+            if (dbPath.Length == 0 || !File.Exists(dbPath))
+                return Ingestion.GroupVerifyLeafOutcome.Fail("Leaf database is missing.");
+
+            var info = new Systems.DatLineInfo(
+                Name: LeafName(leafId), Releases: leaf.DatLine.ReleaseCount, LastImport: "",
+                CatalogId: leaf.DatLine.Id, CatalogPlatformId: leaf.DatLine.HardwareFamilyId,
+                DataStorePath: leaf.DatLine.DataStorePath);
+            var volumes = _catalog.GetVolumes().Where(v => v.DatLineId == leaf.DatLine.Id).ToList();
+
+            try
+            {
+                await System.Threading.Tasks.Task.Run(
+                    () => RunVerifyAllDatLine(new NullDatLineVerifyProgress(), info, dbPath, volumes));
+                return Ingestion.GroupVerifyLeafOutcome.Ok();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException)
+            {
+                return Ingestion.GroupVerifyLeafOutcome.Fail(ex.Message);
+            }
+        }
+
+        System.Threading.Tasks.Task<Ingestion.GroupVerifyDecision> Decide(Ingestion.GroupVerifyFailure f)
+            => dialog.PromptRetryStop(LeafName(f.LeafId), f.LeafId, f.Position, f.Total, f.CompletedBefore, f.Reason);
+
+        var progress = new Progress<Ingestion.GroupVerifyTick>(
+            t => dialog.SetProgress(t.Position, t.Total, t.Completed, LeafName(t.LeafId)));
+
+        var result = await Ingestion.GroupVerifyOrchestrator.RunAsync(leafIds, VerifyLeaf, Decide, progress);
+
+        if (result.Stopped)
+            dialog.SetStoppedSummary(
+                $"Verify stopped — {groupName}.\n\n" +
+                $"Successfully verified   {result.Completed}\n" +
+                $"Failed                  1  ({LeafName(result.FailedLeafId ?? "")})\n" +
+                $"Not run                 {result.NotRun}");
+        else
+            dialog.SetCompletedSummary(
+                $"Verify complete — {groupName}.\n\n" +
+                $"Leaves verified   {result.Completed} / {result.Total}\n" +
+                $"Failures          0");
+
+        // Targeted refresh — reconciled leaves change present/owned facts. Invalidate the group's coverage so it
+        // recomputes; refresh Systems. No global recomputation, no Verify ALL.
+        InvalidateGroupCoverage(groupId);
+        RebuildLibraryDatasets();
+        RefreshSystemsKeepSelection(platformId);
+
+        await dlgTask;
     }
 
     // Maintenance: verify every DAT line's archive output policy (M1). Read-only over
@@ -8202,7 +8302,7 @@ public partial class MainWindow : Window
     }
 
     private async System.Threading.Tasks.Task RunVerifyAllDatLine(
-        DatLineVerifyDialog         dialog,
+        IDatLineVerifyProgress      dialog,
         Systems.DatLineInfo         info,
         string                      dbPath,
         List<Data.VolumeRecord>     volumes)

@@ -6,7 +6,7 @@ using Avalonia.Media;
 
 namespace Arkadia;
 
-public partial class DatLineVerifyDialog : Window
+public partial class DatLineVerifyDialog : Window, IDatLineVerifyProgress
 {
     private readonly ObservableCollection<VerifyRow> _rows = [];
     private const int MaxRows = 1000;

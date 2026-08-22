@@ -688,11 +688,13 @@
                         <Button x:Name="SysActConfigureDat" Classes="view-toggle"
                                 Content="Configure DAT" Click="OnSysConfigureDat"/>
                         <Button x:Name="SysActVerifyDat"    Classes="view-toggle"
-                                Content="Verify DAT"    Click="OnSysVerifyDat"/>
+                                Content="Verify ALL"    Click="OnSysVerifyDat"
+                                ToolTip.Tip="Validate archive-output policy for all DATs in the catalog."/>
                         <Button x:Name="SysActUpdateDat"    Classes="view-toggle"
                                 Content="Update DAT"    Click="OnSysUpdateDat"/>
                         <Button x:Name="SysActVerifyAll"    Classes="view-toggle"
-                                Content="Verify ALL"    Click="OnSysVerifyAll"/>
+                                Content="Verify"        Click="OnSysVerify"
+                                ToolTip.Tip="Verify the selected DAT, or every leaf of the selected Group, one at a time."/>
                         <Button x:Name="SysActDeleteDat"    Classes="view-toggle danger"
                                 Content="Delete DAT"    Click="OnSysDeleteDat"/>
                         <Button x:Name="SysActDeleteGroup"  Classes="view-toggle danger"
