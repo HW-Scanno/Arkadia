@@ -14,7 +14,7 @@ public sealed class VolumeEntryTests
         Id               = "v1",
         Label            = "Test",
         PlatformId       = "snes",
-        DatLineId        = "DAT Line",
+        CollectionLabel  = "DAT Line",
         RawDatLineId     = "dl1",
         DbPath           = "",
         Status           = "present",
@@ -32,7 +32,7 @@ public sealed class VolumeEntryTests
         Id               = "v1",
         Label            = "Test",
         PlatformId       = "c64",
-        DatLineId        = "DAT Line",
+        CollectionLabel  = "DAT Line",
         RawDatLineId     = group ? null : "dl1",
         GroupId          = group ? "c64-tosec" : null,
         DbPath           = "",
@@ -116,7 +116,7 @@ public sealed class VolumeEntryTests
 
     private static VolumeEntry VerifyCase(bool group, int artifactCount) => new()
     {
-        Id = "v1", Label = "Test", PlatformId = "c64", DatLineId = "DAT Line",
+        Id = "v1", Label = "Test", PlatformId = "c64", CollectionLabel = "DAT Line",
         RawDatLineId = group ? null : "dl1", GroupId = group ? "c64-tosec" : null, DbPath = "",
         Status = "present", Health = "ok", PlannedSizeBytes = 1_000, ActualSizeBytes = 100,
         CurrentLocation = "workspace", DiskId = null, DiskLabel = null,
@@ -172,7 +172,7 @@ public sealed class VolumeEntryTests
 
     private static VolumeEntry FillCase(bool group, string status, int artifacts) => new()
     {
-        Id = "v1", Label = "Test", PlatformId = "c64", DatLineId = "DAT Line",
+        Id = "v1", Label = "Test", PlatformId = "c64", CollectionLabel = "DAT Line",
         RawDatLineId = group ? null : "dl1", GroupId = group ? "c64-tosec" : null, DbPath = "",
         Status = status, Health = "ok", PlannedSizeBytes = 1_000, ActualSizeBytes = 100,
         CurrentLocation = "workspace", DiskId = null, DiskLabel = null, ArtifactCount = artifacts,

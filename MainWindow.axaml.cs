@@ -3717,6 +3717,9 @@ public partial class MainWindow : Window
         var datLines = _catalog.LoadDatLines().ToDictionary(dl => dl.Id, dl => dl, StringComparer.Ordinal);
         // Group display names, resolved once (Group-owned volumes have no single leaf DB).
         var groupNames = _catalog.LoadDatGroups().ToDictionary(g => g.Id.Value, g => g.DisplayName, StringComparer.OrdinalIgnoreCase);
+        // Canonical authority/media-type display names for the COLLECTION column (Single owners). Presentation only.
+        var authorityNames = _catalog.LoadAuthorities().ToDictionary(a => a.Id, a => a.Name, StringComparer.Ordinal);
+        var mediaTypeNames = _catalog.GetMediaTypes().ToDictionary(m => m.Id, m => m.Name, StringComparer.OrdinalIgnoreCase);
 
         _allVolumeEntries = _catalog.GetVolumes().Select(v =>
         {
@@ -3733,16 +3736,22 @@ public partial class MainWindow : Window
             var dbPath = dlRecord?.DataStorePath.Length > 0
                 ? Path.Combine(_dataDir, dlRecord.DataStorePath)
                 : "";
-            var ownerDisplay = v.GroupId is not null
-                ? (groupNames.TryGetValue(v.GroupId, out var gn) ? gn : v.GroupId)
-                : (dlRecord?.Name ?? v.DatLineId ?? "");
+            // COLLECTION label (presentation only — identity is RawDatLineId / GroupId). Single owners render
+            // "<Authority> · <Media>" from canonical names; Group owners render the Group display name.
+            var collectionLabel = v.GroupId is not null
+                ? VolumeCollectionLabel.ForGroup(
+                    groupNames.TryGetValue(v.GroupId, out var gn) ? gn : null, v.GroupId)
+                : VolumeCollectionLabel.ForSingle(
+                    dlRecord is not null && authorityNames.TryGetValue(dlRecord.Authority, out var an) ? an : null,
+                    dlRecord is not null && mediaTypeNames.TryGetValue(dlRecord.MediaTypeId, out var mn) ? mn : null,
+                    dlRecord?.Name, v.DatLineId ?? "");
 
             return new VolumeEntry
             {
                 Id               = v.Id,
                 Label            = v.Label,
                 PlatformId       = v.PlatformId,
-                DatLineId        = ownerDisplay,
+                CollectionLabel  = collectionLabel,
                 RawDatLineId     = v.DatLineId,
                 GroupId          = v.GroupId,
                 DbPath           = dbPath,
@@ -3940,7 +3949,7 @@ public partial class MainWindow : Window
         // entry.DatLineId carries the owner display: the Group DisplayName for Group volumes, the DAT-line
         // description for Single. Present it as Collection/DAT Line accordingly.
         var dlg     = new DatLineVerifyDialog();
-        dlg.ConfigureVolumeMode(entry.Label, entry.DatLineId, entry.IsGroupOwned);
+        dlg.ConfigureVolumeMode(entry.Label, entry.CollectionLabel, entry.IsGroupOwned);
         var dlgTask = dlg.ShowDialog(this);
 
         Volumes.VolumeVerifyResult? result = null;
@@ -5354,7 +5363,7 @@ public partial class MainWindow : Window
             {
                 await new InfoDialog(
                     "No Planning Candidates",
-                    $"No archive-complete releases found for DAT line \"{entry.DatLineId}\".\n\n" +
+                    $"No archive-complete releases found for DAT line \"{entry.CollectionLabel}\".\n\n" +
                     "Run ingestion on this DAT line first.")
                     .ShowDialog(this);
                 return;
@@ -5967,7 +5976,7 @@ public partial class MainWindow : Window
             // ── Group Append: global planning + leaf-scoped Single execution ──
             var leaves    = _catalog.GetLeavesForGroup(entry.GroupId!);
             var groupPlan = Volumes.GroupAppendPlanningService.Plan(
-                _catalog, _dataDir, appRoot, volume, volumeRoot, entry.DatLineId, leaves);
+                _catalog, _dataDir, appRoot, volume, volumeRoot, entry.CollectionLabel, leaves);
 
             if (groupPlan.BlockReason is not null)
             {
@@ -6114,7 +6123,7 @@ public partial class MainWindow : Window
         var confirmMsg = new System.Text.StringBuilder();
         confirmMsg.AppendLine($"Volume:  {entry.Label}");
         if (entry.IsGroupOwned)
-            confirmMsg.AppendLine($"Collection:  {entry.DatLineId}");
+            confirmMsg.AppendLine($"Collection:  {entry.CollectionLabel}");
         confirmMsg.AppendLine($"Source:  {volumeRoot}");
         confirmMsg.AppendLine();
         if (caseBList.Count > 0)
@@ -6169,7 +6178,7 @@ public partial class MainWindow : Window
             sb.AppendLine("Volume Reabsorb");
             sb.AppendLine($"Started:         {startTime:o}");
             sb.AppendLine($"Volume:          {entry.Label}");
-            if (entry.IsGroupOwned) sb.AppendLine($"Collection:      {entry.DatLineId}");
+            if (entry.IsGroupOwned) sb.AppendLine($"Collection:      {entry.CollectionLabel}");
             sb.AppendLine($"Source:          {volumeRoot}");
             sb.AppendLine($"To copy:         {caseBList.Count}");
             sb.AppendLine($"Already local:   {caseACount}");
@@ -6402,7 +6411,7 @@ public partial class MainWindow : Window
         };
 
         var dialog = new FillbackVolumeDialog(
-            entry.Id, entry.Label, sourceRoot, sourceDiskLabel, candidates, _catalog, planBuilder, entry.DatLineId);
+            entry.Id, entry.Label, sourceRoot, sourceDiskLabel, candidates, _catalog, planBuilder, entry.CollectionLabel);
 
         var ok = await dialog.ShowDialog<bool>(this);
         if (!ok) return;
@@ -6470,7 +6479,7 @@ public partial class MainWindow : Window
             sb.AppendLine();
             sb.AppendLine($"Volume:    {entry.Label}");
             sb.AppendLine($"System:           {entry.PlatformId}");
-            sb.AppendLine($"DAT Line:  {entry.DatLineId}");
+            sb.AppendLine($"DAT Line:  {entry.CollectionLabel}");
             sb.AppendLine($"Timestamp: {logTs:o}");
             sb.AppendLine($"Result:    {(skippedDatLines.Count == 0 ? "ok" : "partial")}");
             sb.AppendLine($"Propagated dat-lines: {propagated}");

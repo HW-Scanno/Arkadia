@@ -8,7 +8,11 @@ public sealed class VolumeEntry
     public required string  Id               { get; init; }
     public required string  Label            { get; init; }
     public required string  PlatformId       { get; init; }
-    public required string  DatLineId        { get; init; }
+    /// <summary>
+    /// Presentation-only "COLLECTION" label (Single → "Authority · Media", Group → Group display name). NEVER an
+    /// identity — actions route on <see cref="RawDatLineId"/> / <see cref="GroupId"/> / <see cref="Id"/>.
+    /// </summary>
+    public required string  CollectionLabel  { get; init; }
     public required string  Status           { get; init; }
     public required string  Health           { get; init; }  // ok | crit
     public required long    PlannedSizeBytes { get; init; }
