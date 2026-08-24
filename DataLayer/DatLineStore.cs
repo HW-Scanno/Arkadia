@@ -22,6 +22,14 @@ public sealed class DatLineStore
     /// </summary>
     [ThreadStatic] internal static int ConstructionCount;
 
+    /// <summary>
+    /// Conservative maximum id count per <c>WHERE … IN (…)</c> statement. Well under SQLite's default
+    /// <c>SQLITE_MAX_VARIABLE_NUMBER</c> (999 on old builds, 32766 since 3.32) with ample headroom for any other
+    /// bound parameters — so a very large leaf (tens of thousands of releases/artifacts, e.g. a full c64-tosec
+    /// "Games" line) never trips "too many SQL variables". Result is merged/deduped identically across chunks.
+    /// </summary>
+    private const int SqlInBatchSize = 900;
+
     public DatLineStore(string dbPath)
     {
         ConstructionCount++;
@@ -1137,16 +1145,26 @@ public sealed class DatLineStore
     {
         if (daIds.Count == 0) return 0;
 
-        var dp = string.Join(",", Enumerable.Range(0, daIds.Count).Select(i => $"$d{i}"));
         using var conn = Open();
         using var tx   = conn.BeginTransaction();
-        using var cmd  = conn.CreateCommand();
-        cmd.Transaction = tx;
-        cmd.CommandText = $"UPDATE derived_artifacts SET status = $status WHERE id IN ({dp})";
-        cmd.Parameters.AddWithValue("$status", status);
-        for (int i = 0; i < daIds.Count; i++)
-            cmd.Parameters.AddWithValue($"$d{i}", daIds[i]);
-        int count = cmd.ExecuteNonQuery();
+
+        // Chunk the IN(...) so a very large leaf (tens of thousands of artifacts) never exceeds SQLite's
+        // per-statement variable limit. All chunks run in ONE transaction, so the update stays atomic; each id
+        // lands in exactly one chunk and the UPDATE is keyed on the PK, so the rows changed and the returned
+        // total are identical to the single-statement form regardless of chunking.
+        int count = 0;
+        foreach (var chunk in daIds.Chunk(SqlInBatchSize))
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            var dp = string.Join(",", Enumerable.Range(0, chunk.Length).Select(i => $"$d{i}"));
+            cmd.CommandText = $"UPDATE derived_artifacts SET status = $status WHERE id IN ({dp})";
+            cmd.Parameters.AddWithValue("$status", status);
+            for (int i = 0; i < chunk.Length; i++)
+                cmd.Parameters.AddWithValue($"$d{i}", chunk[i]);
+            count += cmd.ExecuteNonQuery();
+        }
+
         tx.Commit();
         return count;
     }
@@ -1164,36 +1182,44 @@ public sealed class DatLineStore
     {
         if (daIds.Count == 0) return 0;
 
-        var dp = string.Join(",", Enumerable.Range(0, daIds.Count).Select(i => $"$d{i}"));
         using var conn = Open();
         using var tx   = conn.BeginTransaction();
 
-        // Find all release IDs affected by these derived artifacts.
-        var releaseIds = new List<string>();
-        using (var findCmd = conn.CreateCommand())
+        // Find all release IDs affected by these derived artifacts. Chunk the da.id IN(...) so a very large leaf
+        // never exceeds SQLite's per-statement variable limit; a HashSet reproduces the single-statement DISTINCT
+        // across chunk boundaries (each affected release is found exactly once, order-independent).
+        var releaseSet = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var chunk in daIds.Chunk(SqlInBatchSize))
         {
+            using var findCmd = conn.CreateCommand();
             findCmd.Transaction = tx;
+            var dp = string.Join(",", Enumerable.Range(0, chunk.Length).Select(i => $"$d{i}"));
             findCmd.CommandText = $"""
                 SELECT DISTINCT rcl.release_id
                 FROM release_content_links rcl
                 JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
                 WHERE da.id IN ({dp})
                 """;
-            for (int i = 0; i < daIds.Count; i++)
-                findCmd.Parameters.AddWithValue($"$d{i}", daIds[i]);
+            for (int i = 0; i < chunk.Length; i++)
+                findCmd.Parameters.AddWithValue($"$d{i}", chunk[i]);
             using var rf = findCmd.ExecuteReader();
-            while (rf.Read()) releaseIds.Add(rf.GetString(0));
+            while (rf.Read()) releaseSet.Add(rf.GetString(0));
         }
 
-        if (releaseIds.Count == 0) { tx.Commit(); return 0; }
+        if (releaseSet.Count == 0) { tx.Commit(); return 0; }
 
-        // For each affected release determine whether ALL its linked artifacts are 'present'.
-        var rp = string.Join(",", Enumerable.Range(0, releaseIds.Count).Select(i => $"$r{i}"));
+        // For each affected release determine whether ALL its linked artifacts are 'present'. Chunk the outer
+        // id IN(...) too; the CASE sub-selects are correlated on releases.id (they scan the FULL link/artifact
+        // tables, not the param list), so each release lands in exactly one chunk and is recomputed identically
+        // to the single-statement form. Sum the per-chunk row counts.
+        var releaseIds = releaseSet.ToList();
         int updated = 0;
-        using (var updCmd = conn.CreateCommand())
+        foreach (var chunk in releaseIds.Chunk(SqlInBatchSize))
         {
+            using var updCmd = conn.CreateCommand();
             updCmd.Transaction = tx;
-            // Single UPDATE: compute new status inline via correlated sub-selects.
+            var rp = string.Join(",", Enumerable.Range(0, chunk.Length).Select(i => $"$r{i}"));
+            // Single UPDATE per chunk: compute new status inline via correlated sub-selects.
             updCmd.CommandText = $"""
                 UPDATE releases
                 SET status = CASE
@@ -1228,9 +1254,9 @@ public sealed class DatLineStore
                 WHERE id IN ({rp})
                   AND status NOT IN ('outdated', 'pending', 'unwanted')
                 """;
-            for (int i = 0; i < releaseIds.Count; i++)
-                updCmd.Parameters.AddWithValue($"$r{i}", releaseIds[i]);
-            updated = updCmd.ExecuteNonQuery();
+            for (int i = 0; i < chunk.Length; i++)
+                updCmd.Parameters.AddWithValue($"$r{i}", chunk[i]);
+            updated += updCmd.ExecuteNonQuery();
         }
 
         tx.Commit();
@@ -1665,44 +1691,49 @@ public sealed class DatLineStore
         var result         = new Dictionary<string, List<(string, string)>>(StringComparer.Ordinal);
         var seenPerRelease = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
 
-        using var conn = Open();
-        using var cmd  = conn.CreateCommand();
-
         var ids = releaseIds as IList<string> ?? releaseIds.ToList();
         if (ids.Count == 0) return result;
 
-        var placeholders = string.Join(",",
-            Enumerable.Range(0, ids.Count).Select(i => $"$r{i}"));
-        cmd.CommandText = $"""
-            SELECT rcl.release_id, da.id, da.content_identity_key
-            FROM release_content_links rcl
-            JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
-            WHERE rcl.release_id IN ({placeholders})
-            ORDER BY rcl.release_id, da.id
-            """;
-        for (int i = 0; i < ids.Count; i++)
-            cmd.Parameters.AddWithValue($"$r{i}", ids[i]);
+        using var conn = Open();
 
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
+        // Chunk the IN(...) so a very large leaf (tens of thousands of releases) never exceeds SQLite's
+        // per-statement variable limit. Each release id lands in exactly one chunk, so the per-release
+        // grouping, per-release dedup, and per-release da.id ordering are IDENTICAL to the single-statement form.
+        foreach (var chunk in ids.Chunk(SqlInBatchSize))
         {
-            var releaseId = r.GetString(0);
-            var daId      = r.GetString(1);
-            var ck        = r.GetString(2);
+            using var cmd = conn.CreateCommand();
+            var placeholders = string.Join(",", Enumerable.Range(0, chunk.Length).Select(i => $"$r{i}"));
+            cmd.CommandText = $"""
+                SELECT rcl.release_id, da.id, da.content_identity_key
+                FROM release_content_links rcl
+                JOIN derived_artifacts da ON da.content_identity_key = rcl.content_identity_key
+                WHERE rcl.release_id IN ({placeholders})
+                ORDER BY rcl.release_id, da.id
+                """;
+            for (int i = 0; i < chunk.Length; i++)
+                cmd.Parameters.AddWithValue($"$r{i}", chunk[i]);
 
-            if (!seenPerRelease.TryGetValue(releaseId, out var seen))
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
             {
-                seen = new HashSet<string>(StringComparer.Ordinal);
-                seenPerRelease[releaseId] = seen;
-            }
-            if (!seen.Add(daId)) continue;
+                var releaseId = r.GetString(0);
+                var daId      = r.GetString(1);
+                var ck        = r.GetString(2);
 
-            if (!result.TryGetValue(releaseId, out var list))
-            {
-                list = [];
-                result[releaseId] = list;
+                if (!seenPerRelease.TryGetValue(releaseId, out var seen))
+                {
+                    seen = new HashSet<string>(StringComparer.Ordinal);
+                    seenPerRelease[releaseId] = seen;
+                }
+                if (!seen.Add(daId)) continue;
+
+                if (!result.TryGetValue(releaseId, out var list))
+                {
+                    list = [];
+                    result[releaseId] = list;
+                }
+                list.Add((daId, ck));
             }
-            list.Add((daId, ck));
         }
 
         return result;
@@ -1720,39 +1751,48 @@ public sealed class DatLineStore
         var result   = new List<ArtifactVerifyInfo>(ids.Count);
         var seenDaId = new HashSet<string>(StringComparer.Ordinal);
 
-        var placeholders = string.Join(",",
-            Enumerable.Range(0, ids.Count).Select(i => $"$d{i}"));
-
         using var conn = Open();
-        using var cmd  = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT da.id, r.name, da.file_name, da.derived_size_bytes, da.hashed_derived_sha1, da.relative_path
-            FROM derived_artifacts da
-            JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
-            JOIN releases              r   ON r.id = rcl.release_id
-            WHERE da.id IN ({placeholders})
-            ORDER BY r.name, da.file_name
-            """;
-        for (int i = 0; i < ids.Count; i++)
-            cmd.Parameters.AddWithValue($"$d{i}", ids[i]);
 
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
+        // Chunk the IN(...) so a very large leaf never exceeds SQLite's per-statement variable limit. Each da.id
+        // lands in exactly one chunk (global dedup via seenDaId); the ORDER BY only sorts within a chunk, so the
+        // merged list is re-sorted below to reproduce the single-statement global (r.name, da.file_name) order
+        // (Ordinal matches SQLite's default BINARY collation).
+        foreach (var chunk in ids.Chunk(SqlInBatchSize))
         {
-            var daId = r.GetString(0);
-            if (!seenDaId.Add(daId)) continue;
-            result.Add(new ArtifactVerifyInfo
+            using var cmd = conn.CreateCommand();
+            var placeholders = string.Join(",", Enumerable.Range(0, chunk.Length).Select(i => $"$d{i}"));
+            cmd.CommandText = $"""
+                SELECT da.id, r.name, da.file_name, da.derived_size_bytes, da.hashed_derived_sha1, da.relative_path
+                FROM derived_artifacts da
+                JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
+                JOIN releases              r   ON r.id = rcl.release_id
+                WHERE da.id IN ({placeholders})
+                ORDER BY r.name, da.file_name
+                """;
+            for (int i = 0; i < chunk.Length; i++)
+                cmd.Parameters.AddWithValue($"$d{i}", chunk[i]);
+
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
             {
-                DerivedArtifactId = daId,
-                ReleaseName       = r.GetString(1),
-                FileName          = r.GetString(2),
-                SizeBytes         = r.GetInt64(3),
-                Sha1              = r.GetString(4),
-                RelativePath      = r.IsDBNull(5) ? "" : r.GetString(5),
-            });
+                var daId = r.GetString(0);
+                if (!seenDaId.Add(daId)) continue;
+                result.Add(new ArtifactVerifyInfo
+                {
+                    DerivedArtifactId = daId,
+                    ReleaseName       = r.GetString(1),
+                    FileName          = r.GetString(2),
+                    SizeBytes         = r.GetInt64(3),
+                    Sha1              = r.GetString(4),
+                    RelativePath      = r.IsDBNull(5) ? "" : r.GetString(5),
+                });
+            }
         }
 
-        return result;
+        return result
+            .OrderBy(x => x.ReleaseName, StringComparer.Ordinal)
+            .ThenBy(x => x.FileName,    StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>
@@ -2002,40 +2042,49 @@ public sealed class DatLineStore
         var result   = new List<ArtifactBuildInfo>(ids.Count);
         var seenDaId = new HashSet<string>(StringComparer.Ordinal);
 
-        var placeholders = string.Join(",",
-            Enumerable.Range(0, ids.Count).Select(i => $"$d{i}"));
-
         using var conn = Open();
-        using var cmd  = conn.CreateCommand();
-        cmd.CommandText = $"""
-            SELECT da.id, r.name, da.file_name, da.relative_path, da.derived_size_bytes,
-                   da.hashed_derived_sha1
-            FROM derived_artifacts da
-            JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
-            JOIN releases              r   ON r.id = rcl.release_id
-            WHERE da.id IN ({placeholders})
-            ORDER BY r.name, da.file_name
-            """;
-        for (int i = 0; i < ids.Count; i++)
-            cmd.Parameters.AddWithValue($"$d{i}", ids[i]);
 
-        using var r = cmd.ExecuteReader();
-        while (r.Read())
+        // Chunk the IN(...) so a very large leaf never exceeds SQLite's per-statement variable limit. Each da.id
+        // lands in exactly one chunk (global dedup via seenDaId); the ORDER BY only sorts within a chunk, so the
+        // merged list is re-sorted below to reproduce the single-statement global (r.name, da.file_name) order
+        // (Ordinal matches SQLite's default BINARY collation).
+        foreach (var chunk in ids.Chunk(SqlInBatchSize))
         {
-            var daId = r.GetString(0);
-            if (!seenDaId.Add(daId)) continue;
-            result.Add(new ArtifactBuildInfo
+            using var cmd = conn.CreateCommand();
+            var placeholders = string.Join(",", Enumerable.Range(0, chunk.Length).Select(i => $"$d{i}"));
+            cmd.CommandText = $"""
+                SELECT da.id, r.name, da.file_name, da.relative_path, da.derived_size_bytes,
+                       da.hashed_derived_sha1
+                FROM derived_artifacts da
+                JOIN release_content_links rcl ON rcl.content_identity_key = da.content_identity_key
+                JOIN releases              r   ON r.id = rcl.release_id
+                WHERE da.id IN ({placeholders})
+                ORDER BY r.name, da.file_name
+                """;
+            for (int i = 0; i < chunk.Length; i++)
+                cmd.Parameters.AddWithValue($"$d{i}", chunk[i]);
+
+            using var r = cmd.ExecuteReader();
+            while (r.Read())
             {
-                DerivedArtifactId = daId,
-                ReleaseName       = r.GetString(1),
-                FileName          = r.GetString(2),
-                RelativePath      = r.GetString(3),
-                SizeBytes         = r.GetInt64(4),
-                ExpectedSha1      = r.GetString(5),
-            });
+                var daId = r.GetString(0);
+                if (!seenDaId.Add(daId)) continue;
+                result.Add(new ArtifactBuildInfo
+                {
+                    DerivedArtifactId = daId,
+                    ReleaseName       = r.GetString(1),
+                    FileName          = r.GetString(2),
+                    RelativePath      = r.GetString(3),
+                    SizeBytes         = r.GetInt64(4),
+                    ExpectedSha1      = r.GetString(5),
+                });
+            }
         }
 
-        return result;
+        return result
+            .OrderBy(x => x.ReleaseName, StringComparer.Ordinal)
+            .ThenBy(x => x.FileName,    StringComparer.Ordinal)
+            .ToList();
     }
 
     private static string SafeFileName(string name)

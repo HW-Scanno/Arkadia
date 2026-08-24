@@ -3945,6 +3945,9 @@ public partial class MainWindow : Window
 
         Volumes.VolumeVerifyResult? result = null;
         string? errorMessage = null;
+        // True when a Group INIT volume went through GroupVolumeRecoveryService (which already applied the
+        // volume-level lifecycle writes) — the shared post-verify block must then not write status/health again.
+        bool groupRecoveryHandled = false;
 
         // Progress handlers on the UI thread so callbacks are dispatched there.
         // found-file fires during the recursive scan; verify-progress fires during
@@ -3976,12 +3979,25 @@ public partial class MainWindow : Window
                     var volume = _catalog.GetVolumeById(entry.Id)
                         ?? throw new InvalidOperationException($"Volume \"{entry.Label}\" no longer exists.");
                     var leaves  = _catalog.GetLeavesForGroup(entry.GroupId!);
-                    var outcome = Volumes.GroupVolumeVerifyOrchestrator.Verify(
-                        _catalog, _dataDir, volume, volumeRoot!, leaves, allDbPaths,
-                        foundFileProgress, verifyProgress, leafProgress);
 
-                    if (outcome.BlockReason is not null) errorMessage = outcome.BlockReason;
-                    else                                 result       = outcome.Result;
+                    if (volume.Status == "init")
+                    {
+                        // Stuck-INIT volume = an Apply & Build whose finalization was interrupted. Verify every leaf
+                        // with the SAME engine and, only if the whole volume is hash-healthy, finalize init→present.
+                        var rec = Volumes.GroupVolumeRecoveryService.Recover(
+                            _catalog, _dataDir, appRoot, volume, volumeRoot!, entry.DiskId, leaves, allDbPaths,
+                            foundFileProgress, verifyProgress, leafProgress);
+                        if (rec.BlockReason is not null) errorMessage = rec.BlockReason;
+                        else { result = rec.Verify; groupRecoveryHandled = true; }
+                    }
+                    else
+                    {
+                        var outcome = Volumes.GroupVolumeVerifyOrchestrator.Verify(
+                            _catalog, _dataDir, volume, volumeRoot!, leaves, allDbPaths,
+                            foundFileProgress, verifyProgress, leafProgress);
+                        if (outcome.BlockReason is not null) errorMessage = outcome.BlockReason;
+                        else                                 result       = outcome.Result;
+                    }
                 }
                 else
                 {
@@ -4002,7 +4018,13 @@ public partial class MainWindow : Window
         {
             bool allHealthy = result.IsHealthy;
 
-            if (wasLost && allHealthy)
+            if (groupRecoveryHandled)
+            {
+                // GroupVolumeRecoveryService already applied the volume-level lifecycle writes for this INIT volume
+                // (init→present + current location on full health, or health=crit when materially unsatisfied).
+                // Nothing more to write here — fall through to the shared UI refresh below.
+            }
+            else if (wasLost && allHealthy)
             {
                 _catalog.UpdateVolumeStatus(entry.Id, "present");
                 _catalog.UpdateVolumeHealth(entry.Id, "ok");
