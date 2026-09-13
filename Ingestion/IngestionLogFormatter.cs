@@ -44,6 +44,11 @@ public static class IngestionLogFormatter
                 if (op.Action == "transform-failed"       ||
                     op.Action == "transform-config-error" ||
                     op.Action == "incomplete-skipped"     ||
+                    op.Action == "requirement-unsatisfiable" ||
+                    op.Action == "empty-synthesis-failed" ||
+                    op.Action == "file-commit-failed"     ||
+                    op.Action == "verify-failed"          ||
+                    op.Action == "release-commit-failed"  ||
                     op.Action == "archive-collision"      ||
                     op.Action == "archive-validation-blocked")
                     sb.AppendLine($"  {op.Object,-50} | {op.Action,-22} | {op.Destination}");

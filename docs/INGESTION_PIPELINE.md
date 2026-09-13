@@ -108,6 +108,12 @@ Each step emits an `IngestionOperation` with an action key. Current action keys:
 | `archive-validation-blocked` | Ingestion aborted by the archive-output gate (collision_unresolved / stale) |
 | `transform-failed` | Transform failed (raw source is retained for recovery) |
 | `incomplete-skipped` | Release could not be completed (missing expected files) |
+| `empty-synthesized` | An authoritative DAT requirement declaring `size="0"` with **no** CRC/MD5/SHA1 was generated as an empty file in `staging` and verified to be 0 bytes (only for `missing` releases; never overwrites an existing file) |
+| `empty-synthesis-failed` | An authoritative empty requirement could not be synthesized/verified (unexpected existing file, unsafe path, I/O error, or release not `missing`) — the release stays incomplete |
+| `requirement-unsatisfiable` | The release has a requirement no ingestion path can satisfy: no SHA1/MD5 without an explicit `size="0"` (incl. CRC-only), or `size="0"` with hashes that are not the empty-file hashes — the release stays incomplete |
+| `file-commit-failed` | A required file could not be committed under the file-oriented strategy (no extension mapping, mapped transform missing, or no usable identity) — the release is **not** marked present |
+| `verify-failed` | A promoted source file failed verification against its DAT requirement (SHA1 mismatch, or a non-empty file for a `size="0"` requirement) — the release is **not** marked present |
+| `release-commit-failed` | Defense-in-depth: not every required file of the release was committed or discarded by strategy — the release is **not** marked present |
 | `delete` | Incoming source file removed after successful staging/transform |
 | `archive-deleted` | Extracted archive container deleted after successful extraction |
 | `skip` / `skip-failed` | Unmatched file moved (or failed to move) to `incoming-skip` |

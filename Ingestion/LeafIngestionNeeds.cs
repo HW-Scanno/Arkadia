@@ -59,6 +59,10 @@ public sealed class LeafIngestionNeeds
             if (!releases.ContainsKey(releaseId)) continue;
             foreach (var f in files)
             {
+                // Only hash-identifiable physical requirements are matchable. Synthesizable empty files are generated
+                // at finalization; unmatchable / contradictory zero-byte requirements must never consume incoming.
+                if (DatFileRequirement.Classify(f) != DatFileRequirementKind.Physical) continue;
+
                 if (f.Sha1.Length > 0)
                 {
                     if (!sha1Index.TryGetValue(f.Sha1, out var sl)) { sl = new(); sha1Index[f.Sha1] = sl; }

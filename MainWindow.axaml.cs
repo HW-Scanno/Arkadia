@@ -10498,13 +10498,18 @@ public partial class MainWindow : Window
         // interrupted before its derived artifact was produced. Detect it here
         // (read-only) and route it through Phase 7 below. Runs even when incoming
         // is empty, so a resume can complete without re-dropping the raw files.
+        // Authoritative zero-byte hashless requirements are passed so a 'missing' release whose remaining work is
+        // only empty-file synthesis (incl. a release made entirely of such files) is finalized in this explicit run.
         var resumable = Ingestion.ResumableStagingDetector.Detect(
             stagingRoot,
-            allReleasesList.Select(r => new Ingestion.ResumeReleaseInput(
-                r.Id, r.Name, r.Status,
-                allReleaseFiles.TryGetValue(r.Id, out var rf)
-                    ? rf.Select(f => f.RomName).ToList()
-                    : new List<string>())).ToList());
+            allReleasesList.Select(r =>
+            {
+                var rf = allReleaseFiles.TryGetValue(r.Id, out var files) ? files : new List<ReleaseFileRecord>();
+                return new Ingestion.ResumeReleaseInput(
+                    r.Id, r.Name, r.Status,
+                    rf.Select(f => f.RomName).ToList(),
+                    rf.Where(Ingestion.DatFileRequirement.IsSynthesizableEmpty).Select(f => f.RomName).ToList());
+            }).ToList());
 
         // Nothing to ingest and nothing to resume → done.
         if (sourceFiles.Count == 0 && resumable.ResumableReleaseIds.Count == 0)
@@ -10991,6 +10996,19 @@ public partial class MainWindow : Window
         IProgress<IngestionProgress>                  progress,
         HashSet<string>                               transformFailedReleases)
     {
+        // INVARIANT: a required file that cannot be committed under this strategy is a HARD release failure. It is
+        // never silently skipped while the release goes on to become 'present'. Every non-committed, non-discarded
+        // required file registers the release in transformFailedReleases with an explicit reason; `accounted` is a
+        // final belt-and-braces check that every expected file was committed or intentionally discarded.
+        int accounted = 0;
+        void FailFile(ReleaseFileRecord file, string action, string reason)
+        {
+            transformFailedReleases.Add(releaseId);
+            var failOp = new IngestionOperation(file.RomName, action, reason);
+            result.Operations.Add(failOp);
+            progress.Report(new IngestionProgress { NewOperation = failOp });
+        }
+
         foreach (var f in expectedFiles)
         {
             // ── Strategy dispatch: resolve effective transform for this file ──
@@ -11009,10 +11027,8 @@ public partial class MainWindow : Window
 
                 if (!extMappingDict.TryGetValue(fileExt, out var mapping))
                 {
-                    var skipOp = new IngestionOperation(f.RomName, "skipped-no-strategy",
-                        $"No transform mapping for extension {fileExt}");
-                    result.Operations.Add(skipOp);
-                    progress.Report(new IngestionProgress { NewOperation = skipOp });
+                    FailFile(f, "file-commit-failed",
+                        $"No transform mapping for extension {fileExt} — required file cannot be committed");
                     continue;
                 }
 
@@ -11031,10 +11047,8 @@ public partial class MainWindow : Window
                     var mappedXform = allTransforms.FirstOrDefault(t => t.Id == mapping.TransformId);
                     if (mappedXform == null)
                     {
-                        var skipOp = new IngestionOperation(f.RomName, "skipped-transform-missing",
-                            $"Mapped transform '{mapping.TransformId}' not found for extension {fileExt}");
-                        result.Operations.Add(skipOp);
-                        progress.Report(new IngestionProgress { NewOperation = skipOp });
+                        FailFile(f, "file-commit-failed",
+                            $"Mapped transform '{mapping.TransformId}' not found for extension {fileExt} — required file cannot be committed");
                         continue;
                     }
 
@@ -11054,19 +11068,16 @@ public partial class MainWindow : Window
             long fileSize      = 0;
             try { fileSize = new FileInfo(sourceFilePath).Length; } catch { }
 
-            // content_identity_key = DAT-declared logical identity (never from hashing)
-            var ck = f.Sha1.Length > 0 ? $"sha1:{f.Sha1}"
-                   : f.Md5.Length  > 0 ? $"md5:{f.Md5}"
-                   : "";
-
-            if (ck.Length == 0)
+            // content_identity_key = DAT-declared logical identity (never from hashing). Physical files keep the
+            // historical sha1:/md5: key; an authoritative hashless zero-byte file gets a RELEASE-SCOPED key (never
+            // the shared empty-file hash); a file with no usable identity is a hard release failure, never a skip.
+            var identity = Ingestion.FileCommitIdentityPolicy.Resolve(releaseId, f);
+            if (!identity.CanCommit)
             {
-                // No DAT checksum — cannot establish logical identity; skip this file.
-                var skipOp = new IngestionOperation(f.RomName, "skipped-no-checksum", "DAT provides no SHA1 or MD5");
-                result.Operations.Add(skipOp);
-                progress.Report(new IngestionProgress { NewOperation = skipOp });
+                FailFile(f, "file-commit-failed", identity.FailureReason);
                 continue;
             }
+            var ck = identity.ContentIdentityKey;
 
             try
             {
@@ -11083,15 +11094,13 @@ public partial class MainWindow : Window
                 // ── 2. Hash source file physically (SHA1 + MD5 + CRC32 in one pass) ──
                 var (hashedSha1, hashedMd5, hashedCrc32) = ComputeSourceHashes(sourceFilePath);
 
-                // Verify: if DAT has SHA1, hashed must match.
-                // If DAT has only MD5/CRC32, SHA1 is still recorded as physical proof.
-                if (f.Sha1.Length > 0 &&
-                    !string.Equals(hashedSha1, f.Sha1, StringComparison.OrdinalIgnoreCase))
+                // Verify against the DAT requirement before any provenance/derived commit: a DAT SHA1 must match
+                // (if DAT has only MD5/CRC32, SHA1 is still recorded as physical proof); an authoritative size-0
+                // requirement must be exactly 0 bytes. A failure fails the RELEASE (never a silent continue).
+                var verifyError = Ingestion.FileCommitIdentityPolicy.VerifySource(f, identity.Kind, fileSize, hashedSha1);
+                if (verifyError is not null)
                 {
-                    var failOp = new IngestionOperation(f.RomName, "verify-failed",
-                        $"SHA1 mismatch: expected {f.Sha1[..8]}… got {hashedSha1[..8]}…");
-                    result.Operations.Add(failOp);
-                    progress.Report(new IngestionProgress { NewOperation = failOp });
+                    FailFile(f, "verify-failed", verifyError);
                     continue;
                 }
 
@@ -11117,6 +11126,7 @@ public partial class MainWindow : Window
                     var discardOp = new IngestionOperation(f.RomName, "discarded-by-strategy", discardReason);
                     result.Operations.Add(discardOp);
                     progress.Report(new IngestionProgress { NewOperation = discardOp });
+                    accounted++;   // intentionally covered by the strategy (verified source provenance recorded)
                     continue;
                 }
 
@@ -11203,11 +11213,18 @@ public partial class MainWindow : Window
                 // ── 8. Remove source file — derived artifact is valid ──────
                 // Only delete when the derived artifact was actually produced
                 // with non-zero size; leave the source intact on any failure path.
-                if (derivedSizeBytes > 0)
+                // An authoritative size-0 requirement legitimately yields a 0-byte derived file (e.g. No Compression):
+                // its source was verified 0 bytes above and the derived file exists and was hashed/committed, so the
+                // (empty) source may be removed too — otherwise it would linger in the transform-input area.
+                bool verifiedEmptyOutput = identity.Kind == Ingestion.DatFileRequirementKind.SynthesizableEmpty
+                                           && fileSize == 0 && derivedSizeBytes == 0 && File.Exists(destPath);
+                if (derivedSizeBytes > 0 || verifiedEmptyOutput)
                 {
                     try { File.Delete(sourceFilePath); }
                     catch { /* best-effort; leave file if OS denies deletion */ }
                 }
+
+                accounted++;
             }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
@@ -11217,6 +11234,18 @@ public partial class MainWindow : Window
                 result.Operations.Add(failOp);
                 progress.Report(new IngestionProgress { NewOperation = failOp });
             }
+        }
+
+        // Belt-and-braces: every required file must have been committed or intentionally discarded by strategy.
+        // Any gap (including any future `continue` path) is a hard release failure — never a partial 'present'.
+        if (!Ingestion.FileCommitIdentityPolicy.IsReleaseFullyAccountedFor(expectedFiles.Count, accounted)
+            && !transformFailedReleases.Contains(releaseId))
+        {
+            transformFailedReleases.Add(releaseId);
+            var gapOp = new IngestionOperation(safeFolder, "release-commit-failed",
+                $"{accounted} of {expectedFiles.Count} required file(s) committed — release not marked present");
+            result.Operations.Add(gapOp);
+            progress.Report(new IngestionProgress { NewOperation = gapOp });
         }
     }
 

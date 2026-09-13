@@ -50,6 +50,8 @@ public partial class GroupIngestionPlanDialog : Window
         AddCount("Leaves requiring work", plan.InScopeLeafCount.ToString("N0"));
         AddCount("Already satisfied", plan.SatisfiedLeafCount.ToString("N0"));
         AddCount("Missing targets", plan.MissingTargetCount.ToString("N0"));
+        AddCount("Zero-byte files to synthesize", plan.SynthesizableEmptyTargetCount.ToString("N0"));
+        AddCount("Unsatisfiable requirements", plan.UnsatisfiableTargetCount.ToString("N0"));
         AddCount("Resumable releases", plan.ResumableCount.ToString("N0"));
         AddCount("File Handling", plan.FileHandling switch
         {
@@ -61,12 +63,19 @@ public partial class GroupIngestionPlanDialog : Window
         AddCount("Incoming — loose files", plan.IncomingInspection.LooseFiles.ToString("N0"));
         AddCount("Incoming — archive containers", plan.IncomingInspection.ArchiveContainers.ToString("N0"));
 
-        if (plan.Diagnostics.Length > 0)
+        // Blocking diagnostics first, then non-blocking notices (synthesizable / unmatchable / contradictory
+        // requirements) — notices never change readiness, but they are never silent.
+        var lines = plan.Diagnostics.Select(d =>
+                d.DatLineId.Length > 0 ? $"{d.DatLineId}:  {d.Reason}" : d.Reason)
+            .Concat(plan.Notices.Select(n =>
+                $"[{(n.Severity == GroupPlanNoticeSeverity.Warning ? "WARNING" : "INFO")}] " +
+                (n.DatLineId.Length > 0 ? $"{n.DatLineId}:  {n.Message}" : n.Message)))
+            .ToList();
+        if (lines.Count > 0)
         {
             DiagnosticsTitle.IsVisible = true;
             DiagnosticsBox.IsVisible   = true;
-            DiagnosticsBox.Text = string.Join("\n", plan.Diagnostics.Select(d =>
-                d.DatLineId.Length > 0 ? $"{d.DatLineId}:  {d.Reason}" : d.Reason));
+            DiagnosticsBox.Text = string.Join("\n", lines);
         }
     }
 

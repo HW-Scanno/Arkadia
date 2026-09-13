@@ -73,6 +73,8 @@ public partial class IngestionProgressDialog : Window
         if (action == "hash"               && FilterHash.IsChecked      == true) return true;
         if (action == "copy"               && FilterCopy.IsChecked      == true) return true;
         if (action == "stage-moved"        && FilterCopy.IsChecked      == true) return true;
+        // authoritative zero-byte requirement generated + verified in staging (a staging materialization)
+        if (action == "empty-synthesized"  && FilterCopy.IsChecked      == true) return true;
         if (action == "delete"             && FilterDelete.IsChecked    == true) return true;
         // "release-input-assembled" = staging → source (was "source-promoted")
         if (action == "release-input-assembled" && FilterSource.IsChecked == true) return true;
@@ -93,14 +95,16 @@ public partial class IngestionProgressDialog : Window
         if (action == "incomplete-skipped"         && FilterFailed.IsChecked == true) return true;
         if (action == "archive-collision"          && FilterFailed.IsChecked == true) return true;
         if (action == "archive-validation-blocked" && FilterFailed.IsChecked == true) return true;
+        if (action == "requirement-unsatisfiable"  && FilterFailed.IsChecked == true) return true;
         if (action.EndsWith("-failed")     && FilterFailed.IsChecked    == true) return true;
         // catch-all (e.g. discarded-by-strategy, archive-deleted, unrecognized) — bucket with Skip
         if (action != "hash" && action != "copy" && action != "stage-moved" && action != "delete"
+            && action != "empty-synthesized"
             && action != "release-input-assembled" && action != "transform"
             && action != "derived-committed" && action != "already-present"
             && action != "rebuild-required" && action != "stale-artifact-overwritten"
             && action != "incomplete-skipped" && action != "archive-collision"
-            && action != "archive-validation-blocked"
+            && action != "archive-validation-blocked" && action != "requirement-unsatisfiable"
             && !action.EndsWith("-failed")
             && FilterSkip.IsChecked == true) return true;
         return false;

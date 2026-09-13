@@ -19,6 +19,12 @@ public sealed record GroupIngestionPlanProgress(string PhaseText, int LeafIndex,
 /// cross-leaf aggregate SHA1/MD5 indexes of required targets, and inspects incoming names/counts. It never
 /// pre-extracts, hashes incoming, stages, promotes, transforms, or writes catalog/leaf DBs. A missing leaf
 /// DB is never created (File.Exists gate before any store construction).
+///
+/// <para>Every not-yet-secured required file is kept as an authoritative <see cref="GroupRequiredTarget"/> with its
+/// <see cref="DatFileRequirementKind"/>. Only physical targets enter the aggregate indexes and count toward scope;
+/// synthesizable empty files are generated at finalization (their releases are routed via resumable detection when
+/// no physical work remains); unmatchable / contradictory requirements are surfaced as non-blocking notices so a
+/// plan never silently presents impossible-to-match work as ingestible.</para>
 /// </summary>
 public static class GroupIngestionPlanner
 {
@@ -42,6 +48,7 @@ public static class GroupIngestionPlanner
         var expectedLeafIds = orderedLeaves.Select(l => l.DatLine.Id).ToImmutableArray();
 
         var diagnostics   = new List<GroupLeafDiagnostic>();
+        var notices       = new List<GroupPlanNotice>();
         var preparedLeaves = new List<GroupPreparedLeaf>();
         var requiredTargets = new List<GroupRequiredTarget>();
         var resumableReleases = new List<GroupResumableRelease>();
@@ -88,15 +95,22 @@ public static class GroupIngestionPlanner
             var stagingRoot = Path.Combine(appRoot, "staging", platformId, datLineId);
             var sourceRoot  = Path.Combine(appRoot, "source",  platformId, datLineId);
 
-            // Resumable complete-staging releases (Single semantics; read-only).
-            var resumeInputs = allReleases.Select(r => new ResumeReleaseInput(
-                r.Id, r.Name, r.Status,
-                allReleaseFiles.TryGetValue(r.Id, out var rf) ? rf.Select(f => f.RomName).ToList() : new List<string>())).ToList();
+            // Resumable complete-staging releases (Single semantics; read-only). Authoritative empty files are
+            // passed so a 'missing' release whose only remaining work is synthesis is resumable.
+            var resumeInputs = allReleases.Select(r =>
+            {
+                var rf = allReleaseFiles.TryGetValue(r.Id, out var files) ? files : new List<ReleaseFileRecord>();
+                return new ResumeReleaseInput(
+                    r.Id, r.Name, r.Status,
+                    rf.Select(f => f.RomName).ToList(),
+                    rf.Where(DatFileRequirement.IsSynthesizableEmpty).Select(f => f.RomName).ToList());
+            }).ToList();
             var resumable = ResumableStagingDetector.Detect(stagingRoot, resumeInputs);
 
             // Required targets = wanted ROMs of non-satisfied releases that are not already secured
             // (DB-authoritative satisfaction; else per-ROM staging/source checks — verbatim Single rules).
             var leafRequired = new List<GroupRequiredTarget>();
+            int synthesizableCount = 0, synthesisNotPermittedCount = 0, unmatchableCount = 0, contradictoryCount = 0;
             foreach (var release in releases.Values)
             {
                 if (release.Status == "unwanted") continue;
@@ -110,12 +124,29 @@ public static class GroupIngestionPlanner
                 {
                     if (RomSecured(stagingRoot, sourceRoot, safeFolder, f, release.Status)) continue;
                     long sz = long.TryParse(f.Size, out var s) && s > 0 ? s : 0;
+                    var kind = DatFileRequirement.Classify(f);
                     leafRequired.Add(new GroupRequiredTarget(
-                        new GroupMatchTarget(datLineId, release.Id, f.RomName), release.Name, sz, f.Sha1, f.Md5));
+                        new GroupMatchTarget(datLineId, release.Id, f.RomName), release.Name, sz, f.Sha1, f.Md5, kind));
+
+                    switch (kind)
+                    {
+                        case DatFileRequirementKind.SynthesizableEmpty:
+                            if (string.Equals(release.Status, "missing", StringComparison.OrdinalIgnoreCase)) synthesizableCount++;
+                            else synthesisNotPermittedCount++;
+                            break;
+                        case DatFileRequirementKind.Unmatchable:           unmatchableCount++;   break;
+                        case DatFileRequirementKind.ContradictoryZeroByte: contradictoryCount++; break;
+                    }
                 }
             }
 
-            bool inScope = leafRequired.Count > 0 || resumable.ResumableReleaseIds.Count > 0;
+            AddRequirementNotices(notices, datLineId,
+                synthesizableCount, synthesisNotPermittedCount, unmatchableCount, contradictoryCount);
+
+            // Scope counts only work that ingestion can actually perform: hash-matchable targets, or resumable
+            // finalization (which covers releases whose remaining requirements are synthesizable empty files).
+            int physicalCount = leafRequired.Count(t => t.Kind == DatFileRequirementKind.Physical);
+            bool inScope = physicalCount > 0 || resumable.ResumableReleaseIds.Count > 0;
 
             // Validate readiness ONLY for in-scope leaves (a satisfied leaf will never be finalized).
             if (inScope)
@@ -159,7 +190,7 @@ public static class GroupIngestionPlanner
             requiredTargets.AddRange(leafRequired);
             foreach (var rid in resumable.ResumableReleaseIds)
                 resumableReleases.Add(new GroupResumableRelease(datLineId, rid));
-            preparedLeaves.Add(new GroupPreparedLeaf(datLineId, dsp, leafRequired.Count, resumable.ResumableReleaseIds.Count));
+            preparedLeaves.Add(new GroupPreparedLeaf(datLineId, dsp, physicalCount, resumable.ResumableReleaseIds.Count));
         }
 
         // Uniform File Handling guard across IN-SCOPE leaves.
@@ -188,9 +219,10 @@ public static class GroupIngestionPlanner
             .ThenBy(d => d.Reason,     StringComparer.Ordinal)
             .ToImmutableArray();
 
+        int physicalTotal = orderedRequired.Count(t => t.Kind == DatFileRequirementKind.Physical);
         var readiness = orderedDiagnostics.Length > 0
             ? GroupIngestionReadiness.Blocked
-            : (orderedRequired.Length == 0 && resumableReleases.Count == 0
+            : (physicalTotal == 0 && resumableReleases.Count == 0
                 ? GroupIngestionReadiness.NothingToDo
                 : GroupIngestionReadiness.Ready);
 
@@ -210,7 +242,29 @@ public static class GroupIngestionPlanner
             IncomingInspection = incoming,
             Readiness          = readiness,
             Diagnostics        = orderedDiagnostics,
+            Notices            = notices
+                .OrderBy(n => n.DatLineId, StringComparer.Ordinal)
+                .ThenBy(n => n.Code,       StringComparer.Ordinal)
+                .ToImmutableArray(),
         };
+    }
+
+    private static void AddRequirementNotices(
+        List<GroupPlanNotice> notices, string datLineId,
+        int synthesizable, int notPermitted, int unmatchable, int contradictory)
+    {
+        if (synthesizable > 0)
+            notices.Add(new GroupPlanNotice(datLineId, GroupPlanNoticeSeverity.Info, GroupPlanNoticeCodes.SynthesizableEmpty,
+                $"{synthesizable} zero-byte file(s) with no DAT hashes will be synthesized and verified during finalization."));
+        if (notPermitted > 0)
+            notices.Add(new GroupPlanNotice(datLineId, GroupPlanNoticeSeverity.Warning, GroupPlanNoticeCodes.SynthesisNotPermitted,
+                $"{notPermitted} zero-byte file(s) with no DAT hashes belong to releases that are not 'missing' — they will not be synthesized."));
+        if (unmatchable > 0)
+            notices.Add(new GroupPlanNotice(datLineId, GroupPlanNoticeSeverity.Warning, GroupPlanNoticeCodes.UnmatchableRequirement,
+                $"{unmatchable} required file(s) have no SHA1/MD5 and do not declare size 0 — they cannot be matched; their releases will stay incomplete."));
+        if (contradictory > 0)
+            notices.Add(new GroupPlanNotice(datLineId, GroupPlanNoticeSeverity.Warning, GroupPlanNoticeCodes.ContradictoryZeroByte,
+                $"{contradictory} required file(s) declare size 0 with hashes that are not the empty-file hashes (contradictory DAT) — their releases will stay incomplete."));
     }
 
     private static bool RomSecured(string stagingRoot, string sourceRoot, string safeFolder, ReleaseFileRecord f, string releaseStatus)
@@ -263,6 +317,8 @@ public static class GroupIngestionPlanner
         var index = new Dictionary<string, List<GroupMatchTarget>>(StringComparer.OrdinalIgnoreCase);
         foreach (var t in targets)   // already deterministically ordered
         {
+            // Only hash-identifiable physical requirements may consume incoming material.
+            if (t.Kind != DatFileRequirementKind.Physical) continue;
             var h = hashSelector(t);
             if (h.Length == 0) continue;
             if (!index.TryGetValue(h, out var list)) { list = new(); index[h] = list; }
