@@ -22,6 +22,9 @@
                   Margin="0,0,0,4" SelectionChanged="OnConfigChanged"/>
         <TextBlock x:Name="FhCurrent" FontSize="11" Foreground="#555566" Margin="0,0,0,14"/>
 
+        <!-- Archive entries declared by the DATs (preventive, non-blocking; filled by an async read-only scan) -->
+        <StackPanel x:Name="ArchiveWarningPanel" Spacing="3" Margin="0,-6,0,14" IsVisible="False"/>
+
         <!-- Transform Strategy -->
         <TextBlock Text="TRANSFORM STRATEGY" FontSize="9" FontWeight="SemiBold" Foreground="#555566" Margin="0,0,0,6"/>
         <ComboBox x:Name="StratBox" MinWidth="220" FontSize="12"

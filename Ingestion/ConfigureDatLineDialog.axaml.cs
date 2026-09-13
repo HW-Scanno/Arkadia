@@ -36,6 +36,11 @@ public partial class ConfigureDatLineDialog : Window
     private string                      _releaseShape   = "unknown";
     private ReleaseShapeAnalysisResult? _shapeAnalysis;
 
+    // Archive files declared by this DAT (preventive notice next to File Handling). Computed ONCE from the release
+    // files already loaded below; File Handling changes only re-describe it. Never part of validation or Save.
+    private Ingestion.DatArchiveEntrySummary _archiveSummary     = Ingestion.DatArchiveEntrySummary.Empty;
+    private StackPanel                       _archiveWarningPanel = null!;
+
     public ConfigureDatLineDialog() : this(
         new DatLineInfo("", 0, ""), new CatalogService(""), "") { }
 
@@ -85,7 +90,12 @@ public partial class ConfigureDatLineDialog : Window
             if (File.Exists(absPath))
             {
                 var extDict  = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                var allFiles = new DatLineStore(absPath).LoadAllReleaseFiles();
+                var store    = new DatLineStore(absPath);
+                var allFiles = store.LoadAllReleaseFiles();
+
+                // Archive files declared by the DAT — computed ONCE from the same already-loaded release files (no DAT
+                // reparse, no rescans on UI changes). Only release names/statuses are added for examples + outdated filter.
+                _archiveSummary = Ingestion.DatArchiveEntrySummary.ForLeaf(_d.CatalogId ?? "", store.LoadReleases(), allFiles);
                 foreach (var files in allFiles.Values)
                     foreach (var f in files)
                     {
@@ -150,16 +160,27 @@ public partial class ConfigureDatLineDialog : Window
             Margin       = new Avalonia.Thickness(0, 0, 0, 4),
         };
 
+        // Archive-entry notice (preventive UX) directly below the File Handling note. It re-describes the cached
+        // summary for the selected mode only — never rescans, never touches _isConfigInvalid / Save / validation.
+        _archiveWarningPanel = new StackPanel { Spacing = 3, Margin = new Avalonia.Thickness(0, 6, 0, 4) };
+
         void UpdateFhNote()
         {
             fhNote.Text = _fhBox.SelectedIndex == 1
                 ? "All files in the incoming folder are matched directly — no archive extraction is performed."
                 : "Archives (.zip, .7z, .rar) are extracted before matching; the originals are deleted on success.";
+
+            ArchiveEntryWarningView.Render(_archiveWarningPanel,
+                Ingestion.DatArchiveEntryWarning.Describe(
+                    _archiveSummary,
+                    _fhBox.SelectedIndex == 1 ? "all_files" : "archives_pre_extraction",   // same mapping OnSave uses
+                    isGroup: false));
         }
 
         UpdateFhNote();
         _fhBox.SelectionChanged += (_, _) => UpdateFhNote();
         ContentPanel.Children.Add(fhNote);
+        ContentPanel.Children.Add(_archiveWarningPanel);
 
         ContentPanel.Children.Add(new Border
         {

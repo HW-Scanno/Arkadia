@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using Arkadia.Archive;
 using Arkadia.Data;
 using Arkadia.GroupDats;
+using Arkadia.Ingestion;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
@@ -18,6 +20,10 @@ namespace Arkadia;
 /// the individual <c>dat_lines</c> (overwrite-all). Validation is read-only and runs off the UI thread; the
 /// atomic apply is performed by the caller via <see cref="CatalogService.ApplyDatGroupConfiguration"/> using
 /// the frozen <see cref="Plan"/>. This dialog never mutates the catalog, leaf DBs, or the filesystem.
+///
+/// <para>On open, a read-only background scan summarizes the archive files the leaf DATs declare as authoritative
+/// entries; the cached summary drives a contextual notice next to File Handling. The notice is independent of
+/// Validate/Apply — it never resets validation, never blocks Apply, and never changes File Handling.</para>
 /// </summary>
 public partial class ConfigureGroupDialog : Window
 {
@@ -34,6 +40,11 @@ public partial class ConfigureGroupDialog : Window
     private static readonly string[] StratLabels = { "None", "Per release folder" };
 
     private GroupConfigurePlan? _validatedPlan;
+
+    // Archive-entry notice: computed once per dialog lifetime by an async read-only scan, then reused.
+    private readonly CancellationTokenSource _archiveScanCts = new();
+    private DatArchiveEntrySummary?          _archiveSummary;
+    private bool                             _archiveScanFailed;
 
     /// <summary>The frozen plan to apply; non-null only after a fully-clean validation and Apply.</summary>
     public GroupConfigurePlan? Plan { get; private set; }
@@ -76,6 +87,8 @@ public partial class ConfigureGroupDialog : Window
 
         UpdateFolderVisibility();
         ResetValidation("Choose a configuration, then Validate.");
+
+        StartArchiveEntryScan();
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
@@ -105,7 +118,11 @@ public partial class ConfigureGroupDialog : Window
     }
 
     // Any config change invalidates a prior validation — Apply must be re-earned.
-    private void OnConfigChanged(object? sender, SelectionChangedEventArgs e) => ResetValidation("Configuration changed — Validate again.");
+    private void OnConfigChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        ResetValidation("Configuration changed — Validate again.");
+        RenderArchiveWarning();   // contextual text only — reuses the cached summary, never rescans
+    }
 
     private void ResetValidation(string status)
     {
@@ -113,6 +130,52 @@ public partial class ConfigureGroupDialog : Window
         ApplyButton.IsEnabled   = false;
         ValidateSpinner.IsVisible = false;
         ValidateStatus.Text     = status;
+    }
+
+    // ── Archive-entry notice (async read-only scan, once per dialog) ────────
+
+    private void StartArchiveEntryScan()
+    {
+        if (_leaves.Count == 0) return;
+
+        var leaves  = _leaves.ToList();
+        var dataDir = _dataDir;
+        var token   = _archiveScanCts.Token;
+
+        ArchiveEntryWarningView.RenderStatus(ArchiveWarningPanel, $"Scanning DATs for archive entries… 0 / {leaves.Count}");
+        var progress = new Progress<int>(done =>
+        {
+            if (_archiveSummary is null && !_archiveScanFailed && !token.IsCancellationRequested)
+                ArchiveEntryWarningView.RenderStatus(ArchiveWarningPanel, $"Scanning DATs for archive entries… {done} / {leaves.Count}");
+        });
+
+        var work = System.Threading.Tasks.Task.Run(
+            () => GroupArchiveEntryScanner.Scan(leaves, dataDir, token, progress), token);
+
+        _ = work.ContinueWith(t => Dispatcher.UIThread.Post(() =>
+        {
+            if (token.IsCancellationRequested) return;   // dialog closed
+            if (t.IsCompletedSuccessfully) _archiveSummary    = t.Result;
+            else                           _archiveScanFailed = true;
+            RenderArchiveWarning();                       // display only — validation state is untouched
+        }), System.Threading.Tasks.TaskContinuationOptions.None);
+    }
+
+    private void RenderArchiveWarning()
+    {
+        if (_archiveSummary is not null)
+            ArchiveEntryWarningView.Render(ArchiveWarningPanel,
+                DatArchiveEntryWarning.Describe(_archiveSummary, SelectedFileHandling, isGroup: true));
+        else if (_archiveScanFailed)
+            ArchiveEntryWarningView.RenderStatus(ArchiveWarningPanel,
+                "Archive entry scan could not complete — the archive-file notice is unavailable.");
+        // else: still scanning — keep the progress status
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _archiveScanCts.Cancel();   // stop the background scan; its result is discarded
+        base.OnClosed(e);
     }
 
     // ── Validate (read-only, off the UI thread) ─────────────────────────────
