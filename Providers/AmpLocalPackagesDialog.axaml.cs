@@ -24,7 +24,7 @@ public partial class AmpLocalPackagesDialog : Window
     public AmpLocalPackagesDialog(string dataDir)
     {
         InitializeComponent();
-        _registry = new AmpLocalRegistryService(dataDir);
+        _registry = new AmpLocalRegistryService(dataDir, Arkadia.Activities.ActivityMonitor.Shared);
     }
 
     protected override void OnLoaded(RoutedEventArgs e)

@@ -170,6 +170,43 @@ public sealed class CatalogBulkScrapeServiceTests : IDisposable
         RespectExcludedMedia:     true,
         OverwriteExistingMedia:   false);
 
+    // ── Activity (GLOBAL-ACTIVITY-INTEGRATION-1) ──────────────────────────────
+
+    private CatalogBulkScrapeService MakeObservedSvc(Arkadia.Activities.ActivityMonitor monitor)
+        => new(Path.Combine(_dir, "data"), _catalog,
+               new ScreenScraperCacheImportService(Path.Combine(_dir, "data"), _catalog), monitor);
+
+    [Fact]
+    public async Task RunAsync_IsObservedAsScraping_ReleasedAfterwards_ResultsUnchanged()
+    {
+        var rec    = new Arkadia.Tests.Activities.ActivityRecorder();
+        var entry  = MakeEntry(catalogTitle: "UnknownGame");
+        var seenInside = new List<Arkadia.Activities.ActivityKind?>();
+        var progress = new SyncProgress<BulkScrapeProgress>(_ => seenInside.Add(rec.Now));
+
+        var observed = await MakeObservedSvc(rec.Monitor).RunAsync([entry], DefaultOptions(), [], progress);
+        var plain    = await MakeSvc().RunAsync([entry], DefaultOptions(), []);
+
+        Assert.Contains(Arkadia.Activities.ActivityKind.Scraping, seenInside);
+        Assert.All(seenInside, k => Assert.Equal(Arkadia.Activities.ActivityKind.Scraping, k));
+        Assert.Equal(new Arkadia.Activities.ActivityKind?[] { Arkadia.Activities.ActivityKind.Scraping, null }, rec.Seen);
+        Assert.Equal(plain.TotalNoMatch, observed.TotalNoMatch);
+        Assert.Equal(plain.TotalMatched, observed.TotalMatched);
+        Assert.Equal(plain.Results.Count, observed.Results.Count);
+    }
+
+    [Fact]
+    public async Task RunAsync_ReleasesTheScope_OnCancellation()
+    {
+        var rec = new Arkadia.Tests.Activities.ActivityRecorder();
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            MakeObservedSvc(rec.Monitor).RunAsync([MakeEntry()], DefaultOptions(), [], null, cts.Token));
+        Assert.True(rec.Idle);
+        Assert.Null(rec.Seen.Last());
+    }
+
     // ── 1. Empty list ─────────────────────────────────────────────────────────
 
     [Fact]

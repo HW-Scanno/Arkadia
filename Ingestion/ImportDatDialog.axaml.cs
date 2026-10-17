@@ -13,7 +13,8 @@ public partial class ImportDatDialog : Window
 {
     private string?              _filePath;
     private DatParser.Result?    _parseResult;
-    private readonly HashSet<string> _existingDatLineIds;
+    private readonly Ingestion.SingleDatImportForm _form;
+    private readonly Ingestion.SingleDatImportIdentityBinding _identity;
     private readonly CatalogService? _catalog;
     private readonly string          _dataDir;
     private List<MediaTypeRecord>    _mediaTypes = [];
@@ -26,6 +27,8 @@ public partial class ImportDatDialog : Window
     public string? ParsedDate         { get; private set; }
     public string? Version            { get; private set; }
     public string? DatLineId          { get; private set; }
+    public string? Variant            { get; private set; }
+    public string? DisplayName        { get; private set; }
     public int     ReleaseCount       { get; private set; }
 
     // Parsed games, passed back to MainWindow for persistence.
@@ -44,7 +47,9 @@ public partial class ImportDatDialog : Window
     {
         InitializeComponent();
 
-        _existingDatLineIds = existingDatLines.Select(d => d.Id).ToHashSet();
+        // Every existing DAT id (Single DATs and Group leaves): the shared builder compares case-insensitively.
+        _form = new Ingestion.SingleDatImportForm(existingDatLines.Select(d => d.Id));
+        _identity = new Ingestion.SingleDatImportIdentityBinding(_form, VariantInput, DatLineIdInput, DisplayNameInput);
         _catalog = catalog;
         _dataDir = dataDir;
 
@@ -73,6 +78,7 @@ public partial class ImportDatDialog : Window
         if (_mediaTypes.Count > 0)
             MediaTypeInput.SelectedIndex = 0;
 
+        UpdateDatLineId();   // initial id preview + auto-suggested Display Name from the default selections
         ValidateForm();
     }
 
@@ -139,17 +145,32 @@ public partial class ImportDatDialog : Window
         }
     }
 
-    // ── ID generation ────────────────────────────────────────────────────────
+    // ── Identity (all rules live in SingleDatImportForm / SingleDatIdBuilder) ──
 
+    /// <summary>Pushes the CURRENT combo selections into the form, then renders its outputs.</summary>
     private void UpdateDatLineId()
     {
-        var platformId  = (HardwareFamilyInput.SelectedItem as HardwareFamilyRecord)?.Id ?? "";
-        var authority   = (AuthorityInput.SelectedItem as AuthorityRecord)?.Id ?? "";
-        var mediaTypeId = (MediaTypeInput.SelectedItem as MediaTypeRecord)?.Id ?? "";
+        var family    = HardwareFamilyInput.SelectedItem as HardwareFamilyRecord;
+        var authority = AuthorityInput.SelectedItem as AuthorityRecord;
+        var media     = MediaTypeInput.SelectedItem as MediaTypeRecord;
 
-        DatLineIdInput.Text = (platformId.Length > 0 && authority.Length > 0 && mediaTypeId.Length > 0)
-            ? $"{platformId}-{authority}-{mediaTypeId}"
-            : "";
+        _identity.OnSelectionChanged(family?.Id, authority?.Id, authority?.Name, media?.Id);
+    }
+
+    // TextChanged is delivered DEFERRED by Avalonia (also for our own programmatic writes), so these handlers
+    // must not rely on a "currently syncing" flag; SingleDatImportIdentityBinding decides user-edit vs echo.
+    private void OnVariantChanged(object? sender, TextChangedEventArgs e)
+    {
+        if (_identity is null) return;   // XAML-initial notification can arrive before construction finishes
+        _identity.OnVariantTextChanged();   // verbatim: never trimmed or lowercased
+        ValidateForm();
+    }
+
+    private void OnDisplayNameChanged(object? sender, TextChangedEventArgs e)
+    {
+        if (_identity is null) return;
+        _identity.OnDisplayNameTextChanged();
+        ValidateForm();
     }
 
     // ── Event handlers ───────────────────────────────────────────────────────
@@ -199,25 +220,25 @@ public partial class ImportDatDialog : Window
 
     private void ValidateForm()
     {
-        var hasFile             = _filePath is not null;
-        var hasHardwareFamily   = (HardwareFamilyInput.SelectedItem as HardwareFamilyRecord)?.Id.Length > 0;
-        var hasAuth      = (AuthorityInput.SelectedItem as AuthorityRecord)?.Id.Length > 0;
-        var hasMediaType = (MediaTypeInput.SelectedItem as MediaTypeRecord)?.Id.Length > 0;
-        var hasDate      = ParsedDateInput.Text?.Trim().Length > 0;
-        var parseOk      = _parseResult?.Success == true;
+        if (_form is null) return;
 
-        var datLineId   = DatLineIdInput.Text?.Trim() ?? "";
-        var isDuplicate = datLineId.Length > 0 && _existingDatLineIds.Contains(datLineId);
+        var hasFile = _filePath is not null;
+        var hasDate = ParsedDateInput.Text?.Trim().Length > 0;
+        var parseOk = _parseResult?.Success == true;
 
-        DatLineConflictText.IsVisible = isDuplicate;
-        ImportButton.IsEnabled = hasFile && hasHardwareFamily && hasAuth && hasMediaType
-                              && hasDate && parseOk && !isDuplicate;
+        // Show identity problems only once there is something to report; the button stays disabled either way.
+        var error = _form.FirstError;
+        DatLineConflictText.Text      = error ?? "";
+        DatLineConflictText.IsVisible = error is not null && _form.SelectionComplete;
+
+        ImportButton.IsEnabled = hasFile && hasDate && parseOk && _form.IsValid;
     }
 
     // ── Confirm / Cancel ─────────────────────────────────────────────────────
 
     private void OnImport(object? sender, RoutedEventArgs e)
     {
+        if (!_form.IsValid) return;   // defensive: the button is already disabled
         SelectedFilePath  = _filePath;
         SelectedAuthority = AuthorityInput.SelectedItem as AuthorityRecord;
         HardwareFamilyId  = (HardwareFamilyInput.SelectedItem as HardwareFamilyRecord)?.Id ?? "";
@@ -225,7 +246,10 @@ public partial class ImportDatDialog : Window
         MediaTypeId       = (MediaTypeInput.SelectedItem as MediaTypeRecord)?.Id ?? "";
         ParsedDate        = ParsedDateInput.Text?.Trim() ?? "";
         Version           = VersionInput.Text?.Trim() ?? "";
-        DatLineId    = DatLineIdInput.Text?.Trim() ?? "";
+        // The id is the validated one from the shared builder (never re-read from the preview text box).
+        DatLineId    = _form.FinalId ?? "";
+        Variant      = _form.Variant;
+        DisplayName  = _form.DisplayName.Trim();
         ReleaseCount = _parseResult?.Games.Count ?? 0;
         Close(true);
     }

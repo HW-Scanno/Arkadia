@@ -49,10 +49,29 @@ public partial class MainWindow : Window
     private Arkadia.Providers.AmpLocalPackageImportService?   _ampImport;
     private bool _showDebugArtifactInfo;
     private bool _arkBusy;
+    private readonly Systems.ToolbarOverflowController _systemsToolbar;
+    private Controls.ActivityPreviewDriver? _activityPreview;   // development preview only
 
     public MainWindow()
     {
         InitializeComponent();
+
+        // Systems action bar: one row, overflowing commands move to the chevron menu (see ToolbarOverflowController).
+        _systemsToolbar = new Systems.ToolbarOverflowController(SysBarItems, SysActOverflow, spacing: 6);
+        _systemsToolbar.Attach(SysBarHost);
+        ActualThemeVariantChanged += (_, _) => _systemsToolbar.InvalidateMeasurements();
+
+        // Sidebar C64 console: shows the FOREGROUND activity of the global ActivityMonitor (READY when none).
+        // ForegroundChanged is already marshalled to the UI thread by the monitor.
+        SidebarStatusConsole.Kind = Activities.ActivityMonitor.Shared.Foreground;
+        Activities.ActivityMonitor.Shared.ForegroundChanged += kind => SidebarStatusConsole.Kind = kind;
+
+        // Development-only preview (ARKADIA_C64_CONSOLE_PREVIEW=<kind>|cycle|overlap): plays scripted activities through
+        // the same monitor so every animation can be inspected without a real operation. Unset in normal use.
+        if (Controls.C64ConsolePreview.Parse(Environment.GetEnvironmentVariable(Controls.C64ConsolePreview.EnvironmentVariable)) is { } previewScript)
+            _activityPreview = new Controls.ActivityPreviewDriver(
+                Activities.ActivityMonitor.Shared, Controls.ActivityClock.Shared, previewScript);
+
         ArkadiaFolders.EnsureCreated(AppContext.BaseDirectory);
         SizeChanged += (_, _) => UpdateCatalogResponsiveLayout();
         _metadataMappings      = _catalog.LoadMetadataValueMappings();
@@ -124,9 +143,8 @@ public partial class MainWindow : Window
     // Lazy Group coverage + lifecycle facts: leaf DBs are opened OFF the UI thread on demand; cached for the
     // session. The serialized state machine (cache / in-flight / failed / generation / pending order, MAX
     // CONCURRENCY = 1) lives in the pure, unit-tested Systems.GroupCoverageQueue; MainWindow just drives the
-    // off-thread compute around it. _groupCoverageBusy gates the single worker on the UI thread.
+    // off-thread compute around it. the GroupCoverageDrainer gates the single worker on the UI thread.
     private readonly Systems.GroupCoverageQueue _groupCoverage = new();
-    private bool _groupCoverageBusy;
     private readonly Dictionary<string, List<(string DatLineId, string DataStorePath, int ReleaseCount)>> _groupLeafDbInfo = new(StringComparer.OrdinalIgnoreCase);
 
     private void InitSystems()
@@ -402,43 +420,21 @@ public partial class MainWindow : Window
     /// platform is selected, so even a never-clicked System converges. The queue's generation token rejects an
     /// obsolete result (a group invalidated while its old compute was in flight).
     /// </summary>
-    private void DrainGroupCoverageQueue()
-    {
-        if (_groupCoverageBusy) return;
-        if (_groupCoverage.Begin(_groupLeafDbInfo.ContainsKey) is not { } started) return;
+    private void DrainGroupCoverageQueue() => GroupCoverageDrainerInstance.Drain();
 
-        _groupCoverageBusy = true;
-        var (targetGid, startGen) = started;
-        var leafSnapshot = _groupLeafDbInfo[targetGid];
-        var dataDir      = _dataDir;
+    private Systems.GroupCoverageDrainer? _groupCoverageDrainer;
 
-        var work = System.Threading.Tasks.Task.Run(() =>
-            Systems.GroupCoverageLoader.Compute(
-                leafSnapshot, dataDir, _catalog.GetAllAssignedDerivedIdsByDatLine()));
-
-        _ = work.ContinueWith(t =>
-            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-            {
-                _groupCoverageBusy = false;
-
-                // The queue applies the generation guard: an obsolete result (invalidated mid-flight) returns
-                // false and is discarded → re-enqueue for a fresh compute.
-                if (t.IsCompletedSuccessfully)
-                {
-                    if (!_groupCoverage.Complete(targetGid, startGen, t.Result))
-                        _groupCoverage.Enqueue(targetGid, priority: false, _groupLeafDbInfo.ContainsKey);
-                }
-                else
-                {
-                    _groupCoverage.Fail(targetGid, startGen);   // warning marker + retry-on-select
-                }
-
-                // Autonomous refresh (never gated on the current selection); preserves selection, no jumps.
-                RefreshSystemsKeepSelection(_selectedPlatformId);
-                DrainGroupCoverageQueue();   // continue with the next pending group
-            }),
-            System.Threading.Tasks.TaskContinuationOptions.None);
-    }
+    // The serialized coverage worker (extracted so its LOADING-activity lifecycle is testable). The compute runs
+    // off the UI thread; everything else — result application, view refresh, next group — runs on the UI thread.
+    private Systems.GroupCoverageDrainer GroupCoverageDrainerInstance => _groupCoverageDrainer ??= new Systems.GroupCoverageDrainer(
+        _groupCoverage,
+        _groupLeafDbInfo.ContainsKey,
+        gid => _groupLeafDbInfo[gid],
+        leaves => System.Threading.Tasks.Task.Run(() =>
+            Systems.GroupCoverageLoader.Compute(leaves, _dataDir, _catalog.GetAllAssignedDerivedIdsByDatLine())),
+        action => Avalonia.Threading.Dispatcher.UIThread.Post(action),
+        () => RefreshSystemsKeepSelection(_selectedPlatformId),
+        Activities.ActivityMonitor.Shared);
 
     /// <summary>
     /// Targeted invalidation at a genuine mutation boundary: drops the group's cached/failed state and bumps its
@@ -585,28 +581,7 @@ public partial class MainWindow : Window
     // One pill per active flag: the independent STAGING flag, then the mutually-exclusive archive-lifecycle
     // label. A pending lifecycle (Group facts still loading) contributes no pill — never a false state.
     private static Border MakeBadgePill(string text, string hex, string? tooltip)
-    {
-        var color = Color.Parse(hex);
-        var pill = new Border
-        {
-            Background        = new SolidColorBrush(Color.FromArgb(0x22, color.R, color.G, color.B)),
-            BorderBrush       = new SolidColorBrush(color),
-            BorderThickness   = new Avalonia.Thickness(1),
-            CornerRadius      = new Avalonia.CornerRadius(3),
-            Padding           = new Avalonia.Thickness(6, 1),
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            Child             = new TextBlock
-            {
-                Text              = text,
-                FontSize          = 9,
-                FontWeight        = FontWeight.SemiBold,
-                Foreground        = new SolidColorBrush(color),
-                VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
-            },
-        };
-        if (tooltip is not null) ToolTip.SetTip(pill, tooltip);
-        return pill;
-    }
+        => Systems.StatusBadge.Create(text, hex, tooltip);   // single definition of the badge shape (see StatusBadge)
 
     /// <summary>Horizontal strip of active storage badges (may be empty). STAGING is independent of lifecycle.</summary>
     private static StackPanel MakeBadgeStrip(bool hasStaging, ArchiveLifecycle lifecycle, bool lifecyclePending)
@@ -628,14 +603,14 @@ public partial class MainWindow : Window
     }
 
     // Coverage/completion cell for a System or Group row. Three states, precedence pending > failed > resolved:
-    //   pending → the rotating clockwise spinner (active work);
+    //   pending → the white LOADING badge (active work; blinks via the shared ActivityClock, opacity only);
     //   failed  → a compact ⚠ warning marker with a retry tooltip (never a fake %/N/A);
     //   else    → the completion % (or "N/A") coloured by the coverage policy.
     private static Control MakeCoverageVisual(
         bool pending, bool failed, string percentText, int? percent, string? completionTooltip)
     {
         if (pending)
-            return new Systems.PendingSpinner { VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center };
+            return Systems.StatusBadge.CreateLoading();   // the standard pill, white, blinking in sync with the shared clock
 
         if (failed)
         {
@@ -700,7 +675,7 @@ public partial class MainWindow : Window
                 Foreground = new SolidColorBrush(hwColor),
             });
 
-        // Group facts pending → rotating spinner; compute failed → ⚠ marker; else the wanted-coverage % — never
+        // Group facts pending → LOADING badge; compute failed → ⚠ marker; else the wanted-coverage % — never
         // a partial (false) percentage over only the non-group leaves.
         var coverageBlock = MakeCoverageVisual(
             p.CoveragePending, p.CoverageFailed, p.WantedCoverage, p.WantedCoveragePercent,
@@ -990,7 +965,7 @@ public partial class MainWindow : Window
         var pId     = platformId;
         detailsBtn.Click += (_, _) => OpenGroupDetails(theCard, pId);
 
-        // Coverage cell: rotating spinner while pending, ⚠ on compute failure, else the % (never a false 0%).
+        // Coverage cell: LOADING badge while pending, ⚠ on compute failure, else the % (never a false 0%).
         var coverageCtrl = MakeCoverageVisual(
             card.CoveragePending, card.CoverageFailed, card.CoverageText, card.CoveragePercent,
             Systems.StorageBadgePolicy.CompletionTooltip(Systems.StorageBadgePolicy.GroupCompletionTooltip, card.CoveragePercent));
@@ -1165,14 +1140,12 @@ public partial class MainWindow : Window
     // Builds the typed DAT-line selector items for one platform. Group leaves gain a visible full DatLineId
     // (via LibrarySelectorItem.Display); Single labels are unchanged. Identity is always the dat_line id.
     private List<Library.LibrarySelectorItem> BuildLibraryDatLineItems(string platform)
-        => _activeLibraryDatasets
-            .Where(d => d.Platform == platform)
-            .Select(d =>
-            {
-                var id = d.Entries.Count > 0 ? d.Entries[0].DatLineId : "";
-                return new Library.LibrarySelectorItem(id, d.DatLine, _groupLeafIds.Contains(id));
-            })
-            .ToList();
+        => Library.LibrarySelectorItemBuilder.Build(_activeLibraryDatasets, platform, _groupLeafIds, markGroupLeaves: true);
+
+    // Catalog tab selector: same typed items (identity = DatLineId) but Group leaves keep their historical
+    // plain label (no id suffix) so Group presentation is unchanged; only colliding STANDALONE labels get the id.
+    private List<Library.LibrarySelectorItem> BuildCatalogDatLineItems(string platform)
+        => Library.LibrarySelectorItemBuilder.Build(_activeLibraryDatasets, platform, _groupLeafIds, markGroupLeaves: false);
 
     /// <summary>Selects the active Library dataset by dat_line id (entries carry the authoritative DatLineId). Returns false if none.</summary>
     private bool LoadActiveDatasetByDatLineId(string datLineId)
@@ -1240,6 +1213,17 @@ public partial class MainWindow : Window
 
     private string FormatDatLineName(string authorityId, string mediaTypeId)
         => $"{GetAuthorityName(authorityId)} · {mediaTypeId.ToUpperInvariant()}";
+
+    /// <summary>
+    /// Visible label of a STANDALONE (Single) DAT: its persisted Display Name, or — for every legacy row with a NULL
+    /// display name — the historical "Authority · MEDIA" label. Group leaves are deliberately excluded: they keep
+    /// <see cref="FormatDatLineName"/> verbatim so Group presentation is unchanged. Presentation only; identity is
+    /// always the DatLineId.
+    /// </summary>
+    private string DatLineLabel(DatLineRecord dl)
+        => _groupLeafIds.Contains(dl.Id)
+            ? FormatDatLineName(dl.Authority, dl.MediaTypeId)
+            : DatLineDisplayName.Resolve(dl.DisplayName, GetAuthorityName(dl.Authority), dl.MediaTypeId);
 
     private Bitmap? LoadSystemImage(string platformId, string role, (int Width, int Height) size)
     {
@@ -1769,7 +1753,7 @@ public partial class MainWindow : Window
                     }
                 }
                 return new DatLineInfo(
-                    Name:                  FormatDatLineName(dl.Authority, dl.MediaTypeId),
+                    Name:                  DatLineLabel(dl),
                     Releases:              dl.ReleaseCount,
                     Outdated:              outdated,
                     LastImport:            dl.ImportedAtUtc.ToString("yyyy-MM-dd"),
@@ -1928,7 +1912,8 @@ public partial class MainWindow : Window
         var progress = new Progress<Ingestion.GroupVerifyTick>(
             t => dialog.SetProgress(t.Position, t.Total, t.Completed, LeafName(t.LeafId)));
 
-        var result = await Ingestion.GroupVerifyOrchestrator.RunAsync(leafIds, VerifyLeaf, Decide, progress);
+        var result = await Ingestion.GroupVerifyOrchestrator.RunAsync(
+            leafIds, VerifyLeaf, Decide, progress, activities: Activities.ActivityMonitor.Shared);
 
         if (result.Stopped)
             dialog.SetStoppedSummary(
@@ -1955,7 +1940,12 @@ public partial class MainWindow : Window
     // releases — persists form/state/fingerprints, never excludes releases or touches files.
     private async void OnSysVerifyDat(object? sender, RoutedEventArgs e)
     {
-        var report = new Archive.ArchiveOutputBatchValidator(_catalog, _dataDir).ValidateAll();
+        // Deliberately SYNCHRONOUS on the UI thread: ValidateAll persists form/state/fingerprints that the ingestion gate and
+        // the archive form depend on, and nothing else protects those rows from a concurrent Configure DAT / Update DAT
+        // (no compare-and-set, no busy flag). The blocked dispatcher is what keeps the run exclusive; the VERIFYING scope is
+        // registered but cannot render until this moves off the UI thread together with a real concurrency guard.
+        var report = Activities.ActivityMonitor.Shared.Run(Activities.ActivityKind.Verifying,
+            () => new Archive.ArchiveOutputBatchValidator(_catalog, _dataDir).ValidateAll(), "verify policy");
 
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("Validates archive output policy for all DAT lines. No files are moved or modified.");
@@ -2074,8 +2064,12 @@ public partial class MainWindow : Window
         Ingestion.GroupIngestionPlan? plan = null;
 
         var work = System.Threading.Tasks.Task.Run(() =>
-            plan = Ingestion.GroupIngestionPlanner.Plan(
-                _catalog, dataDir, appRoot, groupId, displayName, platformId, leaves, null, progress));
+        {
+            // LOADING for the read-only planning pass only; the preview then waits for the user (no scope).
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Loading, "Group ingestion plan");
+            return plan = Ingestion.GroupIngestionPlanner.Plan(
+                _catalog, dataDir, appRoot, groupId, displayName, platformId, leaves, null, progress);
+        });
 
         _ = work.ContinueWith(t => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
@@ -2132,6 +2126,10 @@ public partial class MainWindow : Window
 
         var workTask = System.Threading.Tasks.Task.Run(() =>
         {
+            // One parent INGESTING scope for the whole Group run (pre-extraction, every leaf, final cleanup):
+            // no READY between leaves, released before the summary dialog is shown.
+            using var groupActivity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Ingesting, "Group ingest");
+
             // ── Reuse the reviewed plan — NO second full leaf preparation ──────
             // The modal preview is the accepted staleness boundary for leaf state (wanted / release / DA /
             // configuration / readiness / missing-target plan): previewPlan IS the execution snapshot, so the
@@ -2290,7 +2288,7 @@ public partial class MainWindow : Window
 
         var appRoot = AppContext.BaseDirectory;
         var store   = new Data.DatLineStore(absDbPath);
-        var service = new LocalArchive.LocalArchiveVerifyService(appRoot);
+        var service = new LocalArchive.LocalArchiveVerifyService(appRoot, Activities.ActivityMonitor.Shared);
 
         // Build assigned-volume map for redundancy detection.
         // GetAllAssignmentsForDatLine returns tuples ordered workspace-first.
@@ -2698,7 +2696,7 @@ public partial class MainWindow : Window
             foreach (var datLineDir in Directory.GetDirectories(platformDir))
             {
                 var datLineId   = Path.GetFileName(datLineDir);
-                var datLineName = allDatLines.TryGetValue(datLineId, out var dl) ? FormatDatLineName(dl.Authority, dl.MediaTypeId) : datLineId;
+                var datLineName = allDatLines.TryGetValue(datLineId, out var dl) ? DatLineLabel(dl) : datLineId;
 
                 // Open the DAT-line DB to get releases and their expected files
                 if (!allDatLines.TryGetValue(datLineId, out var dlRecord) ||
@@ -3744,7 +3742,8 @@ public partial class MainWindow : Window
                 : VolumeCollectionLabel.ForSingle(
                     dlRecord is not null && authorityNames.TryGetValue(dlRecord.Authority, out var an) ? an : null,
                     dlRecord is not null && mediaTypeNames.TryGetValue(dlRecord.MediaTypeId, out var mn) ? mn : null,
-                    dlRecord?.Name, v.DatLineId ?? "");
+                    dlRecord?.Name, v.DatLineId ?? "",
+                    dlRecord?.DisplayName);
 
             return new VolumeEntry
             {
@@ -3979,6 +3978,8 @@ public partial class MainWindow : Window
         {
             await Task.Run(async () =>
             {
+                // VERIFYING for the whole worker (scan, hash, classify, recovery moves, DB repair); ends before the summary.
+                using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Verifying, "verify volume");
                 await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                     dlg.SetStatus("Scanning volume filesystem..."));
 
@@ -4326,6 +4327,8 @@ public partial class MainWindow : Window
 
         await System.Threading.Tasks.Task.Run(async () =>
         {
+            // REPAIRING for the whole worker (its inner ingest pass is part of the repair, not a separate INGESTING).
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Repairing, "repair volume");
             try
             {
                 await RunVolumeRepairAsync(repairDialog, entry, store, volumeRoot,
@@ -4878,7 +4881,8 @@ public partial class MainWindow : Window
             string logSubdir,
             string logLabel,
             IReadOnlyDictionary<string, string>? expectedSha1ByFileName = null,
-            IReadOnlyDictionary<string, string>? expectedSha1ByRelPath  = null)
+            IReadOnlyDictionary<string, string>? expectedSha1ByRelPath  = null,
+            Action<string?>? commitAfterMove = null)
     {
         // ── Pre-enumerate source files ────────────────────────────────────
         var files = Directory
@@ -4953,6 +4957,10 @@ public partial class MainWindow : Window
         int  filesProcessed   = 0;
         int  catalogVerified  = 0;   // verified against authoritative catalog SHA1 (no source re-read)
         int  legacyVerified   = 0;   // verified with historical source-vs-destination fallback
+
+        // MOVING covers the actual move only: copy → verify → source cleanup → catalog registration → log. It is
+        // released right before the summary is finalized, so the console never stays busy while the user reads it.
+        var moveActivity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Moving, operationTitle);
 
         try
         {
@@ -5040,7 +5048,10 @@ public partial class MainWindow : Window
         {
             try
             {
-                Directory.Delete(srcFolder, recursive: true);
+                // Off the UI thread so the MOVING animation keeps running. Still awaited right here, so the order
+                // (cleanup → catalog commit callback → log → summary) and the catch below are exactly as before;
+                // the modal dialog stays open and non-closable (CloseButton disabled) until SetCompleted/SetFailed.
+                await Task.Run(() => Directory.Delete(srcFolder, recursive: true));
                 log?.AppendLine();
                 log?.AppendLine($"Cleanup:     OK");
                 log?.AppendLine($"Removed:     {srcFolder}");
@@ -5052,6 +5063,21 @@ public partial class MainWindow : Window
                 log?.AppendLine($"Cleanup:     FAILED");
                 log?.AppendLine($"Target:      {srcFolder}");
                 log?.AppendLine($"Error:       {cleanupError}");
+            }
+        }
+
+        // ── Register the new location in the catalog ──────────────────────
+        // Runs only after copy + verify (+ source cleanup) succeeded, and BEFORE the summary dialog is finalized
+        // and awaited: the catalog must not depend on the user closing a popup. (Same UI thread as before.)
+        Exception? commitFailure = null;
+        if (errorMessage is null && commitAfterMove is not null)
+        {
+            try { commitAfterMove(cleanupError); }
+            catch (Exception ex)
+            {
+                commitFailure = ex;
+                log?.AppendLine();
+                log?.AppendLine($"Catalog:     FAILED to update location — {ex.Message}");
             }
         }
 
@@ -5077,8 +5103,14 @@ public partial class MainWindow : Window
             catch { /* non-fatal */ }
         }
 
+        moveActivity.Dispose();   // move, cleanup, catalog registration and log are done
+
         // ── Finalize dialog ───────────────────────────────────────────────
-        if (errorMessage is null)
+        if (commitFailure is not null)
+            progDialog.SetFailed(
+                "Files were copied and verified, but the catalog location could not be updated: " +
+                commitFailure.Message);
+        else if (errorMessage is null)
         {
             var verifyBreakdown = legacyVerified > 0
                 ? $" Verified: {catalogVerified} against catalog SHA1, {legacyVerified} via legacy source/destination fallback."
@@ -5093,6 +5125,10 @@ public partial class MainWindow : Window
             progDialog.SetFailed(errorMessage);
 
         await dlgTask;
+
+        // A failed catalog commit surfaces exactly as it did when the commit ran in the caller (after the dialog).
+        if (commitFailure is not null)
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(commitFailure).Throw();
 
         return (errorMessage is null, files.Count, copiedBytes, cleanupError,
                 DateTime.UtcNow - startTime, catalogVerified, legacyVerified);
@@ -5286,6 +5322,8 @@ public partial class MainWindow : Window
         // path validation throw before any mutation; nothing is committed on those paths.
         dialog.ExecuteHandler = previewedPlan => System.Threading.Tasks.Task.Run(() =>
         {
+            // CREATING for the whole Apply & Build worker; released before the dialog presents the result.
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Creating, "build Group volume");
             var freshVolume = _catalog.GetVolumeById(entry.Id)
                 ?? throw new InvalidOperationException($"Volume '{entry.Label}' no longer exists.");
             var freshLeaves = _catalog.GetLeavesForGroup(groupId);
@@ -5309,7 +5347,11 @@ public partial class MainWindow : Window
         });
 
         var work = System.Threading.Tasks.Task.Run(() =>
-            result = Data.GroupVolumePlanningService.Plan(_catalog, dataDir, appRoot, volume, leaves, progress));
+        {
+            // LOADING for the read-only planning pass only; the preview then waits for the user (no scope).
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Loading, "Group volume plan");
+            return result = Data.GroupVolumePlanningService.Plan(_catalog, dataDir, appRoot, volume, leaves, progress);
+        });
 
         _ = work.ContinueWith(t => Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
@@ -5394,12 +5436,18 @@ public partial class MainWindow : Window
             var proceed = await preview.ShowDialog<bool>(this);
             if (!proceed) return;
 
-            // ── Apply ─────────────────────────────────────────────────────────
-            var (releaseCount, linkedCount) = await ApplyPlanCore(entry, planResult, store);
-
-            // ── Build ─────────────────────────────────────────────────────────
-            var (movedCount, alreadyBuiltCount, totalCount, volumeFolder) =
-                await BuildVolumeCore(entry);
+            // ── Apply + Build ─────────────────────────────────────────────────
+            // CREATING covers Apply + Build only (not the preview above or the summary below). Both cores are
+            // synchronous on the UI thread today, so the status becomes visible only once they leave the dispatcher.
+            int releaseCount, linkedCount, movedCount, alreadyBuiltCount, totalCount;
+            string volumeFolder;
+            var buildActivity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Creating, "build volume");
+            try
+            {
+                (releaseCount, linkedCount) = await ApplyPlanCore(entry, planResult, store);
+                (movedCount, alreadyBuiltCount, totalCount, volumeFolder) = await BuildVolumeCore(entry);
+            }
+            finally { buildActivity.Dispose(); }
 
             // ── Done ──────────────────────────────────────────────────────────
             var buildNote = movedCount == 0
@@ -5728,42 +5776,49 @@ public partial class MainWindow : Window
                 }
             }
 
-            // ── Execute copy → verify → cleanup source ────────────────────────
+            // ── Execute copy → verify → cleanup source → register location ────
+            // The catalog location is committed by RunCopyMoveAsync right after a successful move (and before its
+            // summary popup is awaited), through this callback. Prune + SetCurrentLocation are unchanged and keep
+            // their original order; they run only when the copy/verify succeeded.
+            void CommitMovedLocation(string? sourceCleanupError)
+            {
+                // ── Prune empty archive directories (best-effort) ─────────────
+                // Build Volume moved files out of archive/<platform>/<datline>/<release>/.
+                // After source cleanup those dirs may be empty; remove them bottom-up.
+                // Preserves archive/ and archive/<platform>/; removes deeper empty dirs.
+                if (sourceCleanupError is null)
+                {
+                    var archiveRoot = Path.Combine(appRoot, "archive");
+                    if (Directory.Exists(archiveRoot))
+                    {
+                        foreach (var platformDir in Directory.EnumerateDirectories(archiveRoot))
+                            PruneEmptyDirectories(platformDir);
+                    }
+                }
+
+                // ── Update catalog location ───────────────────────────────────
+                _catalog.SetCurrentLocation(new Data.VolumeLocationRecord
+                {
+                    Id           = Guid.NewGuid().ToString("N"),
+                    VolumeId     = entry.Id,
+                    LocationType = dest.DestinationType == Volumes.DestinationType.Workspace
+                        ? "workspace" : "disk",
+                    DiskId       = dstDiskId,
+                    Path         = dest.DestinationType == Volumes.DestinationType.Workspace
+                        ? dstFolder : null,
+                    IsCurrent    = true,
+                    CreatedAt    = DateTime.UtcNow,
+                });
+            }
+
             var (success, fileCount, copiedBytes, cleanupError, elapsed, catalogVerified, legacyVerified) =
                 await RunCopyMoveAsync(
                     "Move Volume", srcFolder, dstFolder, header,
                     "volume-move", SafeFileName(entry.Label),
-                    expectedSha1ByFileName, expectedSha1ByRelPath);
+                    expectedSha1ByFileName, expectedSha1ByRelPath,
+                    CommitMovedLocation);
 
             if (!success) return;
-
-            // ── Prune empty archive directories (best-effort) ─────────────────
-            // Build Volume moved files out of archive/<platform>/<datline>/<release>/.
-            // After source cleanup those dirs may be empty; remove them bottom-up.
-            // Preserves archive/ and archive/<platform>/; removes deeper empty dirs.
-            if (cleanupError is null)
-            {
-                var archiveRoot = Path.Combine(appRoot, "archive");
-                if (Directory.Exists(archiveRoot))
-                {
-                    foreach (var platformDir in Directory.EnumerateDirectories(archiveRoot))
-                        PruneEmptyDirectories(platformDir);
-                }
-            }
-
-            // ── Update catalog location ───────────────────────────────────────
-            _catalog.SetCurrentLocation(new Data.VolumeLocationRecord
-            {
-                Id           = Guid.NewGuid().ToString("N"),
-                VolumeId     = entry.Id,
-                LocationType = dest.DestinationType == Volumes.DestinationType.Workspace
-                    ? "workspace" : "disk",
-                DiskId       = dstDiskId,
-                Path         = dest.DestinationType == Volumes.DestinationType.Workspace
-                    ? dstFolder : null,
-                IsCurrent    = true,
-                CreatedAt    = DateTime.UtcNow,
-            });
 
             RefreshVolumes();
             RebuildLibraryDatasets();
@@ -6163,7 +6218,7 @@ public partial class MainWindow : Window
         Volumes.VolumeReabsorbResult result;
         try
         {
-            var svc = new Volumes.VolumeReabsorbService(_catalog);
+            var svc = new Volumes.VolumeReabsorbService(_catalog, Activities.ActivityMonitor.Shared);
             result = await Task.Run(() => svc.Execute(entry.Id, volumeRoot, candidates, progress));
         }
         catch (Exception ex)
@@ -6698,7 +6753,7 @@ public partial class MainWindow : Window
                 .ToList();
 
             if (releases.Count > 0)
-                merged.Add(new LibraryDataset(platformName, FormatDatLineName(dl.Authority, dl.MediaTypeId), releases));
+                merged.Add(new LibraryDataset(platformName, DatLineLabel(dl), releases));
         }
 
         _activeLibraryDatasets = merged;
@@ -7316,7 +7371,10 @@ public partial class MainWindow : Window
         var ok = await new ConfirmDialog("Confirm Purge", sb.ToString()).ShowDialog<bool>(this);
         if (!ok) return;
 
-        var svc    = new Purge.PurgeReleaseService(appRoot, _catalog);
+        // Deliberately SYNCHRONOUS on the UI thread (original behaviour): the purge deletes archive/volume files and
+        // catalog rows, and the blocked dispatcher is what keeps every other workflow from running meanwhile. The PURGING
+        // scope is registered by the service but cannot render until this is moved off the UI thread with a real guard.
+        var svc    = new Purge.PurgeReleaseService(appRoot, _catalog, Activities.ActivityMonitor.Shared);
         var result = svc.Execute(plan);
 
         if (!result.Success)
@@ -8000,6 +8058,8 @@ public partial class MainWindow : Window
 
         var dashWork = System.Threading.Tasks.Task.Run(() =>
         {
+            // LOADING while the background roll-up opens every leaf DB; ends before the numbers are applied.
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Loading, "dashboard");
             int missing = 0, pending = 0, outdated = 0, present = 0;
             foreach (var dbPath in dashLeafPaths)
             {
@@ -8315,6 +8375,8 @@ public partial class MainWindow : Window
 
         await System.Threading.Tasks.Task.Run(async () =>
         {
+            // VERIFYING for the worker only (the dialog summary is produced at its very end, no waiting after it).
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Verifying, "verify DAT");
             try { await RunVerifyAllDatLine(dialog, info, dbPath, volumes); }
             catch (Exception ex) when (ex is not OutOfMemoryException)
             {
@@ -8946,7 +9008,10 @@ public partial class MainWindow : Window
         ReconciliationResult? reconResult = null;
 
         var workTask = System.Threading.Tasks.Task.Run(() =>
-            reconResult = RunUpdateWork(absPath, record.Id, parseResult.Games, progress));
+        {
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Updating, "update DAT");
+            return reconResult = RunUpdateWork(absPath, record.Id, parseResult.Games, progress);
+        });
 
         _ = workTask.ContinueWith(t =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -9118,15 +9183,15 @@ public partial class MainWindow : Window
 
         var activePlatform = CatalogContextPlatform.SelectedItem as string;
         var datLines = activePlatform is not null
-            ? _activeLibraryDatasets.Where(d => d.Platform == activePlatform).Select(d => d.DatLine).ToList()
-            : new List<string>();
+            ? BuildCatalogDatLineItems(activePlatform)
+            : new List<Library.LibrarySelectorItem>();
         CatalogContextDatLine.ItemsSource   = datLines;
         CatalogContextDatLine.SelectedIndex = datLines.Count > 0 ? 0 : -1;
 
         CatalogContextPlatform.SelectionChanged += OnCatalogContextPlatformChanged;
         CatalogContextDatLine.SelectionChanged  += OnCatalogContextDatLineChanged;
 
-        LoadCatalogDataset(activePlatform, CatalogContextDatLine.SelectedItem as string);
+        LoadCatalogDataset((CatalogContextDatLine.SelectedItem as Library.LibrarySelectorItem)?.DatLineId);
         UpdateCatalogResponsiveLayout();
     }
 
@@ -9134,27 +9199,26 @@ public partial class MainWindow : Window
     {
         var platform = CatalogContextPlatform.SelectedItem as string;
         if (platform is null) return;
-        var datLines = _activeLibraryDatasets.Where(d => d.Platform == platform).Select(d => d.DatLine).ToList();
+        var datLines = BuildCatalogDatLineItems(platform);
         CatalogContextDatLine.SelectionChanged -= OnCatalogContextDatLineChanged;
         CatalogContextDatLine.ItemsSource       = datLines;
-        CatalogContextDatLine.SelectedIndex     = 0;
+        CatalogContextDatLine.SelectedIndex     = datLines.Count > 0 ? 0 : -1;
         CatalogContextDatLine.SelectionChanged += OnCatalogContextDatLineChanged;
-        LoadCatalogDataset(platform, datLines.Count > 0 ? datLines[0] : null);
+        LoadCatalogDataset(datLines.Count > 0 ? datLines[0].DatLineId : null);
     }
 
     private void OnCatalogContextDatLineChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
     {
-        var platform = CatalogContextPlatform.SelectedItem as string;
-        var datLine  = CatalogContextDatLine.SelectedItem  as string;
-        if (platform is null) return;
-        LoadCatalogDataset(platform, datLine);
+        if (CatalogContextPlatform.SelectedItem is not string) return;
+        // Authoritative: resolve by dat_line id, never the (possibly duplicate) human label.
+        LoadCatalogDataset((CatalogContextDatLine.SelectedItem as Library.LibrarySelectorItem)?.DatLineId);
     }
 
-    private void LoadCatalogDataset(string? platform, string? datLine)
+    private void LoadCatalogDataset(string? datLineId)
     {
-        _catalogDatasetEntries = _activeLibraryDatasets
-            .FirstOrDefault(d => d.Platform == platform && d.DatLine == datLine)
-            ?.Entries.ToList() ?? [];
+        _catalogDatasetEntries = datLineId is null
+            ? []
+            : Library.LibraryDatasetSelector.ByDatLineId(_activeLibraryDatasets, datLineId)?.Entries.ToList() ?? [];
         ApplyCatalogFilter();
     }
 
@@ -9263,7 +9327,7 @@ public partial class MainWindow : Window
     private void OnCatalogBulkScrape(object? sender, RoutedEventArgs e)
     {
         _cacheImport ??= new Arkadia.Providers.ScreenScraperCacheImportService(_dataDir, _catalog);
-        var svc    = new CatalogBulkScrapeService(_dataDir, _catalog, _cacheImport);
+        var svc    = new CatalogBulkScrapeService(_dataDir, _catalog, _cacheImport, Activities.ActivityMonitor.Shared);
         var dialog = new CatalogBulkScrapeDialog(
             svc, _catalogDatasetEntries, _catalogSelected, _metadataMappings);
         dialog.ShowDialog(this);
@@ -9281,10 +9345,11 @@ public partial class MainWindow : Window
         }
         else
         {
-            var datLineName = CatalogContextDatLine.SelectedItem as string;
-            if (datLineName is null) return;
+            // Empty dataset: resolve the selected DAT by its authoritative id (the combo item), never by a label.
+            var selectedId = (CatalogContextDatLine.SelectedItem as Library.LibrarySelectorItem)?.DatLineId;
+            if (selectedId is null) return;
             var dl = _catalog.LoadDatLines()
-                .Find(d => d.Name == datLineName);
+                .Find(d => string.Equals(d.Id, selectedId, StringComparison.Ordinal));
             if (dl is null) return;
             hardwareFamilyId = dl.HardwareFamilyId;
             datLineId        = dl.Id;
@@ -9890,19 +9955,19 @@ public partial class MainWindow : Window
     private void OnCatalogOpenInLibrary(object? sender, RoutedEventArgs e)
     {
         // Sync library context to match catalog selection, then navigate
-        var platform = CatalogContextPlatform.SelectedItem as string;
-        var datLine  = CatalogContextDatLine.SelectedItem  as string;
+        var platform  = CatalogContextPlatform.SelectedItem as string;
+        var datLineId = (CatalogContextDatLine.SelectedItem as Library.LibrarySelectorItem)?.DatLineId;
 
         if (platform is not null)
         {
-            // Sync library selectors. The Catalog combo exposes only a human label; match the Library item by
-            // its human Label (setting SelectedItem then resolves the dataset by the item's authoritative id).
+            // Sync library selectors by the authoritative dat_line id carried by the Catalog item (never a label:
+            // two DATs of the same system/authority/media can share one).
             if (LibraryContextPlatform.Items.Cast<string>().Contains(platform))
                 LibraryContextPlatform.SelectedItem = platform;
-            if (datLine is not null)
+            if (datLineId is not null)
             {
                 var match = LibraryContextDatLine.Items.OfType<Library.LibrarySelectorItem>()
-                    .FirstOrDefault(i => string.Equals(i.Label, datLine, StringComparison.Ordinal));
+                    .FirstOrDefault(i => string.Equals(i.DatLineId, datLineId, StringComparison.Ordinal));
                 if (match is not null) LibraryContextDatLine.SelectedItem = match;
             }
         }
@@ -9984,7 +10049,7 @@ public partial class MainWindow : Window
 
         // ── Provider selection ───────────────────────────────────────────────
         var hasCachePackages = _catalog.HasUsableCachePackages();
-        var registry    = new AmpLocalRegistryService(_dataDir);
+        var registry    = new AmpLocalRegistryService(_dataDir, Activities.ActivityMonitor.Shared);
         var ampPackages = registry.ListPackagesForScope(
             entry.HardwareFamilyId,
             entry.DatLineId);
@@ -10023,8 +10088,11 @@ public partial class MainWindow : Window
             {
                 _cacheImport ??= new Arkadia.Providers.ScreenScraperCacheImportService(_dataDir, _catalog);
                 var importProgress = new Progress<string>(msg => SetScrapeStatus(msg, "#888899"));
-                var cacheSummary = await _cacheImport.ImportAsync(
-                    entry, candidate, _metadataMappings, importProgress);
+                // IMPORTING covers the import only (not the review dialogs before/after it).
+                var cacheSummary = await Activities.ActivityMonitor.Shared.RunAsync(
+                    Activities.ActivityKind.Importing,
+                    () => _cacheImport.ImportAsync(entry, candidate, _metadataMappings, importProgress),
+                    "cache import");
 
                 SetScrapeStatus("Review metadata…", "#888899");
                 var mergeDialog = new MergeMetadataDialog(entry, Arkadia.Providers.ScreenScraperCacheImportService.ProviderId);
@@ -10109,13 +10177,17 @@ public partial class MainWindow : Window
             {
                 _ampImport ??= new AmpLocalPackageImportService(_dataDir);
                 var importProgress = new Progress<string>(msg => SetScrapeStatus(msg, "#888899"));
-                var ampSummary = await _ampImport.ImportAsync(
-                    entry,
-                    verified.FilePath,
-                    matchResult.Release,
-                    _metadataMappings,
-                    matchKind: matchResult.Kind,
-                    progress: importProgress);
+                // IMPORTING covers the import only (not the review dialogs before/after it).
+                var ampSummary = await Activities.ActivityMonitor.Shared.RunAsync(
+                    Activities.ActivityKind.Importing,
+                    () => _ampImport.ImportAsync(
+                        entry,
+                        verified.FilePath,
+                        matchResult.Release,
+                        _metadataMappings,
+                        matchKind: matchResult.Kind,
+                        progress: importProgress),
+                    "AMP import");
 
                 SetScrapeStatus("Review metadata…", "#888899");
                 var mergeDialog = new MergeMetadataDialog(
@@ -10185,8 +10257,11 @@ public partial class MainWindow : Window
 
         CatalogScrapeBtn.IsEnabled = false;
 
+        // SCRAPING covers the network fetch + media/payload import only — not the review dialogs before and after.
+        Activities.IActivityScope? scrapeActivity = null;
         try
         {
+            scrapeActivity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Scraping, "online scrape");
             // Direct fallback path: result already fetched by ROM/DAT name lookup in dialog.
             // Candidate path: fetch full details from ScreenScraper by provider game ID.
             Arkadia.Providers.ScreenScraperResult? result;
@@ -10212,6 +10287,7 @@ public partial class MainWindow : Window
             var importProgress = new Progress<string>(msg => SetScrapeStatus(msg, "#888899"));
             var summary = await _scrapeImport.ImportAsync(
                 entry, result, _metadataMappings, importProgress);
+            scrapeActivity.Dispose();   // network + import finished; the merge dialog below waits for the user
 
             // ── Open Merge Metadata dialog ───────────────────────────────────
             SetScrapeStatus("Review metadata…", "#888899");
@@ -10254,6 +10330,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            scrapeActivity?.Dispose();   // idempotent: covers "no details", failure and cancellation
             CatalogScrapeBtn.IsEnabled = true;
         }
     }
@@ -10328,8 +10405,13 @@ public partial class MainWindow : Window
 
         var fileHandling = datLineRecord?.FileHandling ?? "archives_pre_extraction";
         var workTask = System.Threading.Tasks.Task.Run(() =>
-            ingestResult = RunIngestionWork(platformId, datLineId, absDbPath, storageStrategyId, progress,
-                fileHandling: fileHandling));
+        {
+            // INGESTING covers the whole worker (validation → extraction → staging → commit → Phase 9 cleanup) and ends
+            // before the result is handed to the progress dialog.
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Ingesting, "ingest");
+            return ingestResult = RunIngestionWork(platformId, datLineId, absDbPath, storageStrategyId, progress,
+                fileHandling: fileHandling);
+        });
 
         _ = workTask.ContinueWith(t =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -12262,35 +12344,37 @@ public partial class MainWindow : Window
         var platformId    = importDialog.HardwareFamilyId ?? "";
         var authority     = importDialog.Authority        ?? "";
         var mediaTypeId   = importDialog.MediaTypeId      ?? "";
-        var datLineId     = importDialog.DatLineId        ?? "";
-        var authorityName = importDialog.SelectedAuthority?.Name ?? authority;
-        var datLineName   = mediaTypeId;
-        var version     = importDialog.Version     ?? "";
-        var parsedGames = importDialog.ParsedGames.ToList();
+        var variant       = importDialog.Variant          ?? "";
+        var displayName   = importDialog.DisplayName      ?? "";
+        var version       = importDialog.Version          ?? "";
+        var parsedGames   = importDialog.ParsedGames.ToList();
 
-        var relPath = $"systems/{platformId}/{datLineId}.db";
-        var absPath = Path.Combine(_dataDir, relPath);
-
-        var newDatLineRecord = new DatLineRecord
+        // The dialog's id is only a preview/confirmation: SingleDatImportService rebuilds the id from these
+        // structured fields against the live catalog (all DAT ids, incl. Group leaves) right before creating.
+        var request = new SingleDatImportRequest
         {
-            Id                = datLineId,
-            HardwareFamilyId  = platformId,
-            Name              = datLineName,
-            Authority         = authority,
-            MediaTypeId       = mediaTypeId,
-            Version           = version,
-            StorageStrategyId = "",
-            DataStorePath     = relPath,
-            ReleaseCount      = parsedGames.Count,
-            ImportedAtUtc     = DateTime.UtcNow,
+            HardwareFamilyId = platformId,
+            Authority        = authority,
+            MediaTypeId      = mediaTypeId,
+            Variant          = variant,
+            DisplayName      = displayName,
+            Version          = version,
+            Games            = parsedGames,
         };
 
         var progressDialog = new DatOperationProgressDialog("Import DAT");
         var progress       = new Progress<DatOperationProgress>(p => progressDialog.Update(p));
         int imported       = 0;
 
+        string datLineId = importDialog.DatLineId ?? "";
         var workTask = System.Threading.Tasks.Task.Run(() =>
-            imported = RunImportWork(absPath, datLineId, parsedGames, existingDatLines, newDatLineRecord, progress));
+        {
+            var result = RunImportWork(request, progress);
+            if (!result.Success)
+                throw new InvalidOperationException(result.Message);   // surfaces via the dialog's existing failure path
+            datLineId = result.DatLineId!;
+            imported  = result.ReleaseCount;
+        });
 
         _ = workTask.ContinueWith(t =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -12385,7 +12469,7 @@ public partial class MainWindow : Window
         _groupDatCreateRunning = true;
         try
         {
-            var service        = new GroupDatExecutionService(_catalog, _dataDir);
+            var service        = new GroupDatExecutionService(_catalog, _dataDir, Activities.ActivityMonitor.Shared);
             var progressDialog = new GroupDatCreateProgressDialog("Creating Group DAT: " + plan.GroupName);
             var progress       = new Progress<GroupDatExecutionProgress>(p => progressDialog.Update(p));
             GroupDatExecutionResult? result = null;
@@ -12460,12 +12544,8 @@ public partial class MainWindow : Window
         };
     }
 
-    private int RunImportWork(
-        string                      absPath,
-        string                      datLineId,
-        List<DatParser.ParsedGame>  parsedGames,
-        List<DatLineRecord>         existingDatLines,
-        DatLineRecord               newDatLineRecord,
+    private SingleDatImportResult RunImportWork(
+        SingleDatImportRequest          request,
         IProgress<DatOperationProgress> progress)
     {
         progress.Report(new DatOperationProgress
@@ -12474,35 +12554,10 @@ public partial class MainWindow : Window
             IsIndeterminate = true,
         });
 
-        // 1. Prepare (pure, in-memory mapping) — completed in full BEFORE any catalog write, so no
-        //    mapping exception can occur after the first catalog mutation (historical ordering).
-        var prepared = Data.LeafDatDatabaseBuilder.Prepare(
-            datLineId, parsedGames, System.Threading.CancellationToken.None);
-
-        // 2. Catalog dat_line write — same relative point as before (after mapping, before the leaf
-        //    build). The historical orphan window is intentionally left as-is (neither widened nor fixed).
-        existingDatLines.Add(newDatLineRecord);
-        _catalog.SaveDatLines(existingDatLines);
-
-        progress.Report(new DatOperationProgress
-        {
-            PhaseText       = "Saving releases…",
-            IsIndeterminate = true,
-        });
-
-        // 3. Leaf DB persistence via the catalog-free primitive (create + save + verify +
-        //    WAL-consolidate). It touches ONLY the leaf database at absPath — no catalog writes.
-        var buildResult = Data.LeafDatDatabaseBuilder.Build(
-            absPath, prepared,
-            new LeafImportProgressAdapter(progress),
-            System.Threading.CancellationToken.None);
-
-        // 4. Working state catalog writes — unchanged, after the leaf build.
-        foreach (var game in parsedGames)
-            if (game.WorkingState.Length > 0)
-                _catalog.SetWorkingStateIfNotManual(game.Name, game.WorkingState);
-
-        return buildResult.ReleaseCount;
+        // UI-free service: revalidate id → build + verify leaf DB (temp) → publish → atomic catalog INSERT.
+        // The catalog row is written only after the leaf DB exists, so a failed import leaves no catalog entry.
+        return new SingleDatImportService(_catalog, _dataDir, Activities.ActivityMonitor.Shared).Execute(
+            request, new LeafImportProgressAdapter(progress), System.Threading.CancellationToken.None);
     }
 
     /// <summary>
@@ -12623,7 +12678,7 @@ public partial class MainWindow : Window
                     TargetName         = row.TargetName,
                     TargetRelativePath = row.TargetRelativePath ?? "",
                     DatLineId          = dl.Id,
-                    DatLineName        = FormatDatLineName(dl.Authority, dl.MediaTypeId),
+                    DatLineName        = DatLineLabel(dl),
                     PlatformId         = dl.HardwareFamilyId,
                     PlatformName       = platformName,
                     NewRelease         = newRelease,
@@ -12984,6 +13039,15 @@ public partial class MainWindow : Window
         ).ShowDialog(this);
     }
 
+    // ── Clean Empty Folders (Settings → General) ──────────────────────────────
+
+    private async void OnCleanEmptyFolders(object? sender, RoutedEventArgs e)
+    {
+        var cleaner = new Maintenance.EmptyFolderCleaner(Activities.ActivityMonitor.Shared);
+        var roots   = Maintenance.EmptyFolderCleaner.ManagedRoots(AppContext.BaseDirectory);
+        await new CleanEmptyFoldersDialog(cleaner, roots).ShowDialog(this);
+    }
+
     // ── Integrity Validation ──────────────────────────────────────────────────
 
     private async void OnValidateIntegrity(object? sender, RoutedEventArgs e)
@@ -12997,8 +13061,9 @@ public partial class MainWindow : Window
 
         try
         {
-            report = await Task.Run(() =>
-                Data.IntegrityValidator.Validate(_catalog, dataDir, appRoot));
+            report = await Task.Run(() => Activities.ActivityMonitor.Shared.Run(
+                Activities.ActivityKind.Verifying,
+                () => Data.IntegrityValidator.Validate(_catalog, dataDir, appRoot), "validate integrity"));
         }
         catch (Exception ex) { errorMessage = ex.Message; }
 
@@ -13092,7 +13157,11 @@ public partial class MainWindow : Window
         var progress = new Progress<Systems.ImageCacheProgress>(p =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() => dialog.Update(p)));
 
-        var workTask = Task.Run(() => result = RunImageCacheRegen(imageDir, progress));
+        var workTask = Task.Run(() =>
+        {
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Processing, "image cache");
+            return result = RunImageCacheRegen(imageDir, progress);
+        });
 
         _ = workTask.ContinueWith(t =>
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
@@ -15343,6 +15412,8 @@ public partial class MainWindow : Window
 
         try
         {
+            // EXPORTING covers the backup from planning through the closing package verification (one logical operation).
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Exporting, "ARK backup");
             var options = new ArkExportOptions(
                 IncludeMedia:       false,
                 IncludeSettings:    true,

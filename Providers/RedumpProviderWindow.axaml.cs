@@ -164,6 +164,8 @@ public partial class RedumpProviderWindow : Window
         if (selected.Count == 0) return;
 
         SetBusy(true);
+        // DOWNLOADING follows the actual download task (including its unwinding after a cancel/close), not the window.
+        using var activity = Arkadia.Activities.ActivityMonitor.Shared.Begin(Arkadia.Activities.ActivityKind.Downloading, "Redump DAT download");
 
         var outputDir = ProviderHelpers.GetRedumpOutputDir();
         Directory.CreateDirectory(outputDir);

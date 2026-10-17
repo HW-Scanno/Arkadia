@@ -23,8 +23,12 @@ public sealed record VolumeOwnerSelection(VolumeOwnerKind Kind, string OwnerId, 
     /// gracefully so it never collapses to an ambiguous <c>Single · cd</c> when the technical DatLineId is
     /// available: authority+name → authority+id → name+id → id. Identity is unaffected (always the DatLineId).
     /// </summary>
-    public static string SingleDisplay(string? authorityName, string? name, string datLineId)
+    public static string SingleDisplay(string? authorityName, string? name, string datLineId, string? displayName = null)
     {
+        // A persisted Display Name (DAT-NAMING) is the descriptive label; legacy rows (NULL) keep the old form.
+        var dn = (displayName ?? "").Trim();
+        if (dn.Length > 0) return $"Single · {dn}";
+
         var a = (authorityName ?? "").Trim();
         var n = (name ?? "").Trim();
         string core =
@@ -77,11 +81,20 @@ public static class VolumeOwnerSelectionBuilder
 
         var owners = new List<VolumeOwnerSelection>();
 
-        owners.AddRange(datLines
+        var singles = datLines
             .Where(d => d.HardwareFamilyId == platformId && !groupLeafIds.Contains(d.Id))
             .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(d => new VolumeOwnerSelection(VolumeOwnerKind.SingleDat, d.Id, platformId,
-                VolumeOwnerSelection.SingleDisplay(AuthorityDisplay(d.Authority), d.Name, d.Id))));
+            .ThenBy(d => d.Id, StringComparer.Ordinal)
+            .Select(d => (Dat: d, Display: VolumeOwnerSelection.SingleDisplay(AuthorityDisplay(d.Authority), d.Name, d.Id, d.DisplayName)))
+            .ToList();
+
+        // Two standalone DATs may legitimately share a label (same system/authority/media, or equal display
+        // names). Identity is the DatLineId; the visible text is made unique by appending it where needed.
+        var duplicated = singles.GroupBy(x => x.Display, StringComparer.OrdinalIgnoreCase)
+            .Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        owners.AddRange(singles.Select(x => new VolumeOwnerSelection(VolumeOwnerKind.SingleDat, x.Dat.Id, platformId,
+            duplicated.Contains(x.Display) ? $"{x.Display} — {x.Dat.Id}" : x.Display)));
 
         owners.AddRange(groups
             .Where(g => g.HardwareFamilyId == platformId)

@@ -13,6 +13,7 @@ public partial class ScreenScraperCacheManagerDialog : Window
 {
     private readonly CatalogService _catalog;
     private ScreenScraperCachePackageRecord? _selected;
+    private bool _registering;   // one registration at a time; the other actions are disabled and the window cannot close meanwhile
 
     public ScreenScraperCacheManagerDialog() : this(null!) { }
 
@@ -49,9 +50,11 @@ public partial class ScreenScraperCacheManagerDialog : Window
 
     private void UpdateButtons()
     {
-        VerifyBtn.IsEnabled = _selected is { Status: "Available" };
-        DetachBtn.IsEnabled = _selected is not null;
-        DeleteBtn.IsEnabled = _selected is { Status: "Available" };
+        VerifyBtn.IsEnabled = !_registering && _selected is { Status: "Available" };
+        DetachBtn.IsEnabled = !_registering && _selected is not null;
+        DeleteBtn.IsEnabled = !_registering && _selected is { Status: "Available" };
+        RegisterBtn.IsEnabled = !_registering;
+        RefreshBtn.IsEnabled  = !_registering;
     }
 
     // ── Actions ───────────────────────────────────────────────────────────────
@@ -68,7 +71,8 @@ public partial class ScreenScraperCacheManagerDialog : Window
         try
         {
             var verifier = new ScreenScraperCachePackageVerifier(_catalog);
-            result = await Task.Run(() => verifier.Verify(_selected.Id));
+            result = await Task.Run(() => Arkadia.Activities.ActivityMonitor.Shared.Run(
+                Arkadia.Activities.ActivityKind.Verifying, () => verifier.Verify(_selected.Id), "verify cache package"));
         }
         catch (Exception ex)
         {
@@ -100,10 +104,17 @@ public partial class ScreenScraperCacheManagerDialog : Window
         if (files.Count == 0) return;
         if (files[0].TryGetLocalPath() is not string path) return;
 
+        if (_registering) return;
+        _registering = true;
+        UpdateButtons();
+
         try
         {
             var importer = new ScreenScraperCachePackageImporter(_catalog);
-            var result   = importer.IndexPackage(path);
+            // Off the UI thread (same pattern as OnVerifyPackage) so the IMPORTING animation keeps running.
+            var result   = await Task.Run(() => Arkadia.Activities.ActivityMonitor.Shared.Run(
+                Arkadia.Activities.ActivityKind.Importing, () => importer.IndexPackage(path), "register cache package"));
+            _registering = false;
             if (result.WasAlreadyIndexed)
                 ShowValidation("Package already registered.", isError: false);
             else
@@ -114,8 +125,16 @@ public partial class ScreenScraperCacheManagerDialog : Window
         }
         catch (Exception ex)
         {
+            _registering = false;
+            UpdateButtons();
             ShowValidation($"Registration failed: {ex.Message}");
         }
+    }
+
+    protected override void OnClosing(WindowClosingEventArgs e)
+    {
+        if (_registering) e.Cancel = true;   // the index transaction is running: no closing mid-way
+        base.OnClosing(e);
     }
 
     private async void OnDetach(object? sender, RoutedEventArgs e)

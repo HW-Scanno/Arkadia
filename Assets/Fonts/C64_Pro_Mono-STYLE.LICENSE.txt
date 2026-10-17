@@ -1,0 +1,28 @@
+C64 Pro Mono (C64_Pro_Mono-STYLE.ttf)
+=====================================
+
+Font family name (internal): "C64 Pro Mono"        Version 1.21 (April 15, 2019)
+Copyright:                   (c) 2010-2019, Style. (http://style64.org)
+Designer / foundry:          Elwix / Style
+Font license page:           http://style64.org/c64-truetype/license
+Font download page:          http://style64.org/c64-truetype
+
+The text below is the license embedded by the author in the font file itself (OpenType 'name' table, nameID 13),
+reproduced verbatim:
+
+  You MAY NOT: sell this font; include/redistribute this font in any font collection regardless of pricing;
+  provide the font for direct download from any web site.
+  You MAY: link to "http://style64.org/c64-truetype" in order for others to download and install the font;
+  embed this font or its .eot and .woff variants for display on any web site using @font-face rules;
+  use this font in static images and vector art; include this font as part of a software package but ONLY if
+  said software package is freely provided to end users.
+  You may also contact us to negotiate a (possibly commercial) license for your use outside of these guidelines
+  at "http://style64.org/contact-style".
+
+Use in Arkadia
+--------------
+The font file is embedded unmodified as an Avalonia resource (avares://Arkadia/Assets/Fonts/) and is used only to
+draw the sidebar activity console. It is never installed system-wide and is not offered as a separate download.
+It is covered by the "include this font as part of a software package" permission above ONLY while Arkadia is
+freely provided to end users. If Arkadia is ever distributed commercially, a license must be negotiated with Style
+first, or the font must be replaced.

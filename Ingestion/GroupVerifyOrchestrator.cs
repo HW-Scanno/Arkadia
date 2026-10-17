@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Arkadia.Activities;
 
 namespace Arkadia.Ingestion;
 
@@ -39,8 +40,14 @@ public static class GroupVerifyOrchestrator
         Func<string, int, CancellationToken, Task<GroupVerifyLeafOutcome>> verifyLeaf,
         Func<GroupVerifyFailure, Task<GroupVerifyDecision>>            decideOnFailure,
         IProgress<GroupVerifyTick>?                                    progress = null,
-        CancellationToken                                             ct       = default)
+        CancellationToken                                             ct       = default,
+        ActivityMonitor?                                              activities = null)
     {
+        // One VERIFYING scope for the whole run (no READY between leaves). It is released while the run is paused
+        // waiting for the Retry/Stop decision — nothing is being verified then — and re-opened on Retry.
+        IActivityScope? scope = activities?.Begin(ActivityKind.Verifying, "Group verify");
+        try
+        {
         int total     = leafIds.Count;
         int index     = 0;   // 0-based index of the leaf currently being verified
         int completed = 0;   // number of leaves that have PASSED
@@ -62,6 +69,7 @@ public static class GroupVerifyOrchestrator
             }
 
             // Failure: pause, do NOT advance the index.
+            scope?.Dispose(); scope = null;                                   // waiting for the user: no work in progress
             var decision = await decideOnFailure(
                 new GroupVerifyFailure(leafId, index + 1, total, completed, outcome.FailureReason ?? ""));
 
@@ -72,9 +80,12 @@ public static class GroupVerifyOrchestrator
                     Stopped: true, FailedLeafId: leafId, FailureReason: outcome.FailureReason);
 
             // Retry → loop with the SAME index (re-run this leaf from the beginning).
+            scope = activities?.Begin(ActivityKind.Verifying, "Group verify");   // work resumes
         }
 
         return new GroupVerifyRunResult(
             Completed: completed, Total: total, NotRun: 0, Stopped: false, FailedLeafId: null, FailureReason: null);
+        }
+        finally { scope?.Dispose(); }
     }
 }

@@ -142,6 +142,8 @@ public partial class AmpExportReportDialog : Window
 
         try
         {
+            // EXPORTING covers the package write AND its closing verification (one logical operation).
+            using var activity = Arkadia.Activities.ActivityMonitor.Shared.Begin(Arkadia.Activities.ActivityKind.Exporting, "AMP export");
             var writer      = new AmpExportWriterService();
             var writeResult = await Task.Run(() => writer.Write(_plan, path, overwrite: true));
 

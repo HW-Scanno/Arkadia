@@ -43,7 +43,7 @@ public partial class LibraryBulkOperationDialog : Window
         _datLineLabel = datLineLabel;
         _dbPath       = dbPath;
         _planner      = new LibraryBulkOperationPlanner(store);
-        _service      = new LibraryBulkOperationService(appRoot, catalog);
+        _service      = new LibraryBulkOperationService(appRoot, catalog, Arkadia.Activities.ActivityMonitor.Shared);
 
         HeaderSubtitle.Text = datLineLabel;
         SetStep(Step.Input);

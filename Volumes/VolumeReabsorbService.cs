@@ -37,8 +37,14 @@ public sealed class VolumeReabsorbResult
 public sealed class VolumeReabsorbService
 {
     private readonly CatalogService _catalog;
+    private readonly Arkadia.Activities.ActivityMonitor? _activities;
 
-    public VolumeReabsorbService(CatalogService catalog) => _catalog = catalog;
+    /// <param name="activities">Shared activity monitor (null = not observed). It only observes <see cref="Execute"/>.</param>
+    public VolumeReabsorbService(CatalogService catalog, Arkadia.Activities.ActivityMonitor? activities = null)
+    {
+        _catalog = catalog;
+        _activities = activities;
+    }
 
     public VolumeReabsorbResult Execute(
         string                           volumeId,
@@ -46,6 +52,7 @@ public sealed class VolumeReabsorbService
         IReadOnlyList<ReabsorbCandidate> candidates,
         IProgress<ReabsorbProgress>?     progress = null)
     {
+        using var activity = _activities?.Begin(Arkadia.Activities.ActivityKind.Reabsorbing, "reabsorb volume");
         var log           = new List<string>();
         string? abortReason = null;
         bool cleanupFailed  = false;

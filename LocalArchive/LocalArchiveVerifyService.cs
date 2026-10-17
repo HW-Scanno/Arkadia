@@ -18,8 +18,14 @@ namespace Arkadia.LocalArchive;
 public sealed class LocalArchiveVerifyService
 {
     private readonly string _appRoot;
+    private readonly Arkadia.Activities.ActivityMonitor? _activities;
 
-    public LocalArchiveVerifyService(string appRoot) => _appRoot = appRoot;
+    /// <param name="activities">Shared activity monitor (null = not observed). It only observes Verify/Repair.</param>
+    public LocalArchiveVerifyService(string appRoot, Arkadia.Activities.ActivityMonitor? activities = null)
+    {
+        _appRoot = appRoot;
+        _activities = activities;
+    }
 
     // ── Verify ────────────────────────────────────────────────────────────────
 
@@ -40,6 +46,7 @@ public sealed class LocalArchiveVerifyService
         IProgress<LocalArchiveVerifyProgress>?           progress        = null,
         IReadOnlyDictionary<string, AssignedVolumeInfo>? assignedVolumes = null)
     {
+        using var activity = _activities?.Begin(Arkadia.Activities.ActivityKind.Verifying, "verify archive");
         var archiveDir = Path.Combine(_appRoot, "archive", platformId, datLineId);
         var entries    = new List<LocalArchiveEntry>();
 
@@ -293,6 +300,7 @@ public sealed class LocalArchiveVerifyService
         DatLineStore                           store,
         IProgress<LocalArchiveVerifyProgress>? progress = null)
     {
+        using var activity = _activities?.Begin(Arkadia.Activities.ActivityKind.Repairing, "repair archive");
         var log        = new List<string>();
         int movedCount = 0, removedCount = 0;
 

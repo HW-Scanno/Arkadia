@@ -10,13 +10,19 @@ namespace Arkadia.Volumes;
 public static class VolumeCollectionLabel
 {
     /// <summary>
-    /// Single-owned volume: <c>&lt;Authority&gt; · &lt;Media&gt;</c> (e.g. "ReDump · DVD"). Graceful fallback
+    /// Single-owned volume: the persisted Display Name when set, otherwise <c>&lt;Authority&gt; · &lt;Media&gt;</c>
+    /// (e.g. "ReDump · DVD"). Graceful fallback
     /// (media type normally always resolves — it is <c>NOT NULL DEFAULT 'other'</c>):
     /// authority+media → both; media only (authority missing/unresolvable) → media; neither → the DAT-line name;
     /// name unavailable → the technical dat_line_id. Inputs are resolved display names; casing is passed through.
     /// </summary>
-    public static string ForSingle(string? authorityName, string? mediaTypeName, string? datLineName, string datLineId)
+    public static string ForSingle(string? authorityName, string? mediaTypeName, string? datLineName, string datLineId,
+                                   string? displayName = null)
     {
+        // A persisted Display Name (DAT-NAMING) wins; legacy rows (NULL) fall through to the historical label.
+        var d = (displayName ?? "").Trim();
+        if (d.Length > 0) return d;
+
         var a = (authorityName ?? "").Trim();
         var m = (mediaTypeName ?? "").Trim();
         var n = (datLineName   ?? "").Trim();

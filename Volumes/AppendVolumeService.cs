@@ -15,13 +15,56 @@ namespace Arkadia.Volumes;
 public sealed class AppendVolumeService
 {
     private readonly CatalogService _catalog;
+    private readonly Arkadia.Activities.ActivityMonitor? _activities;
 
-    public AppendVolumeService(CatalogService catalog) => _catalog = catalog;
+    /// <param name="activities">Shared activity monitor (null = not observed). It only observes execution.</param>
+    public AppendVolumeService(CatalogService catalog, Arkadia.Activities.ActivityMonitor? activities = null)
+    {
+        _catalog = catalog;
+        _activities = activities;
+    }
+
+    /// <summary>
+    /// Group execution: runs each non-empty leaf plan through <see cref="Execute"/>, sequentially; results are summed.
+    /// One APPENDING scope covers the whole run, so the status never drops to READY between leaves. A per-entry
+    /// failure follows the single-Append result semantics; an unexpected exception propagates (stopping further
+    /// leaves) with earlier leaves' committed work retained (no rollback).
+    /// </summary>
+    public AppendVolumeResult ExecuteGroup(GroupAppendVolumePlan groupPlan, IProgress<AppendVolumeProgress> progress)
+    {
+        using var activity = _activities?.Begin(Arkadia.Activities.ActivityKind.Appending, "append Group volume");
+        int  copied = 0, errors = 0, deleted = 0, deleteFailed = 0;
+        long bytes  = 0;
+        var  logs   = new List<string>();
+
+        foreach (var leafPlan in groupPlan.LeafPlans)   // DatLineId Ordinal (planning order)
+        {
+            if (leafPlan.PlannedCount == 0) continue;
+            var r = Execute(leafPlan, progress);
+            copied       += r.CopiedCount;
+            bytes        += r.BytesCopied;
+            errors       += r.ErrorCount;
+            deleted      += r.SourcesDeletedCount;
+            deleteFailed += r.SourceDeleteFailedCount;
+            logs.AddRange(r.LogLines);
+        }
+
+        return new AppendVolumeResult
+        {
+            CopiedCount             = copied,
+            BytesCopied             = bytes,
+            ErrorCount              = errors,
+            SourcesDeletedCount     = deleted,
+            SourceDeleteFailedCount = deleteFailed,
+            LogLines                = logs,
+        };
+    }
 
     public AppendVolumeResult Execute(
         AppendVolumePlan                 plan,
         IProgress<AppendVolumeProgress>? progress = null)
     {
+        using var activity = _activities?.Begin(Arkadia.Activities.ActivityKind.Appending, "append volume");
         int  copiedCount             = 0;
         long bytesCopied             = 0;
         int  errorCount              = 0;

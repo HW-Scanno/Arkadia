@@ -32,6 +32,7 @@ public sealed class GroupDatExecutionService
 {
     private readonly CatalogService _catalog;
     private readonly string         _dataDir;
+    private readonly Arkadia.Activities.ActivityMonitor? _activities;
 
     // Test-only seams: internal (not public API), instance-scoped (no shared static state), invoked only when
     // a test explicitly sets them, and with no production behaviour depending on them.
@@ -39,8 +40,10 @@ public sealed class GroupDatExecutionService
     internal Action<int>?        OnLeafPublishedForTests;   // after each temp→final rename (1-based index)
     internal Func<string, bool>? TryDeleteOverrideForTests; // replaces File.Delete in cleanup; return false to force a cleanup failure
 
-    public GroupDatExecutionService(CatalogService catalog, string dataDir)
+    /// <param name="activities">The shared activity monitor (null = not observed). It only OBSERVES the execution.</param>
+    public GroupDatExecutionService(CatalogService catalog, string dataDir, Arkadia.Activities.ActivityMonitor? activities = null)
     {
+        _activities = activities;
         _catalog = catalog ?? throw new ArgumentNullException(nameof(catalog));
         _dataDir = string.IsNullOrWhiteSpace(dataDir)
             ? throw new ArgumentException("dataDir is required.", nameof(dataDir))
@@ -67,6 +70,10 @@ public sealed class GroupDatExecutionService
         IProgress<GroupDatExecutionProgress>? progress,
         CancellationToken                     ct)
     {
+        // One IMPORTING scope for the whole execution (validation → leaf DBs → publish → commit → cleanup);
+        // released on every outcome, before the caller shows any result dialog.
+        using var activity = _activities?.Begin(Arkadia.Activities.ActivityKind.Importing, "create Group DAT");
+
         // ---- Part 2: structural plan preconditions (no filesystem/catalog mutation) ----
         var structuralError = ValidatePlanStructure(plan);
         if (structuralError is not null) return structuralError;

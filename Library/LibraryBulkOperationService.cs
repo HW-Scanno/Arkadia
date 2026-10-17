@@ -29,11 +29,14 @@ public sealed class LibraryBulkOperationService
 {
     private readonly string         _appRoot;
     private readonly CatalogService _catalog;
+    private readonly Arkadia.Activities.ActivityMonitor? _activities;
 
-    public LibraryBulkOperationService(string appRoot, CatalogService catalog)
+    /// <param name="activities">Shared activity monitor (null = not observed). It only observes <see cref="Execute"/>.</param>
+    public LibraryBulkOperationService(string appRoot, CatalogService catalog, Arkadia.Activities.ActivityMonitor? activities = null)
     {
         _appRoot = appRoot;
         _catalog = catalog;
+        _activities = activities;
     }
 
     public LibraryBulkOperationResult Execute(
@@ -41,6 +44,13 @@ public sealed class LibraryBulkOperationService
         string                                    dbPath,
         IProgress<LibraryBulkOperationProgress>?  progress = null)
     {
+        // One scope for the whole batch. Purge deletes files → PURGING; hide/show/restore only change catalog flags → PROCESSING.
+        // (The inner PurgeReleaseService is created WITHOUT the monitor, so the batch is registered exactly once.)
+        using var activity = _activities?.Begin(
+            plan.Operation == LibraryBulkOperationType.PurgeAndMarkUnwanted
+                ? Arkadia.Activities.ActivityKind.Purging
+                : Arkadia.Activities.ActivityKind.Processing,
+            "library bulk operation");
         var store       = new DatLineStore(dbPath);
         var planner     = new PurgeReleasePlanner(_appRoot, _catalog);
         var purgeService = new PurgeReleaseService(_appRoot, _catalog);

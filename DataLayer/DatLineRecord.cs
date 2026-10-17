@@ -24,4 +24,11 @@ public sealed class DatLineRecord
     public bool     CatalogEnabled        { get; set; } = true;
     /// <summary>"dat" | "catalog" — controls how display titles are resolved.</summary>
     public string   LibraryTitleMode      { get; set; } = "dat";
+    /// <summary>
+    /// Optional, independently editable display name (<c>dat_lines.display_name</c>). <c>null</c> for every legacy
+    /// row — callers resolve the visible label through <see cref="DatLineDisplayName.Resolve"/>, which falls back
+    /// to the legacy derived label. Never part of the technical id. Persisted on INSERT only by
+    /// <c>SaveDatLines</c>; Group-leaf reads do not populate it (Group behaviour is unchanged).
+    /// </summary>
+    public string?  DisplayName           { get; set; }
 }

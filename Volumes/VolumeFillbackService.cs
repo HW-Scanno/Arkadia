@@ -20,8 +20,14 @@ namespace Arkadia.Volumes;
 public sealed class VolumeFillbackService
 {
     private readonly CatalogService _catalog;
+    private readonly Arkadia.Activities.ActivityMonitor? _activities;
 
-    public VolumeFillbackService(CatalogService catalog) => _catalog = catalog;
+    /// <param name="activities">Shared activity monitor (null = not observed). It only observes <see cref="Execute"/>.</param>
+    public VolumeFillbackService(CatalogService catalog, Arkadia.Activities.ActivityMonitor? activities = null)
+    {
+        _catalog = catalog;
+        _activities = activities;
+    }
 
     // ── Public API ────────────────────────────────────────────────────────────
 
@@ -30,6 +36,7 @@ public sealed class VolumeFillbackService
         DatLineStore?                 store    = null,   // retained for signature compatibility; unused by execution
         IProgress<FillbackProgress>?  progress = null)
     {
+        using var activity = _activities?.Begin(Arkadia.Activities.ActivityKind.Appending, "fillback volume");
         var log    = new List<string>();
         var result = new VolumeFillbackResult { LogLines = log };
 

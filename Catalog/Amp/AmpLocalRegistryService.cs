@@ -9,10 +9,14 @@ namespace Arkadia;
 
 public sealed class AmpLocalRegistryService
 {
+    private readonly Arkadia.Activities.ActivityMonitor? _activities;
+
     public string RegistryFolder { get; }
 
-    public AmpLocalRegistryService(string dataDir)
+    /// <param name="activities">Shared activity monitor (null = not observed). It only observes verify/register.</param>
+    public AmpLocalRegistryService(string dataDir, Arkadia.Activities.ActivityMonitor? activities = null)
     {
+        _activities = activities;
         RegistryFolder = Path.Combine(
             dataDir,
             ArkadiaFolders.ScrapeCache,
@@ -45,7 +49,16 @@ public sealed class AmpLocalRegistryService
             .ToList();
     }
 
+    /// <summary>Verifies one package (hash + manifest + content checks). VERIFYING while it runs.</summary>
     public AmpLocalPackageInfo VerifyPackage(string ampFilePath)
+    {
+        using var activity = _activities?.Begin(Arkadia.Activities.ActivityKind.Verifying, "verify AMP package");
+        return VerifyPackageCore(ampFilePath);
+    }
+
+    // Unobserved core, shared with RegisterLocalPackage so registering is ONE logical IMPORTING operation
+    // (its closing verification is part of the import, not a nested VERIFYING).
+    private AmpLocalPackageInfo VerifyPackageCore(string ampFilePath)
     {
         var fi     = new FileInfo(ampFilePath);
         var sha256 = ReleaseMediaCurationService.ComputeSha256(ampFilePath) ?? "";
@@ -81,6 +94,7 @@ public sealed class AmpLocalRegistryService
         bool              overwrite = false,
         CancellationToken ct        = default)
     {
+        using var activity = _activities?.Begin(Arkadia.Activities.ActivityKind.Importing, "register AMP package");
         if (string.IsNullOrWhiteSpace(sourceAmpPath))
             throw new ArgumentException("Source path must not be empty.", nameof(sourceAmpPath));
 
@@ -125,7 +139,7 @@ public sealed class AmpLocalRegistryService
             throw;
         }
 
-        return VerifyPackage(dstPath);
+        return VerifyPackageCore(dstPath);
     }
 
     // ── Private ───────────────────────────────────────────────────────────────

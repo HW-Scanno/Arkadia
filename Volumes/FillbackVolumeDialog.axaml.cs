@@ -374,7 +374,7 @@ public partial class FillbackVolumeDialog : Window
             });
         });
 
-        var svc = new VolumeFillbackService(_catalog);
+        var svc = new VolumeFillbackService(_catalog, Arkadia.Activities.ActivityMonitor.Shared);
 
         VolumeFillbackResult result;
         try

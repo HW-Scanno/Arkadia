@@ -1,0 +1,41 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Arkadia.CleanEmptyFoldersDialog"
+        Title="Clean Empty Folders"
+        Width="760" Height="520"
+        MinWidth="560" MinHeight="360"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Background="#0F0F14"
+        FontFamily="Inter,Segoe UI,sans-serif">
+
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="24,20,24,18">
+
+        <TextBlock Grid.Row="0" x:Name="HeadlineText"
+                   FontSize="14" FontWeight="SemiBold" Foreground="#F0F0F0"
+                   TextWrapping="Wrap" Margin="0,0,0,10"/>
+
+        <ProgressBar Grid.Row="1" x:Name="BusyBar"
+                     IsIndeterminate="True" Height="4"
+                     Foreground="#7B68EE" Background="#242433" CornerRadius="2"
+                     Margin="0,0,0,10"/>
+
+        <Border Grid.Row="2" Background="#1A1A24" CornerRadius="6" Margin="0,0,0,12">
+            <TextBox x:Name="DetailBox"
+                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                     FontFamily="Consolas,Courier New,monospace" FontSize="11"
+                     Foreground="#CCCCDD" Background="Transparent" BorderThickness="0"
+                     Padding="12,10" VerticalContentAlignment="Top"/>
+        </Border>
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right">
+            <Button x:Name="CancelButton" Content="Cancel"
+                    Background="#1E1E2C" Foreground="#AAAACC"
+                    Padding="20,8" CornerRadius="4" Click="OnCancel"/>
+            <Button x:Name="RemoveButton" Content="Remove empty folders"
+                    IsVisible="False"
+                    Background="#C05020" Foreground="#FFFFFF" FontWeight="SemiBold"
+                    Padding="20,8" CornerRadius="4" Click="OnRemove"/>
+        </StackPanel>
+    </Grid>
+</Window>

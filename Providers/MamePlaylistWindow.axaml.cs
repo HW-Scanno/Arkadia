@@ -1315,6 +1315,8 @@ public partial class MamePlaylistWindow : Window
 
         try
         {
+            // CREATING for the actual generation (listxml parse → filtering → DAT writes → manifest); ends with the try.
+            using var activity = Arkadia.Activities.ActivityMonitor.Shared.Begin(Arkadia.Activities.ActivityKind.Creating, "MAME playlist DATs");
             List<MameMachine> allMachines;
             if (_cachedMachines is not null && _cachedForVersion == version)
             {

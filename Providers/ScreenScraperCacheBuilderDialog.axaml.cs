@@ -165,7 +165,10 @@ public partial class ScreenScraperCacheBuilderDialog : Window
         ScreenScraperCachePackageBuildResult? result = null;
         try
         {
-            result = await builder.BuildAsync(opts, progress, _cts.Token);
+            // SCRAPING for the whole build (fetch → media → package → optional index); ends when the task ends.
+            result = await Arkadia.Activities.ActivityMonitor.Shared.RunAsync(
+                Arkadia.Activities.ActivityKind.Scraping,
+                () => builder.BuildAsync(opts, progress, _cts.Token), "cache builder");
         }
         catch (OperationCanceledException)
         {

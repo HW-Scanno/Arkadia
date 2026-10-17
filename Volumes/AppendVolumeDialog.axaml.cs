@@ -248,14 +248,14 @@ public partial class AppendVolumeDialog : Window
             });
         });
 
-        var svc = new AppendVolumeService(_catalog);
+        var svc = new AppendVolumeService(_catalog, Arkadia.Activities.ActivityMonitor.Shared);
 
         AppendVolumeResult result;
         try
         {
             result = _groupPlan is null
                 ? await Task.Run(() => svc.Execute(_plan, progressHandler))
-                : await Task.Run(() => ExecuteGroup(svc, _groupPlan, progressHandler));
+                : await Task.Run(() => svc.ExecuteGroup(_groupPlan, progressHandler));
         }
         catch (Exception ex)
         {
@@ -291,42 +291,6 @@ public partial class AppendVolumeDialog : Window
 
             CloseButton.IsEnabled = true;
         });
-    }
-
-    // ── Group execution: run each non-empty leaf plan through the SAME executor, sequentially ──
-    // Planning was global; execution is leaf-scoped. Each leaf plan carries its exact DatLineId, so
-    // AppendVolumeService writes volume_artifacts.dat_line_id = leaf (never the GroupId). Results are summed.
-    // A per-entry failure follows the historical single-Append result semantics; an unexpected exception
-    // propagates (stopping further leaves) with earlier leaves' committed work retained (no rollback).
-    private static AppendVolumeResult ExecuteGroup(
-        AppendVolumeService svc, GroupAppendVolumePlan groupPlan,
-        IProgress<AppendVolumeProgress> progress)
-    {
-        int  copied = 0, errors = 0, deleted = 0, deleteFailed = 0;
-        long bytes  = 0;
-        var  logs   = new List<string>();
-
-        foreach (var leafPlan in groupPlan.LeafPlans)   // DatLineId Ordinal (planning order)
-        {
-            if (leafPlan.PlannedCount == 0) continue;
-            var r = svc.Execute(leafPlan, progress);
-            copied       += r.CopiedCount;
-            bytes        += r.BytesCopied;
-            errors       += r.ErrorCount;
-            deleted      += r.SourcesDeletedCount;
-            deleteFailed += r.SourceDeleteFailedCount;
-            logs.AddRange(r.LogLines);
-        }
-
-        return new AppendVolumeResult
-        {
-            CopiedCount             = copied,
-            BytesCopied             = bytes,
-            ErrorCount              = errors,
-            SourcesDeletedCount     = deleted,
-            SourceDeleteFailedCount = deleteFailed,
-            LogLines                = logs,
-        };
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

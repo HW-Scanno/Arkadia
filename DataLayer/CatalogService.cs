@@ -437,6 +437,11 @@ public sealed class CatalogService
         TryAddColumn(conn, "dat_lines", "archive_output_exclusion_fingerprint  TEXT NULL");
         TryAddColumn(conn, "dat_lines", "archive_output_validated_at_utc       TEXT NULL");
 
+        // ── Migrate dat_lines: editable display name (DAT-NAMING-1) ──────────
+        // Nullable/additive — existing rows keep NULL, which keeps the legacy derived label
+        // ("<Authority> · <MEDIA>"). The technical id and `name` are never touched by this column.
+        TryAddColumn(conn, "dat_lines", "display_name TEXT NULL");
+
         // ── Migrate dat_lines: Group DAT metadata (Phase 2) ──────────────────
         // Additive / nullable. Existing rows stay NULL = Single DAT — NO backfill, NO
         // implicit group, NO revision assigned. group_id is a non-destructive FK to
@@ -1135,7 +1140,7 @@ public sealed class CatalogService
         using var cmd  = conn.CreateCommand();
         cmd.CommandText = """
             SELECT id, hardware_family_id, name, authority, media_type_id, version, storage_strategy_id, data_store_path, release_count, imported_at_utc,
-                   transform_strategy_type, folder_transform_id, file_handling, catalog_enabled, library_title_mode
+                   transform_strategy_type, folder_transform_id, file_handling, catalog_enabled, library_title_mode, display_name
             FROM dat_lines
             ORDER BY imported_at_utc DESC
             """;
@@ -1158,6 +1163,7 @@ public sealed class CatalogService
                 FileHandling          = reader.GetString(12),
                 CatalogEnabled        = reader.IsDBNull(13) || reader.GetInt32(13) != 0,
                 LibraryTitleMode      = reader.IsDBNull(14) ? "dat" : reader.GetString(14),
+                DisplayName           = reader.IsDBNull(15) ? null : reader.GetString(15),
             });
         return list;
     }
@@ -1170,8 +1176,8 @@ public sealed class CatalogService
         {
             using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                INSERT INTO dat_lines(id, hardware_family_id, name, authority, media_type_id, version, storage_strategy_id, data_store_path, release_count, imported_at_utc, catalog_enabled, library_title_mode)
-                VALUES($id, $hardwareFamilyId, $name, $authority, $mediaTypeId, $version, $storageStrategyId, $dataStorePath, $releaseCount, $importedAt, $catalogEnabled, $libraryTitleMode)
+                INSERT INTO dat_lines(id, hardware_family_id, name, authority, media_type_id, version, storage_strategy_id, data_store_path, release_count, imported_at_utc, catalog_enabled, library_title_mode, display_name)
+                VALUES($id, $hardwareFamilyId, $name, $authority, $mediaTypeId, $version, $storageStrategyId, $dataStorePath, $releaseCount, $importedAt, $catalogEnabled, $libraryTitleMode, $displayName)
                 ON CONFLICT(id) DO UPDATE SET
                     name                 = excluded.name,
                     authority            = excluded.authority,
@@ -1196,8 +1202,76 @@ public sealed class CatalogService
             cmd.Parameters.AddWithValue("$importedAt",        dl.ImportedAtUtc.ToString("o"));
             cmd.Parameters.AddWithValue("$catalogEnabled",    dl.CatalogEnabled ? 1 : 0);
             cmd.Parameters.AddWithValue("$libraryTitleMode",  dl.LibraryTitleMode);
+            // display_name is written on INSERT only (a brand-new row). The ON CONFLICT branch above never
+            // touches it, so re-saving the full list can neither clobber nor reset a stored display name.
+            cmd.Parameters.AddWithValue("$displayName",       (object?)dl.DisplayName ?? DBNull.Value);
             cmd.ExecuteNonQuery();
         }
+        tx.Commit();
+    }
+
+    /// <summary>
+    /// Creates ONE new standalone (Single) DAT line with a pure INSERT — never an upsert, so it can never overwrite
+    /// or "re-use" an existing DAT. In a single transaction on one connection it re-checks, against the live
+    /// catalog, that the id does not collide (case-insensitively) with ANY existing <c>dat_lines.id</c> (Single and
+    /// Group leaves), that its <c>data_store_path</c> is unused, and that the hardware family and media type exist,
+    /// then inserts the row including <c>display_name</c>. Any failure rolls back: no partial row. Group columns
+    /// stay NULL (Single DAT). Throws <see cref="SingleDatCreateException"/> for a deterministic rejection.
+    /// </summary>
+    public void CreateSingleDatLine(DatLineRecord dl)
+    {
+        ArgumentNullException.ThrowIfNull(dl);
+
+        using var conn = Open();
+        using var tx   = conn.BeginTransaction();
+
+        bool Exists(string sql, string value)
+        {
+            using var q = conn.CreateCommand();
+            q.Transaction = tx;
+            q.CommandText = sql;
+            q.Parameters.AddWithValue("$v", value);
+            return q.ExecuteScalar() is not null;
+        }
+
+        if (string.IsNullOrWhiteSpace(dl.Id))
+            throw new SingleDatCreateException(SingleDatCreateFailure.InvalidRecord, "The DAT id is empty.");
+        if (Exists("SELECT 1 FROM dat_lines WHERE id = $v COLLATE NOCASE LIMIT 1", dl.Id))
+            throw new SingleDatCreateException(SingleDatCreateFailure.IdCollision,
+                $"A DAT with id '{dl.Id}' already exists (ids are compared case-insensitively).");
+        if (dl.DataStorePath.Length > 0 &&
+            Exists("SELECT 1 FROM dat_lines WHERE data_store_path = $v COLLATE NOCASE LIMIT 1", dl.DataStorePath))
+            throw new SingleDatCreateException(SingleDatCreateFailure.StorePathCollision,
+                $"Another DAT already uses the data store path '{dl.DataStorePath}'.");
+        if (!Exists("SELECT 1 FROM hardware_families WHERE id = $v LIMIT 1", dl.HardwareFamilyId))
+            throw new SingleDatCreateException(SingleDatCreateFailure.UnknownHardwareFamily,
+                $"The system '{dl.HardwareFamilyId}' does not exist.");
+        var mediaType = dl.MediaTypeId.Length > 0 ? dl.MediaTypeId : "other";
+        if (!Exists("SELECT 1 FROM media_types WHERE id = $v LIMIT 1", mediaType))
+            throw new SingleDatCreateException(SingleDatCreateFailure.UnknownMediaType,
+                $"The media type '{mediaType}' does not exist.");
+
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            INSERT INTO dat_lines(id, hardware_family_id, name, authority, media_type_id, version, storage_strategy_id, data_store_path, release_count, imported_at_utc, catalog_enabled, library_title_mode, display_name)
+            VALUES($id, $hardwareFamilyId, $name, $authority, $mediaTypeId, $version, $storageStrategyId, $dataStorePath, $releaseCount, $importedAt, $catalogEnabled, $libraryTitleMode, $displayName)
+            """;
+        cmd.Parameters.AddWithValue("$id",                dl.Id);
+        cmd.Parameters.AddWithValue("$hardwareFamilyId",  dl.HardwareFamilyId);
+        cmd.Parameters.AddWithValue("$name",              dl.Name);
+        cmd.Parameters.AddWithValue("$authority",         dl.Authority);
+        cmd.Parameters.AddWithValue("$mediaTypeId",       mediaType);
+        cmd.Parameters.AddWithValue("$version",           dl.Version);
+        cmd.Parameters.AddWithValue("$storageStrategyId", NullIfEmpty(dl.StorageStrategyId));
+        cmd.Parameters.AddWithValue("$dataStorePath",     dl.DataStorePath);
+        cmd.Parameters.AddWithValue("$releaseCount",      dl.ReleaseCount);
+        cmd.Parameters.AddWithValue("$importedAt",        dl.ImportedAtUtc.ToString("o"));
+        cmd.Parameters.AddWithValue("$catalogEnabled",    dl.CatalogEnabled ? 1 : 0);
+        cmd.Parameters.AddWithValue("$libraryTitleMode",  dl.LibraryTitleMode);
+        cmd.Parameters.AddWithValue("$displayName",       (object?)dl.DisplayName ?? DBNull.Value);
+        cmd.ExecuteNonQuery();
+
         tx.Commit();
     }
 

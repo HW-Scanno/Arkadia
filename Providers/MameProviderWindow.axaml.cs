@@ -214,6 +214,10 @@ public partial class MameProviderWindow : Window
 
         SetBusy(true);
 
+        // One DOWNLOADING scope for the whole task (download → 7z extraction → version check → listxml → count → meta);
+        // it follows the task even after the window is closed, and ends before the optional Category.ini prompt.
+        var activity = Arkadia.Activities.ActivityMonitor.Shared.Begin(Arkadia.Activities.ActivityKind.Downloading, "MAME download");
+
         using var cts = new CancellationTokenSource();
         _cts = cts;
 
@@ -301,6 +305,7 @@ public partial class MameProviderWindow : Window
             AppendLog($"Cache complete: {relOut}", "#7B68EE");
             MameStatusText.Text = $"MAME {actualVersion} cached successfully.";
 
+            activity.Dispose();   // processing is over; the prompt below waits for the user
             await PromptCategoryIniIfNeededAsync();
         }
         catch (OperationCanceledException)
@@ -315,6 +320,7 @@ public partial class MameProviderWindow : Window
         }
         finally
         {
+            activity.Dispose();   // idempotent; also covers failure and cancellation
             if (tempZip is not null)     try { File.Delete(tempZip); }                catch { }
             if (newCacheDir is not null) try { Directory.Delete(newCacheDir, true); } catch { }
             ResetProgress();

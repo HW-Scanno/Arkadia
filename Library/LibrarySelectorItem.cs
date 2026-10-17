@@ -10,10 +10,13 @@ namespace Arkadia.Library;
 /// by <see cref="DatLineId"/> — never the label, the display string, or the list index. Single (non-group)
 /// entries keep their historical label verbatim.
 /// </summary>
-public sealed record LibrarySelectorItem(string DatLineId, string Label, bool IsGroupLeaf)
+public sealed record LibrarySelectorItem(string DatLineId, string Label, bool IsGroupLeaf, bool ShowId = false)
 {
-    /// <summary>Text shown in the ComboBox. Group leaves append the full DatLineId; Single labels are unchanged.</summary>
-    public string Display => IsGroupLeaf ? $"{Label} — {DatLineId}" : Label;
+    /// <summary>
+    /// Text shown in the ComboBox. Group leaves append the full DatLineId; a standalone label is unchanged unless
+    /// it collides with another visible label (<see cref="ShowId"/>), in which case the id disambiguates it.
+    /// </summary>
+    public string Display => IsGroupLeaf || ShowId ? $"{Label} — {DatLineId}" : Label;
 
     // Avalonia renders an untemplated combo item via ToString().
     public override string ToString() => Display;

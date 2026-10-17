@@ -14,6 +14,11 @@ public static class StorageBadgePolicy
     public const string ReadyToMoveColor = "#FFD54F"; // amber — assigned but still local
     public const string ArchivedColor    = "#4CAF50"; // success — physically archived
 
+    // LOADING: the same pill as the badges above, in light neutral white (it carries no semantic state).
+    public const string LoadingColor   = "#E8E8F0";
+    public const string LoadingLabel   = "LOADING";
+    public const string LoadingTooltip = "Calculating status…";
+
     public const string StagingLabel = "STAGING";
 
     public const string StagingTooltip = "Material remains in staging and still requires processing.";

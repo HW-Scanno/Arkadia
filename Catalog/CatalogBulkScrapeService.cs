@@ -55,7 +55,8 @@ public sealed record BulkScrapeReport(
 public sealed class CatalogBulkScrapeService(
     string                          dataDir,
     CatalogService                  catalog,
-    ScreenScraperCacheImportService importSvc)
+    ScreenScraperCacheImportService importSvc,
+    Arkadia.Activities.ActivityMonitor? activities = null)
 {
     private readonly ScreenScraperCacheSearchService _searchSvc = new(catalog);
 
@@ -66,6 +67,8 @@ public sealed class CatalogBulkScrapeService(
         IProgress<BulkScrapeProgress>?            progress = null,
         CancellationToken                         ct       = default)
     {
+        // SCRAPING for the whole run (one scope, released on completion, cancellation and failure alike).
+        using var activity = activities?.Begin(Arkadia.Activities.ActivityKind.Scraping, "bulk scrape");
         var results   = new List<BulkScrapeReleaseResult>();
         int total     = entries.Count;
         int processed = 0, matched = 0, noMatch = 0, ambiguous = 0, errors = 0;

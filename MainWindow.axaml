@@ -7,6 +7,7 @@
         xmlns:disks="using:Arkadia.Disks"
         xmlns:vols="using:Arkadia.Volumes"
         xmlns:data="using:Arkadia.Data"
+        xmlns:ctl="using:Arkadia.Controls"
         x:Class="Arkadia.MainWindow"
         Title="Arkadia"
         Width="1550" Height="785"
@@ -185,6 +186,19 @@
             <Setter Property="Background" Value="#2A0A0A"/>
         </Style>
 
+        <!-- Section label in the Systems action bar ("System" / "DAT"): plain text, no border/background,
+             not hit-testable and not focusable, so it can neither be clicked nor tabbed to. -->
+        <Style Selector="TextBlock.toolbar-section">
+            <Setter Property="FontSize"          Value="10"/>
+            <Setter Property="FontWeight"        Value="SemiBold"/>
+            <Setter Property="LetterSpacing"     Value="1.5"/>
+            <Setter Property="Foreground"        Value="{DynamicResource ArkTextSecondary}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin"            Value="0,0,2,0"/>
+            <Setter Property="IsHitTestVisible"  Value="False"/>
+            <Setter Property="Focusable"         Value="False"/>
+        </Style>
+
         <!-- ══════════════════════════════════════════════════════════
              Text action links (Update DAT, Delete, Open in Library, etc.)
         ══════════════════════════════════════════════════════════════ -->
@@ -317,15 +331,21 @@
             <DockPanel>
                 <Border DockPanel.Dock="Top" Height="56" Padding="20,0">
                     <Panel VerticalAlignment="Center">
-                        <Image x:Name="SidebarLogoImage"
-                               MaxHeight="28"
-                               HorizontalAlignment="Left"
-                               IsVisible="False"
-                               RenderOptions.BitmapInterpolationMode="HighQuality"/>
-                        <TextBlock x:Name="SidebarLogoText"
-                                   Text="ARKADIA"
-                                   FontSize="14" FontWeight="Bold" LetterSpacing="3"
-                                   Foreground="{DynamicResource ArkAccent}"/>
+                        <!-- Previous branding (theme logo / "ARKADIA" text). Kept in the tree, collapsed, so the theme-logo
+                             code in the code-behind keeps working untouched; set IsVisible="True" to bring it back. -->
+                        <Panel x:Name="SidebarBrandingLegacy" IsVisible="False">
+                            <Image x:Name="SidebarLogoImage"
+                                   MaxHeight="28"
+                                   HorizontalAlignment="Left"
+                                   IsVisible="False"
+                                   RenderOptions.BitmapInterpolationMode="HighQuality"/>
+                            <TextBlock x:Name="SidebarLogoText"
+                                       Text="ARKADIA"
+                                       FontSize="14" FontWeight="Bold" LetterSpacing="3"
+                                       Foreground="{DynamicResource ArkAccent}"/>
+                        </Panel>
+                        <!-- C64-style activity console (visual prototype: READY by default, not wired to real activity). -->
+                        <ctl:C64StatusConsole x:Name="SidebarStatusConsole"/>
                     </Panel>
                 </Border>
                 <Border DockPanel.Dock="Top" Height="1" Margin="12,0,12,8"
@@ -672,33 +692,70 @@
                         Background="{DynamicResource ArkSurface}"
                         BorderBrush="{DynamicResource ArkSurfaceAlt}"
                         BorderThickness="0,0,0,1">
-                    <StackPanel Orientation="Horizontal" Spacing="6">
+                    <!-- Single-row bar with overflow. SysBarItems is ONE horizontal row that never wraps, clips or scrolls:
+                         Systems.ToolbarOverflowController (wired in the MainWindow constructor) measures the real width of
+                         SysBarHost, hides the commands that do not fit and shows the chevron (SysActOverflow), whose menu
+                         raises Click on the ORIGINAL buttons below. "System" / "DAT" are plain, non-focusable,
+                         non-hit-testable section labels. x:Names and handlers are unchanged (note the historical swap:
+                         SysActVerifyDat = "Verify All", SysActVerifyAll = "Verify"). -->
+                    <DockPanel x:Name="SysBarHost" LastChildFill="True">
+                      <Button x:Name="SysActOverflow" DockPanel.Dock="Right" Classes="view-toggle"
+                              IsVisible="False" Margin="6,0,0,0" Padding="9,5"
+                              AutomationProperties.Name="More commands"
+                              ToolTip.Tip="More commands">
+                        <Path Data="M0,0 L5,5 L10,0" Stroke="#AAAACC"
+                              StrokeThickness="1.6" StrokeLineCap="Round" StrokeJoin="Round"
+                              Width="10" Height="6" Stretch="Fill"/>
+                      </Button>
+                    <StackPanel x:Name="SysBarItems" Orientation="Horizontal" Spacing="6" ClipToBounds="True">
+                        <TextBlock x:Name="SysBarSystemLabel" Text="System" Classes="toolbar-section"/>
                         <Button x:Name="SysActCreatePlatform" Classes="view-toggle"
-                                Content="Create System" Click="OnCreatePlatform"/>
+                                Content="Create" Click="OnCreatePlatform"
+                                AutomationProperties.Name="Create System"
+                                ToolTip.Tip="Create System"/>
                         <Button x:Name="SysActEditPlatform"   Classes="view-toggle"
-                                Content="Edit System"   Click="OnEditPlatform"/>
+                                Content="Edit"   Click="OnEditPlatform"
+                                AutomationProperties.Name="Edit System"
+                                ToolTip.Tip="Edit the selected System"/>
                         <Button x:Name="SysActDeletePlatform" Classes="view-toggle danger"
-                                Content="Delete System" Click="OnDeletePlatform"/>
-                        <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
-                                Margin="10,2" VerticalAlignment="Stretch"/>
+                                Content="Delete" Click="OnDeletePlatform"
+                                AutomationProperties.Name="Delete System"
+                                ToolTip.Tip="Delete the selected System"/>
+                        <Border Width="1" Height="18" Background="{DynamicResource ArkSurfaceAlt}"
+                                Margin="10,0" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="SysBarDatLabel" Text="DAT" Classes="toolbar-section"/>
                         <Button x:Name="SysActImportDat"    Classes="view-toggle"
-                                Content="Import DAT"    Click="OnImportDat"/>
+                                Content="Import"    Click="OnImportDat"
+                                AutomationProperties.Name="Import DAT"
+                                ToolTip.Tip="Import a DAT file into the selected System"/>
                         <Button x:Name="SysActPreviewGroupDat" Classes="view-toggle"
-                                Content="Preview Group DAT…" Click="OnPreviewGroupDat"/>
+                                Content="Group" Click="OnPreviewGroupDat"
+                                AutomationProperties.Name="Create Group DAT"
+                                ToolTip.Tip="Create a Group DAT from a folder of DATs (preview first; nothing is written until you confirm)"/>
                         <Button x:Name="SysActConfigureDat" Classes="view-toggle"
-                                Content="Configure DAT" Click="OnSysConfigureDat"/>
-                        <Button x:Name="SysActVerifyDat"    Classes="view-toggle"
-                                Content="Verify ALL"    Click="OnSysVerifyDat"
-                                ToolTip.Tip="Validate archive-output policy for all DATs in the catalog."/>
+                                Content="Configure" Click="OnSysConfigureDat"
+                                AutomationProperties.Name="Configure DAT"
+                                ToolTip.Tip="Configure the selected DAT, or the selected Group DAT"/>
                         <Button x:Name="SysActUpdateDat"    Classes="view-toggle"
-                                Content="Update DAT"    Click="OnSysUpdateDat"/>
+                                Content="Update"    Click="OnSysUpdateDat"
+                                AutomationProperties.Name="Update DAT"
+                                ToolTip.Tip="Update the selected DAT from a newer DAT file"/>
                         <Button x:Name="SysActVerifyAll"    Classes="view-toggle"
                                 Content="Verify"        Click="OnSysVerify"
+                                AutomationProperties.Name="Verify"
                                 ToolTip.Tip="Verify the selected DAT, or every leaf of the selected Group, one at a time."/>
+                        <Button x:Name="SysActVerifyDat"    Classes="view-toggle"
+                                Content="Verify All"    Click="OnSysVerifyDat"
+                                AutomationProperties.Name="Verify All"
+                                ToolTip.Tip="Validate archive-output policy for all DATs in the catalog."/>
                         <Button x:Name="SysActDeleteDat"    Classes="view-toggle danger"
-                                Content="Delete DAT"    Click="OnSysDeleteDat"/>
+                                Content="Delete"    Click="OnSysDeleteDat"
+                                AutomationProperties.Name="Delete DAT"
+                                ToolTip.Tip="Delete the selected DAT"/>
                         <Button x:Name="SysActDeleteGroup"  Classes="view-toggle danger"
-                                Content="Delete Group"  Click="OnSysDeleteGroup"/>
+                                Content="Delete Group"  Click="OnSysDeleteGroup"
+                                AutomationProperties.Name="Delete Group"
+                                ToolTip.Tip="Delete the selected Group DAT (only if nothing has been ingested)"/>
                         <Border Width="1" Background="{DynamicResource ArkSurfaceAlt}"
                                 Margin="10,2" VerticalAlignment="Stretch"/>
                         <Button x:Name="SysActIngestFiles" Classes="view-toggle"
@@ -710,6 +767,7 @@
                         <Button Classes="view-toggle"
                                 Content="DAT Downloader" Click="OnOpenDatDownloader"/>
                     </StackPanel>
+                    </DockPanel>
                 </Border>
 
                 <!-- Center tree + detail pane -->
@@ -1909,6 +1967,28 @@
 
                             <!-- ── Right column: LOGGING, DIAGNOSTICS ───────────── -->
                             <StackPanel Grid.Column="2" Spacing="20">
+
+                                <!-- ── GENERAL card (maintenance) ────────────────── -->
+                                <Border Background="#0A0A12" BorderBrush="#1E1E2C"
+                                        BorderThickness="1" CornerRadius="6" Padding="20,16">
+                                    <StackPanel Spacing="0">
+
+                                        <TextBlock Text="GENERAL"
+                                                   FontSize="10" FontWeight="SemiBold" LetterSpacing="1.2"
+                                                   Foreground="#555566" Margin="0,0,0,16"/>
+
+                                        <StackPanel Spacing="4">
+                                            <Button x:Name="CleanEmptyFoldersButton"
+                                                    Content="Clean Empty Folders"
+                                                    Classes="view-toggle"
+                                                    Click="OnCleanEmptyFolders"/>
+                                            <TextBlock Text="Removes empty folders left behind in staging/, archive/ and source/. Previews first; files are never deleted."
+                                                       FontSize="11" Foreground="#555577"
+                                                       TextWrapping="Wrap"/>
+                                        </StackPanel>
+
+                                    </StackPanel>
+                                </Border><!-- /General card -->
 
                                 <!-- ── LOGGING card ─────────────────────────────── -->
                                 <Border Background="#0A0A12" BorderBrush="#1E1E2C"

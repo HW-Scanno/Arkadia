@@ -129,6 +129,59 @@ public sealed class GroupDatExecutionServiceTests : IDisposable
             },
         });
 
+    // ── Activity (GLOBAL-ACTIVITY-INTEGRATION-1) ────────────────────────────────
+
+    [Fact]
+    public async System.Threading.Tasks.Task Create_IsObservedAsImporting_ReleasedAfterwards_AndCommitsLikeTheUnobservedRun()
+    {
+        var c    = NewCatalog();
+        var rel  = WriteDat("A/anims.dat", "Anims", games: 3);
+        var rec  = new Arkadia.Tests.Activities.ActivityRecorder();
+
+        var observed = await new GroupDatExecutionService(c, _dataDir, rec.Monitor)
+            .ExecuteCreateAsync(BuildPlan(new[] { (rel, "c64-tosec-a", "other") }), null, CancellationToken.None);
+        var plain = await new GroupDatExecutionService(c, _dataDir)
+            .ExecuteCreateAsync(BuildPlan(new[] { (rel, "c64-nointro-a", "other") }, authority: "nointro"), null, CancellationToken.None);
+
+        Assert.Equal(new Arkadia.Activities.ActivityKind?[] { Arkadia.Activities.ActivityKind.Importing, null }, rec.Seen);
+        Assert.Equal(plain.OverallStatus, observed.OverallStatus);
+        Assert.Equal(plain.PublishedCount, observed.PublishedCount);
+        Assert.Equal(plain.Revision, observed.Revision);
+        Assert.Equal(3, Assert.Single(c.GetLeavesForGroup("c64-tosec")).DatLine.ReleaseCount);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Create_ReleasesTheScope_OnAbortCancellationAndException()
+    {
+        var c   = NewCatalog();
+        var rel = WriteDat("A/a.dat", "AA", games: 2);
+        var rec = new Arkadia.Tests.Activities.ActivityRecorder();
+        var svc = new GroupDatExecutionService(c, _dataDir, rec.Monitor);
+
+        // invalid plan → typed abort, nothing written
+        var bad = BuildPlan(new[] { (rel, "BAD ID", "other") });
+        Assert.False((await svc.ExecuteCreateAsync(bad, null, CancellationToken.None)).Succeeded);
+        Assert.True(rec.Idle);
+
+        // cancellation before publish
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        var cancelled = await svc.ExecuteCreateAsync(BuildPlan(new[] { (rel, "c64-tosec-a", "other") }), null, cts.Token);
+        Assert.False(cancelled.Succeeded);
+        Assert.True(rec.Idle);
+
+        // a progress sink that throws mid-run: the scope still ends
+        try { await svc.ExecuteCreateAsync(BuildPlan(new[] { (rel, "c64-tosec-b", "other") }), new ThrowingProgress(), CancellationToken.None); }
+        catch (InvalidOperationException) { }
+        Assert.True(rec.Idle);
+        Assert.Equal(rec.Seen.Count(k => k is null), rec.Seen.Count(k => k is not null));   // every begin matched by one READY
+    }
+
+    private sealed class ThrowingProgress : IProgress<GroupDatExecutionProgress>
+    {
+        public void Report(GroupDatExecutionProgress value) => throw new InvalidOperationException("sink failed");
+    }
+
     // ── Success ─────────────────────────────────────────────────────────────────
 
     [Fact]  // (1) one leaf; (4) group created; (7) revision 0; (9) final DB openable; (10) counts; (11) no temp

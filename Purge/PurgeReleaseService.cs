@@ -35,15 +35,20 @@ public sealed class PurgeReleaseService
 {
     private readonly string         _appRoot;
     private readonly CatalogService _catalog;
+    private readonly Arkadia.Activities.ActivityMonitor? _activities;
 
-    public PurgeReleaseService(string appRoot, CatalogService catalog)
+    /// <param name="activities">Shared activity monitor (null = not observed). It only observes <see cref="Execute"/>.</param>
+    public PurgeReleaseService(string appRoot, CatalogService catalog, Arkadia.Activities.ActivityMonitor? activities = null)
     {
         _appRoot = appRoot;
         _catalog = catalog;
+        _activities = activities;
     }
 
     public PurgeResult Execute(PurgeReleasePlan plan)
     {
+        // PURGING only while files are actually being destroyed (a blocked/unexecutable plan registers nothing).
+        using var activity = plan.CanExecute ? _activities?.Begin(Arkadia.Activities.ActivityKind.Purging, "purge release") : null;
         // ── Revalidate ────────────────────────────────────────────────────────
         if (!plan.CanExecute)
             return Fail("Plan is not executable (offline disks or blocking issues).");

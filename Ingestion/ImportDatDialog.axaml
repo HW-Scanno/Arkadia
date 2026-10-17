@@ -262,24 +262,57 @@
                     </StackPanel>
                 </Border>
 
-                <!-- ╔══ DAT LINE ID ══╗ -->
-                <TextBlock Text="DAT LINE ID"
+                <!-- ╔══ DAT IDENTITY ══╗ -->
+                <TextBlock Text="DAT IDENTITY"
                            FontSize="10" FontWeight="SemiBold" LetterSpacing="1.8"
                            Foreground="#888899" Margin="0,0,0,8"/>
 
                 <Border Classes="section-card" Margin="0,0,0,4">
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="Generated ID" FontSize="12" Foreground="#888899"/>
-                        <TextBox x:Name="DatLineIdInput"
-                                 Classes="id-display"
-                                 Watermark="—"
-                                 IsReadOnly="True"/>
-                        <TextBlock Text="format: hardware-authority-media"
-                                   FontSize="11" Foreground="#333348"/>
+                    <StackPanel Spacing="10">
+
+                        <!-- Variant (editable) -->
+                        <StackPanel Spacing="4">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="Variant" FontSize="12" Foreground="#888899"/>
+                                <TextBlock Text="*"       FontSize="12" Foreground="#E07040"/>
+                            </StackPanel>
+                            <TextBox x:Name="VariantInput"
+                                     Text="main"
+                                     Watermark="e.g. main, downloadplay, sbi"
+                                     TextChanged="OnVariantChanged"/>
+                            <TextBlock Text="lowercase letters and digits; single hyphens between parts"
+                                       FontSize="11" Foreground="#333348"/>
+                        </StackPanel>
+
+                        <!-- Full DAT ID (read-only preview; immutable after import) -->
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="DAT ID (permanent after import)" FontSize="12" Foreground="#888899"/>
+                            <TextBox x:Name="DatLineIdInput"
+                                     Classes="id-display"
+                                     Watermark="—"
+                                     IsReadOnly="True"/>
+                            <TextBlock Text="format: system-authority-media-variant"
+                                       FontSize="11" Foreground="#333348"/>
+                        </StackPanel>
+
+                        <!-- Display Name (editable, independent of the ID) -->
+                        <StackPanel Spacing="4">
+                            <StackPanel Orientation="Horizontal" Spacing="4">
+                                <TextBlock Text="Display Name" FontSize="12" Foreground="#888899"/>
+                                <TextBlock Text="*"            FontSize="12" Foreground="#E07040"/>
+                            </StackPanel>
+                            <TextBox x:Name="DisplayNameInput"
+                                     Watermark="e.g. NoIntro - Main"
+                                     TextChanged="OnDisplayNameChanged"/>
+                            <TextBlock Text="shown in the app; independent of the ID"
+                                       FontSize="11" Foreground="#333348"/>
+                        </StackPanel>
+
                         <TextBlock x:Name="DatLineConflictText"
-                                   Text="DAT line already exists. Use Update DAT instead."
+                                   Text=""
                                    FontSize="11"
                                    Foreground="#EF5350"
+                                   TextWrapping="Wrap"
                                    IsVisible="False"/>
                     </StackPanel>
                 </Border>

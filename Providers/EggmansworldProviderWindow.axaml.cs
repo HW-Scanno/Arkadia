@@ -170,6 +170,8 @@ public partial class EggmansworldProviderWindow : Window
         if (selected.Count == 0) return;
 
         SetBusy(true);
+        // DOWNLOADING follows the actual download task (including its unwinding after a cancel/close), not the window.
+        using var activity = Arkadia.Activities.ActivityMonitor.Shared.Begin(Arkadia.Activities.ActivityKind.Downloading, "Eggman's World DAT download");
 
         var outputDir   = ProviderHelpers.GetEggmansworldOutputDir();
         Directory.CreateDirectory(outputDir);
