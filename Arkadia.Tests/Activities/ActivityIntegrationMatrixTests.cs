@@ -55,6 +55,7 @@ public sealed class ActivityIntegrationMatrixTests
         new object[] { "Group ingest plan", "MainWindow.axaml.cs", "using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Loading, \"Group ingestion plan\")", ";", "Loading" },
         new object[] { "Group volume plan", "MainWindow.axaml.cs", "using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Loading, \"Group volume plan\")", ";", "Loading" },
         new object[] { "Dashboard",         "MainWindow.axaml.cs", "using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Loading, \"dashboard\")", ";", "Loading" },
+        new object[] { "Pending scan",      "MainWindow.axaml.cs", "using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Loading, \"pending reconciliations\")", ";", "Loading" },
         new object[] { "Online scrape",     "MainWindow.axaml.cs", "scrapeActivity = Activities.ActivityMonitor.Shared.Begin(",   ";",                                                    "Scraping" },
         new object[] { "Cache import",      "MainWindow.axaml.cs", "var cacheSummary = await Activities.ActivityMonitor.Shared.RunAsync(", "\"cache import\");",                                   "Importing" },
         new object[] { "AMP import",        "MainWindow.axaml.cs", "var ampSummary = await Activities.ActivityMonitor.Shared.RunAsync(", "\"AMP import\");",                                      "Importing" },

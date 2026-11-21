@@ -145,7 +145,14 @@ public partial class MainWindow : Window
     // CONCURRENCY = 1) lives in the pure, unit-tested Systems.GroupCoverageQueue; MainWindow just drives the
     // off-thread compute around it. the GroupCoverageDrainer gates the single worker on the UI thread.
     private readonly Systems.GroupCoverageQueue _groupCoverage = new();
-    private readonly Dictionary<string, List<(string DatLineId, string DataStorePath, int ReleaseCount)>> _groupLeafDbInfo = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, List<(string DatLineId, string DataStorePath, int ReleaseCount)>> _groupLeafDbInfo = new(StringComparer.OrdinalIgnoreCase);
+
+    // The data behind the Systems view (rows, Group cards, membership) with the facts they were composed from.
+    // Replaced by every complete refresh; the targeted updates (one Group's coverage, one System) change it in place.
+    private Systems.SystemsViewData? _systemsView;
+    // Tree nodes by System id / Group id, rebuilt by BuildTree — lets a targeted update replace a single node.
+    private readonly Dictionary<string, Control> _platformTreeNodes = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Control> _groupTreeNodes    = new(StringComparer.Ordinal);
 
     private void InitSystems()
     {
@@ -177,201 +184,136 @@ public partial class MainWindow : Window
     {
         var keepDatId      = _selectedDatLine?.CatalogId;
         var targetPlatform = platformId ?? _selectedPlatformId;
-        RefreshSystems();
+        ReloadSystemsData();
+        RestoreSystemsSelection(targetPlatform, keepDatId);
+    }
 
-        if (targetPlatform is not null)
+    /// <summary>
+    /// Renders the Systems view ONCE after its data changed: selects <paramref name="targetPlatform"/> (the first
+    /// System when it is gone) and re-selects the DAT that was selected, when it still belongs to that System. The
+    /// System's DAT rows are read once and shared by the re-selection and the tree. Same resulting state as
+    /// SelectPlatform followed by SelectDatLine — a Group selection is cleared and the System's pending Groups are
+    /// queued with priority (a failed one gets its retry) — without the intermediate tree reconstructions.
+    /// </summary>
+    private void RestoreSystemsSelection(string? targetPlatform, string? keepDatId)
+    {
+        var target = targetPlatform is null ? null : _systemsPlatforms.FirstOrDefault(x => x.Id == targetPlatform);
+        if (target is null)
         {
-            var p = _systemsPlatforms.FirstOrDefault(x => x.Id == targetPlatform);
-            if (p is not null)
+            if (_systemsPlatforms.Count > 0)
+                SelectPlatform(_systemsPlatforms[0].Id);
+            else
             {
-                SelectPlatform(p.Id);
-                // Try to restore DAT selection
-                if (keepDatId is not null)
-                {
-                    var d = BuildDatLineInfos(p.Id).FirstOrDefault(x => x.CatalogId == keepDatId);
-                    if (d is not null) SelectDatLine(d, p.Id);
-                }
-                return;
+                BuildTree();
+                UpdateActionBar();
             }
+            return;
         }
-        if (_systemsPlatforms.Count > 0)
-            SelectPlatform(_systemsPlatforms[0].Id);
+
+        var dats = BuildDatLineInfos(target.Id);
+        var dat  = keepDatId is null ? null : dats.FirstOrDefault(x => x.CatalogId == keepDatId);   // try to restore DAT selection
+
+        _selectedPlatformId = target.Id;
+        _selectedPlatform   = target;
+        _selectedDatLine    = dat;
+        _selectedGroupId    = null;
+        BuildTree(dats);
+        UpdateDetailPane(target, dat);
+        UpdateActionBar();
+        EnsureGroupCoverageForPlatformAsync(target.Id);   // lazy, off-UI-thread; the view updates when coverage lands
     }
 
     private void RefreshSystems()
     {
-        _hardwareTypeMap  = _catalog.LoadHardwareTypes()
-            .ToDictionary(h => h.Id, h => h.Name);
-        _strategyNameMap  = _catalog.LoadStorageStrategies()
-            .ToDictionary(s => s.Id, s => s.Name);
-        _authorityNameMap = _catalog.LoadAuthorities()
-            .ToDictionary(a => a.Id, a => a.Name);
-
-        var allDatLines = _catalog.LoadDatLines();
-
-        // Group membership (read-only, catalog-only — NO leaf DB opens). leaf id → group id, per-group
-        // display metadata, and per-group leaf DB locations for the LAZY coverage load. Group leaves stay
-        // real dat_lines; they are hidden from the main list and rolled up into one Group card whose
-        // completion is computed off the UI thread on demand (never during this startup path).
-        var leafToGroup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var groupMeta   = new Dictionary<string, GroupMeta>(StringComparer.OrdinalIgnoreCase);
-        var groupLeafCount = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var groupReleaseSum = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var groupLeafIdList = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-        _groupLeafDbInfo.Clear();
-        foreach (var g in _catalog.LoadDatGroups())
-        {
-            groupMeta[g.Id.Value] = new GroupMeta(g.DisplayName, GetAuthorityName(g.Authority), g.HardwareFamilyId);
-            var dbInfo = new List<(string DatLineId, string DataStorePath, int ReleaseCount)>();
-            var idList = new List<string>();
-            int relSum = 0;
-            foreach (var leaf in _catalog.GetLeavesForGroup(g.Id.Value))
-            {
-                leafToGroup[leaf.DatLine.Id] = g.Id.Value;
-                dbInfo.Add((leaf.DatLine.Id, leaf.DatLine.DataStorePath, leaf.DatLine.ReleaseCount));
-                idList.Add(leaf.DatLine.Id);
-                relSum += leaf.DatLine.ReleaseCount;
-            }
-            _groupLeafDbInfo[g.Id.Value] = dbInfo;
-            groupLeafCount[g.Id.Value]   = dbInfo.Count;
-            groupReleaseSum[g.Id.Value]  = relSum;
-            groupLeafIdList[g.Id.Value]  = idList;
-        }
-        _groupLeafIds = new HashSet<string>(leafToGroup.Keys, StringComparer.OrdinalIgnoreCase);
-        _leafToGroup  = leafToGroup;
-
-        // Storage-lifecycle inputs that need NO leaf DB open: LOCAL-workspace volume owners (catalog) and the
-        // bulk assigned-artifact map (catalog). Both are single queries reused across every platform below.
-        var appRoot          = AppContext.BaseDirectory;
-        var localOwners      = _catalog.GetLocalWorkspaceVolumeOwners();
-        var localDatLines    = new HashSet<string>(
-            localOwners.Where(o => o.DatLineId is not null).Select(o => o.DatLineId!), StringComparer.Ordinal);
-        var localGroups      = new HashSet<string>(
-            localOwners.Where(o => o.GroupId is not null).Select(o => o.GroupId!), StringComparer.OrdinalIgnoreCase);
-        var assignedByDatLine = _catalog.GetAllAssignedDerivedIdsByDatLine();
-        var emptyAssigned     = new HashSet<string>(StringComparer.Ordinal);
-
-        // One live staging probe per platform, reused for System and Group cards (STAGING is a filesystem flag).
-        var platformIdsForStaging = _catalog.LoadPlatforms().Select(p => p.Id).Distinct(StringComparer.Ordinal);
-        var stagingByPlatform     = platformIdsForStaging.ToDictionary(
-            pid => pid, pid => Systems.StagingSnapshot.LeafIdsWithStaging(appRoot, pid), StringComparer.Ordinal);
-        HashSet<string> StagingFor(string pid) =>
-            stagingByPlatform.TryGetValue(pid, out var set) ? set : new HashSet<string>(StringComparer.Ordinal);
-
-        // Per-group LOCAL flag (catalog only). Group lifecycle facts (owned/unassigned) come from the lazy cache.
-        var groupLifecycle = new Dictionary<string, ArchiveLifecycle>(StringComparer.OrdinalIgnoreCase);
-        foreach (var gid in groupMeta.Keys)
-            if (_groupCoverage.TryGet(gid, out var gf))
-                groupLifecycle[gid] = StorageLifecycle.Derive(
-                    gf.OwnedPresentDerived, gf.Unassigned, localGroups.Contains(gid));
-
-        _systemsPlatforms = _catalog.LoadPlatforms()
-            .Select(platform =>
-            {
-                var platformDatLines = allDatLines.Where(dl => dl.HardwareFamilyId == platform.Id).ToList();
-                var total   = platformDatLines.Sum(dl => dl.ReleaseCount);
-                int present = 0, outdated = 0, unwanted = 0, lost = 0;
-
-                // Live staging snapshot for this platform (precomputed; maps leaf ids → staging presence).
-                var stagingLeaves = StagingFor(platform.Id);
-                var childLifecycles = new List<ArchiveLifecycle>();
-
-                // Single (non-group) leaves keep the exact historical behaviour: open each DB for counts, and in
-                // the SAME open read present-derived assignment stats for the per-DAT lifecycle (no extra open).
-                foreach (var dl in platformDatLines)
-                {
-                    if (leafToGroup.ContainsKey(dl.Id)) continue;   // group leaf — never opened on this path
-                    if (dl.DataStorePath.Length == 0) continue;
-                    var absPath = Path.Combine(_dataDir, dl.DataStorePath);
-                    if (!File.Exists(absPath)) continue;
-                    var store = new DatLineStore(absPath);
-                    var c = store.GetAllStatusCounts();
-                    present  += c.Present;
-                    outdated += c.Outdated;
-                    unwanted += c.Unwanted;
-                    lost     += c.Lost;
-
-                    var assigned = assignedByDatLine.TryGetValue(dl.Id, out var s) ? s : emptyAssigned;
-                    var (ownedDl, unassignedDl) = store.GetPresentDerivedAssignmentStats(assigned);
-                    childLifecycles.Add(StorageLifecycle.Derive(ownedDl, unassignedDl, localDatLines.Contains(dl.Id)));
-                }
-
-                // Fold in group leaves ONLY from already-loaded cache; otherwise mark coverage pending (spinner)
-                // or, if the background compute faulted, failed (warning marker). Pending wins over failed.
-                bool coveragePending = false;
-                bool anyGroupFailed  = false;
-                foreach (var gid in groupMeta.Keys.Where(k => groupMeta[k].HardwareFamilyId == platform.Id))
-                {
-                    if (_groupCoverage.TryGet(gid, out var cov))
-                    {
-                        present  += cov.Present;
-                        unwanted += cov.Unwanted;
-                        childLifecycles.Add(groupLifecycle[gid]);
-                    }
-                    else if (_groupCoverage.IsFailed(gid))
-                    {
-                        anyGroupFailed = true;   // its compute faulted — the System aggregate is incomplete
-                    }
-                    else
-                    {
-                        coveragePending = true;   // its leaves are still loading off the UI thread
-                    }
-                }
-
-                int wanted = Math.Max(0, total - unwanted);
-                return new SystemPlatform
-                {
-                    Id               = platform.Id,
-                    Name             = platform.Name,
-                    Manufacturer     = platform.Manufacturer,
-                    HardwareType     = _hardwareTypeMap.TryGetValue(platform.HardwareTypeId, out var ht) ? ht : "",
-                    DatLines         = platformDatLines.Count,
-                    TotalTitles      = total,
-                    Present          = present,
-                    Outdated         = outdated,
-                    Missing          = Math.Max(0, wanted - present - outdated - lost),
-                    Lost             = lost,
-                    Unwanted         = unwanted,
-                    CoveragePending  = coveragePending,
-                    CoverageFailed   = !coveragePending && anyGroupFailed,
-                    // Lifecycle is the fold of known child states; omit while any group is pending OR failed so a
-                    // partial load never renders a false ARCHIVED/NEEDS VOLUME.
-                    LifecyclePending = coveragePending || anyGroupFailed,
-                    Lifecycle        = (coveragePending || anyGroupFailed) ? ArchiveLifecycle.None : StorageLifecycle.Fold(childLifecycles),
-                    HasStaging       = stagingLeaves.Count > 0,
-                };
-            })
-            .ToList();
-
-        // Group cards: computed from cache when available; failed → N/A (0,0); otherwise pending (spinner) —
-        // never a false 0%. Lifecycle facts (owned/unassigned) come from the same cache; LOCAL from catalog;
-        // staging from one filesystem probe per group's platform.
-        _groupCards = groupMeta.Select(kv =>
-        {
-            var (gid, m) = (kv.Key, kv.Value);
-            int leaves = groupLeafCount.TryGetValue(gid, out var lc) ? lc : 0;
-            var stagingSet = StagingFor(m.HardwareFamilyId);
-            bool hasStaging = groupLeafIdList.TryGetValue(gid, out var ids) && ids.Any(stagingSet.Contains);
-            if (_groupCoverage.TryGet(gid, out var cov))
-            {
-                int wanted = Math.Max(0, (groupReleaseSum.TryGetValue(gid, out var rs) ? rs : 0) - cov.Unwanted);
-                return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, cov.Present, wanted)
-                {
-                    OwnedPresentDerived = cov.OwnedPresentDerived,
-                    Unassigned          = cov.Unassigned,
-                    AnyLocalVolume      = localGroups.Contains(gid),
-                    HasStaging          = hasStaging,
-                };
-            }
-            if (_groupCoverage.IsFailed(gid))
-                return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, 0, 0)
-                    { CoverageFailed = true, HasStaging = hasStaging };   // → warning marker, retry on select
-            return new GroupDatCardInfo(gid, m.DisplayName, m.Authority, m.HardwareFamilyId, leaves, 0, 0)
-                { CoveragePending = true, HasStaging = hasStaging };
-        }).ToList();
-
+        ReloadSystemsData();
         BuildTree();
         UpdateActionBar();
+    }
+
+    /// <summary>
+    /// The complete Systems data refresh (<see cref="Systems.SystemsViewData.Load"/>): every System row and every
+    /// Group card, from the catalog, the Single-DAT leaf databases and one staging probe per System. Group leaves are
+    /// never opened here — their figures come from the lazy coverage cache — and the complete volume-artifact
+    /// assignment map is never loaded: only the Single DATs' assigned artifacts are read. No rendering.
+    /// </summary>
+    private void ReloadSystemsData()
+    {
+        var view = Systems.SystemsViewData.Load(_catalog, _dataDir, AppContext.BaseDirectory, _groupCoverage);
+        _systemsView      = view;
+        _hardwareTypeMap  = view.HardwareTypeNames;
+        _strategyNameMap  = view.StrategyNames;
+        _authorityNameMap = view.AuthorityNames;
+        _systemsPlatforms = view.Platforms;
+        _groupCards       = view.GroupCards;
+        _leafToGroup      = view.LeafToGroup;
+        _groupLeafIds     = new HashSet<string>(view.LeafToGroup.Keys, StringComparer.OrdinalIgnoreCase);
+        _groupLeafDbInfo  = view.GroupLeafDbInfo;
+    }
+
+    /// <summary>
+    /// A Group's coverage state changed in the queue — its calculation completed or failed, or an obsolete result was
+    /// discarded. Only that Group's card and its System's row depend on it, so only those two are recomposed (from the
+    /// facts the last refresh gathered: no catalog query, no leaf database, no assignment load) and only their two
+    /// tree nodes are replaced. Selection — System, DAT or Group — is left exactly as it is. A Group this data does
+    /// not know (deleted while its calculation was in flight) takes the complete refresh, as before.
+    /// </summary>
+    private void RefreshSystemsAfterGroupCoverage(string groupId)
+    {
+        var update = _systemsView?.TryApplyGroupCoverage(groupId, _groupCoverage);
+        if (update is null)
+        {
+            RefreshSystemsKeepSelection(_selectedPlatformId);
+            return;
+        }
+
+        var card = _groupCards.FirstOrDefault(c => c.GroupId == update.GroupId);
+        if (update.PlatformId is not { } platformId) return;   // a Group without its System is not on screen
+
+        bool isSelected = platformId == _selectedPlatformId;
+        var  platform   = _systemsPlatforms.FirstOrDefault(x => x.Id == platformId);
+        if (isSelected) _selectedPlatform = platform;          // the row object was replaced
+
+        bool replaced = platform is not null
+            && ReplaceSystemsTreeNode(_platformTreeNodes, platformId, () => MakePlatformNode(platform, isSelected));
+        if (replaced && isSelected)                            // Group cards are on screen only under the selected System
+            replaced = card is not null && ReplaceSystemsTreeNode(
+                _groupTreeNodes, update.GroupId, () => MakeGroupRow(card, platformId, _selectedGroupId == card.GroupId));
+        if (!replaced) BuildTree();                            // the tree is not the one these nodes belong to: rebuild it
+
+        // The detail pane shows the changed figures only for this Group, or for this System when nothing below it is selected.
+        if (card is not null && _selectedGroupId == card.GroupId)
+            BuildGroupDetailContent(card);
+        else if (isSelected && _selectedDatLine is null && _selectedGroupId is null)
+            UpdateDetailPane(_selectedPlatform, null);
+    }
+
+    /// <summary>
+    /// A release mutation inside ONE System (wanted / unwanted / purge / restore): gathers that System again exactly
+    /// as the complete refresh does (<see cref="Systems.SystemsViewData.TryRefreshPlatform"/>) and leaves every other
+    /// System alone. When the mutated leaf belongs to a Group, that Group — already invalidated by the caller — is
+    /// first recomposed as pending. Falls back to the complete refresh whenever the targeted result cannot be proven
+    /// equal to it. Selection is then restored exactly as after a complete refresh.
+    /// </summary>
+    private void RefreshSystemPlatformKeepSelection(string platformId, string? invalidatedGroupId)
+    {
+        var keepDatId = _selectedDatLine?.CatalogId;
+        bool targeted = _systemsView is { } view
+            && (invalidatedGroupId is null || view.TryApplyGroupCoverage(invalidatedGroupId, _groupCoverage) is not null)
+            && view.TryRefreshPlatform(platformId, _catalog, _dataDir, AppContext.BaseDirectory, _groupCoverage);
+        if (!targeted) ReloadSystemsData();
+        RestoreSystemsSelection(platformId, keepDatId);
+    }
+
+    /// <summary>Replaces one node of the Systems tree at its own position. False when that node is not in the tree.</summary>
+    private bool ReplaceSystemsTreeNode(Dictionary<string, Control> nodes, string id, Func<Control> make)
+    {
+        if (!nodes.TryGetValue(id, out var current)) return false;
+        int index = SystemsTreePanel.Children.IndexOf(current);
+        if (index < 0) return false;
+        var node = make();
+        SystemsTreePanel.Children[index] = node;
+        nodes[id] = node;
+        return true;
     }
 
     private void SelectPlatform(string platformId)
@@ -416,8 +358,9 @@ public partial class MainWindow : Window
     /// <summary>
     /// Serialized worker (MAX CONCURRENCY = 1): pulls ONE pending Group from the queue, computes its aggregate
     /// off the UI thread (opening its leaves once, sequentially, inside <see cref="Systems.GroupCoverageLoader"/>),
-    /// records it on the UI thread, re-renders, and pulls the next. Autonomous — it refreshes regardless of which
-    /// platform is selected, so even a never-clicked System converges. The queue's generation token rejects an
+    /// records it on the UI thread, updates that Group's card and its System's row (never the whole Systems view —
+    /// see <see cref="RefreshSystemsAfterGroupCoverage"/>), and pulls the next. Autonomous — it updates regardless of
+    /// which platform is selected, so even a never-clicked System converges. The queue's generation token rejects an
     /// obsolete result (a group invalidated while its old compute was in flight).
     /// </summary>
     private void DrainGroupCoverageQueue() => GroupCoverageDrainerInstance.Drain();
@@ -428,19 +371,21 @@ public partial class MainWindow : Window
     // off the UI thread; everything else — result application, view refresh, next group — runs on the UI thread.
     private Systems.GroupCoverageDrainer GroupCoverageDrainerInstance => _groupCoverageDrainer ??= new Systems.GroupCoverageDrainer(
         _groupCoverage,
-        _groupLeafDbInfo.ContainsKey,
+        gid => _groupLeafDbInfo.ContainsKey(gid),
         gid => _groupLeafDbInfo[gid],
+        // Off the UI thread; reads the assigned artifacts of THIS group's leaves only (never the whole assignment table).
         leaves => System.Threading.Tasks.Task.Run(() =>
-            Systems.GroupCoverageLoader.Compute(leaves, _dataDir, _catalog.GetAllAssignedDerivedIdsByDatLine())),
+            Systems.GroupCoverageLoader.Compute(leaves, _dataDir, _catalog)),
         action => Avalonia.Threading.Dispatcher.UIThread.Post(action),
-        () => RefreshSystemsKeepSelection(_selectedPlatformId),
+        RefreshSystemsAfterGroupCoverage,
         Activities.ActivityMonitor.Shared);
 
     /// <summary>
     /// Targeted invalidation at a genuine mutation boundary: drops the group's cached/failed state and bumps its
     /// generation so any in-flight compute is discarded, making it pending again. Does NOT enqueue or refresh —
-    /// the caller pairs this with <see cref="RefreshSystemsKeepSelection"/> (whose SelectPlatform enqueues the now
-    /// pending group with priority). Never call this from inside RefreshSystemsKeepSelection (would loop).
+    /// the caller pairs this with <see cref="RefreshSystemsKeepSelection"/> or, for a release mutation,
+    /// <see cref="RefreshSystemPlatformKeepSelection"/> (both end in <see cref="RestoreSystemsSelection"/>, which
+    /// enqueues the now pending group with priority). Never call this from inside those refreshes (would loop).
     /// </summary>
     private void InvalidateGroupCoverage(string groupId) => _groupCoverage.Invalidate(groupId);
 
@@ -462,16 +407,18 @@ public partial class MainWindow : Window
     /// <summary>
     /// Converges the Systems view after a leaf-release mutation that changes Present/Unwanted/owned (wanted /
     /// unwanted / purge / restore). If the leaf belongs to a Group, its aggregate is invalidated so the row goes
-    /// pending and recomputes; then Systems refreshes. Single leaves just refresh (their facts are already fresh).
+    /// pending and recomputes off the UI thread. Then ONLY the leaf's System is refreshed
+    /// (<see cref="RefreshSystemPlatformKeepSelection"/>) — the mutation cannot change any other System's figures.
     /// Visibility-only changes (Hide/Show in catalog) do NOT call this — they don't affect the aggregates.
     /// </summary>
     private void ConvergeSystemsAfterLeafReleaseMutation(string datLineId, string platformId)
     {
         if (datLineId.Length == 0) return;
-        if (_leafToGroup.TryGetValue(datLineId, out var gid))
-            InvalidateGroupCoverage(gid);
+        string? groupId = _leafToGroup.TryGetValue(datLineId, out var gid) ? gid : null;
+        if (groupId is not null)
+            InvalidateGroupCoverage(groupId);
         if (platformId.Length > 0)
-            RefreshSystemsKeepSelection(platformId);
+            RefreshSystemPlatformKeepSelection(platformId, groupId);
     }
 
     private void SelectDatLine(DatLineInfo d, string platformId)
@@ -523,9 +470,11 @@ public partial class MainWindow : Window
         SysActVerifyArchive.IsEnabled = datHasStore;
     }
 
-    private void BuildTree()
+    private void BuildTree(List<DatLineInfo>? selectedPlatformDats = null)
     {
         SystemsTreePanel.Children.Clear();
+        _platformTreeNodes.Clear();
+        _groupTreeNodes.Clear();
 
         if (_systemsPlatforms.Count == 0)
         {
@@ -554,11 +503,13 @@ public partial class MainWindow : Window
             foreach (var p in group.OrderBy(p => p.Name))
             {
                 var isSelectedPlatform = p.Id == _selectedPlatformId;
-                SystemsTreePanel.Children.Add(MakePlatformNode(p, isSelectedPlatform));
+                var platformNode       = MakePlatformNode(p, isSelectedPlatform);
+                _platformTreeNodes[p.Id] = platformNode;
+                SystemsTreePanel.Children.Add(platformNode);
 
                 if (isSelectedPlatform)
                 {
-                    var dats = BuildDatLineInfos(p.Id);
+                    var dats = selectedPlatformDats ?? BuildDatLineInfos(p.Id);
                     foreach (var d in dats)
                     {
                         var isSelectedDat = _selectedDatLine?.CatalogId is not null &&
@@ -570,7 +521,9 @@ public partial class MainWindow : Window
                     foreach (var card in _groupCards.Where(c => c.HardwareFamilyId == p.Id))
                     {
                         var isSelectedGroup = _selectedGroupId == card.GroupId;
-                        SystemsTreePanel.Children.Add(MakeGroupRow(card, p.Id, isSelectedGroup));
+                        var groupRow        = MakeGroupRow(card, p.Id, isSelectedGroup);
+                        _groupTreeNodes[card.GroupId] = groupRow;
+                        SystemsTreePanel.Children.Add(groupRow);
                     }
                 }
             }
@@ -3715,60 +3668,8 @@ public partial class MainWindow : Window
 
     private void RefreshVolumes()
     {
-        var disks    = _catalog.GetDisks().ToDictionary(d => d.Id, d => d.Label, StringComparer.Ordinal);
-        var datLines = _catalog.LoadDatLines().ToDictionary(dl => dl.Id, dl => dl, StringComparer.Ordinal);
-        // Group display names, resolved once (Group-owned volumes have no single leaf DB).
-        var groupNames = _catalog.LoadDatGroups().ToDictionary(g => g.Id.Value, g => g.DisplayName, StringComparer.OrdinalIgnoreCase);
-        // Canonical authority/media-type display names for the COLLECTION column (Single owners). Presentation only.
-        var authorityNames = _catalog.LoadAuthorities().ToDictionary(a => a.Id, a => a.Name, StringComparer.Ordinal);
-        var mediaTypeNames = _catalog.GetMediaTypes().ToDictionary(m => m.Id, m => m.Name, StringComparer.OrdinalIgnoreCase);
-
-        _allVolumeEntries = _catalog.GetVolumes().Select(v =>
-        {
-            var loc = _catalog.GetCurrentLocation(v.Id);
-            string locLabel = loc is null ? "—"
-                : loc.LocationType == "disk" && loc.DiskId is not null && disks.TryGetValue(loc.DiskId, out var dl)
-                    ? $"disk: {dl}"
-                : LocTypeDisplay(loc.LocationType);
-
-            // Ownership is a sum type: Single (dat_line_id) resolves a single leaf DB path; Group (group_id)
-            // has no single DB (DbPath stays empty) and displays the Group name.
-            DatLineRecord? dlRecord = null;
-            if (v.DatLineId is not null) datLines.TryGetValue(v.DatLineId, out dlRecord);
-            var dbPath = dlRecord?.DataStorePath.Length > 0
-                ? Path.Combine(_dataDir, dlRecord.DataStorePath)
-                : "";
-            // COLLECTION label (presentation only — identity is RawDatLineId / GroupId). Single owners render
-            // "<Authority> · <Media>" from canonical names; Group owners render the Group display name.
-            var collectionLabel = v.GroupId is not null
-                ? VolumeCollectionLabel.ForGroup(
-                    groupNames.TryGetValue(v.GroupId, out var gn) ? gn : null, v.GroupId)
-                : VolumeCollectionLabel.ForSingle(
-                    dlRecord is not null && authorityNames.TryGetValue(dlRecord.Authority, out var an) ? an : null,
-                    dlRecord is not null && mediaTypeNames.TryGetValue(dlRecord.MediaTypeId, out var mn) ? mn : null,
-                    dlRecord?.Name, v.DatLineId ?? "",
-                    dlRecord?.DisplayName);
-
-            return new VolumeEntry
-            {
-                Id               = v.Id,
-                Label            = v.Label,
-                PlatformId       = v.PlatformId,
-                CollectionLabel  = collectionLabel,
-                RawDatLineId     = v.DatLineId,
-                GroupId          = v.GroupId,
-                DbPath           = dbPath,
-                Status           = v.Status,
-                Health           = v.Health,
-                PlannedSizeBytes = v.PlannedSizeBytes,
-                ActualSizeBytes  = v.ActualSizeBytes,
-                CurrentLocation  = locLabel,
-                DiskId           = loc?.DiskId,
-                DiskLabel        = loc?.DiskId is not null && disks.TryGetValue(loc.DiskId, out var diskName)
-                    ? diskName : null,
-                ArtifactCount    = _catalog.GetVolumeArtifacts(v.Id).Count,
-            };
-        }).ToList();
+        // Catalog-only; the artifact counts come from one aggregate query (see VolumeEntriesBuilder).
+        _allVolumeEntries = Volumes.VolumeEntriesBuilder.Build(_catalog, _dataDir, LocTypeDisplay);
 
         ApplyVolumesFilter();
     }
@@ -6702,65 +6603,50 @@ public partial class MainWindow : Window
         else               _libraryDirty = true;
     }
 
+    /// <summary>
+    /// Library refresh after a mutation confined to ONE leaf database — a single release marked Unwanted, restored
+    /// to Wanted, purged, or hidden/shown in the catalog. Reloads only that leaf's dataset (one leaf DB opened instead of every DAT line) and
+    /// re-applies the current search/status filter. The Library selectors are left alone: the platform and
+    /// DAT-line lists cannot change from a release-status mutation. The selection is tracked by ReleaseId, so the
+    /// mutated release stays selected whenever the active filter still shows it.
+    ///
+    /// <para>Falls back to the historical full rebuild whenever the targeted swap is not provably equivalent to it
+    /// (see <see cref="Library.LibraryDatasetBuilder.TryRefreshLeaf"/>). Mutations that span several leaves, change
+    /// the catalog's DAT lines, or add/remove releases must keep using <see cref="RebuildLibraryDatasets"/>.</para>
+    /// </summary>
+    private void RefreshLibraryLeafAfterReleaseMutation(string datLineId)
+    {
+        if (!_libraryBuilt)
+        {
+            _libraryDirty = true;     // same deferral as RebuildLibraryDatasets: the first Library open builds it
+            ApplyLibraryFilter();
+            return;
+        }
+
+        var refresh = Library.LibraryDatasetBuilder.TryRefreshLeaf(
+            _activeLibraryDatasets, _catalog.LoadPlatforms(), _catalog.LoadDatLines(), datLineId, _dataDir, DatLineLabel);
+        if (refresh is null)
+        {
+            BuildLibraryDatasetsCore();
+            ApplyLibraryFilter();
+            return;
+        }
+
+        // The view was showing this leaf: point it at the fresh entries. Same leaf and same ReleaseIds, so the
+        // ReleaseId-tracked selection stays valid and ApplyLibraryFilter re-resolves it against the new entries.
+        if (ReferenceEquals(_activeDatasetEntries, refresh.Previous.Entries))
+            _activeDatasetEntries = refresh.Current.Entries;
+        ApplyLibraryFilter();
+    }
+
     private void BuildLibraryDatasetsCore()
     {
         var allPlatforms = _catalog.LoadPlatforms();
         var allDatLines  = _catalog.LoadDatLines();
 
-        var merged = new List<LibraryDataset>();
-
-        foreach (var dl in allDatLines)
-        {
-            if (!dl.CatalogEnabled) continue;
-            if (dl.DataStorePath.Length == 0) continue;
-
-            var platformName = allPlatforms.FirstOrDefault(p => p.Id == dl.HardwareFamilyId)?.Name
-                               ?? dl.HardwareFamilyId;
-            var absPath  = Path.Combine(_dataDir, dl.DataStorePath);
-            if (!File.Exists(absPath)) continue;
-
-            var store        = new DatLineStore(absPath);
-            var filesByRelId = store.LoadAllReleaseFiles();
-            var metadata     = store.LoadReleaseMetadata();
-            var titleMode    = dl.LibraryTitleMode;
-
-            // Library load is read-only for media: no folders are created (lazy directory creation).
-
-            var releases = store.LoadReleases()
-                .Select(r =>
-                {
-                    filesByRelId.TryGetValue(r.Id, out var romFiles);
-                    metadata.TryGetValue(r.Id, out var meta);
-                    return new LibraryEntry
-                    {
-                        Name                  = r.Name,
-                        DisplayName           = LibraryTitleResolver.Resolve(r.Name, titleMode, meta?.Title),
-                        HardwareFamilyId      = dl.HardwareFamilyId,
-                        Authority             = dl.Authority,
-                        Metadata              = meta,
-                        Platform              = platformName,
-                        Status                = Capitalize(r.Status),
-                        Region                = r.Region,
-                        Languages             = r.Languages.ToUpperInvariant(),
-                        Format                = r.Format,
-                        Size                  = r.Size,
-                        Tier                  = r.Tier,
-                        RomFiles              = romFiles ?? [],
-                        ReleaseId             = r.Id,
-                        DbPath                = absPath,
-                        DatLineId             = dl.Id,
-                        TransformStrategyType = dl.TransformStrategyType,
-                        IntroducedAtUtc       = r.IntroducedAtUtc,
-                        ShowInCatalog         = r.ShowInCatalog,
-                    };
-                })
-                .ToList();
-
-            if (releases.Count > 0)
-                merged.Add(new LibraryDataset(platformName, DatLineLabel(dl), releases));
-        }
-
-        _activeLibraryDatasets = merged;
+        // One leaf → one dataset, through the same builder the targeted single-leaf refresh uses
+        // (RefreshLibraryLeafAfterReleaseMutation), so the two can never drift apart.
+        _activeLibraryDatasets = Library.LibraryDatasetBuilder.BuildAll(allPlatforms, allDatLines, _dataDir, DatLineLabel);
 
         // Preserve current platform + dat_line selection across rebuild (dat_line by authoritative id).
         var currentPlatform  = LibraryContextPlatform.SelectedItem as string;
@@ -6797,8 +6683,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static string Capitalize(string s)
-        => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..].ToLowerInvariant();
+    private static string Capitalize(string s) => Library.LibraryDatasetBuilder.Capitalize(s);
 
     /// <summary>
     /// Maps an internal location-type token to its user-facing display label.
@@ -7248,9 +7133,8 @@ public partial class MainWindow : Window
                     var store = new Data.DatLineStore(entry.DbPath);
                     store.RestoreWantedRelease(entry.ReleaseId);
                 }
-                RebuildLibraryDatasets();
-                BuildAnalytics();
-                ApplyLibraryFilter();
+                RefreshLibraryLeafAfterReleaseMutation(entry.DatLineId);
+                InvalidateAnalyticsAfterReleaseMutation();
                 ConvergeSystemsAfterLeafReleaseMutation(entry.DatLineId, entry.HardwareFamilyId);
             };
             DetailActionsPanel.Children.Add(restoreBtn);
@@ -7294,9 +7178,8 @@ public partial class MainWindow : Window
                     store.UpdateReleaseStatus(entry.ReleaseId, "unwanted");
                     store.SetShowInCatalog(entry.ReleaseId, false);
                 }
-                RebuildLibraryDatasets();
-                BuildAnalytics();
-                ApplyLibraryFilter();
+                RefreshLibraryLeafAfterReleaseMutation(entry.DatLineId);
+                InvalidateAnalyticsAfterReleaseMutation();
                 ConvergeSystemsAfterLeafReleaseMutation(entry.DatLineId, entry.HardwareFamilyId);
             };
             DetailActionsPanel.Children.Add(unwantedBtn);
@@ -7315,8 +7198,9 @@ public partial class MainWindow : Window
                 store.SetShowInCatalog(entry.ReleaseId, !entry.ShowInCatalog);
             }
             await System.Threading.Tasks.Task.CompletedTask; // satisfy async
-            RebuildLibraryDatasets();
-            ApplyLibraryFilter();
+            // One leaf, one column: the targeted refresh. No Analytics invalidation — Analytics reads artifacts and
+            // release statuses, never show_in_catalog (and this handler never recollected it).
+            RefreshLibraryLeafAfterReleaseMutation(entry.DatLineId);
         };
         DetailActionsPanel.Children.Add(btn);
     }
@@ -7399,9 +7283,8 @@ public partial class MainWindow : Window
 
         await new InfoDialog("Purge Complete", summary.ToString()).ShowDialog<bool>(this);
 
-        RebuildLibraryDatasets();
-        BuildAnalytics();
-        ApplyLibraryFilter();
+        RefreshLibraryLeafAfterReleaseMutation(entry.DatLineId);
+        InvalidateAnalyticsAfterReleaseMutation();
         RefreshDiskDetailIfSelected();
         ConvergeSystemsAfterLeafReleaseMutation(entry.DatLineId, entry.HardwareFamilyId);
     }
@@ -12831,11 +12714,100 @@ public partial class MainWindow : Window
 
     private List<PendingItem> _pendingItems = [];
 
-    private void InitPending() => RefreshPending();
+    // On-demand, off-thread, single-flight scan of the pending reconciliations (see PendingLoadState).
+    private readonly PendingLoadState _pendingLoad = new();
 
+    // Nothing is scanned at startup: only the Pending view reads the pending reconciliations, and the scan visits
+    // every leaf database. It runs the first time the view is opened (EnsurePendingLoaded), off the UI thread.
+    private void InitPending() { /* view is populated on first activation */ }
+
+    /// <summary>
+    /// The pending reconciliations changed (DAT update, ingestion): whatever the Pending view holds is no longer
+    /// current. It is rescanned at once when the view is the one on screen, otherwise the next time it is opened.
+    /// </summary>
     private void RefreshPending()
     {
-        _pendingItems = BuildPendingItems();
+        _pendingLoad.Invalidate();
+        if (_activeButton == NavPending)
+            EnsurePendingLoaded();
+    }
+
+    /// <summary>
+    /// Brings the Pending view up to date: nothing to do when it already is, or when a scan is running; otherwise the
+    /// view shows its loading state and ONE scan of every leaf database starts off the UI thread (LOADING, like the
+    /// Dashboard roll-up). The rows are shown only when the scan completed and nothing changed meanwhile — a result
+    /// overtaken by a change is dropped and, while the view is on screen, the scan runs again.
+    /// </summary>
+    private void EnsurePendingLoaded()
+    {
+        if (!_pendingLoad.TryBegin(out var token)) return;
+        ShowPendingLoading();
+
+        // Everything the scan needs from the catalog and from this window is read HERE, on the UI thread (two small
+        // catalog queries; the labels through the window's own DatLineLabel): the scan itself only opens leaf databases.
+        List<HardwareFamilyRecord> platforms;
+        List<DatLineRecord>        datLines;
+        Dictionary<string, string> labels;
+        try
+        {
+            platforms = _catalog.LoadPlatforms();
+            datLines  = _catalog.LoadDatLines();
+            labels    = datLines.ToDictionary(dl => dl.Id, DatLineLabel, StringComparer.Ordinal);
+        }
+        catch
+        {
+            _pendingLoad.Complete(token, succeeded: false);   // no scan started: never leave the gate "loading"
+            ShowPendingLoadFailed();
+            throw;
+        }
+        var dataDir = _dataDir;
+
+        var scan = System.Threading.Tasks.Task.Run(() =>
+        {
+            using var activity = Activities.ActivityMonitor.Shared.Begin(Activities.ActivityKind.Loading, "pending reconciliations");
+            return PendingItemsLoader.Load(platforms, datLines, dataDir, dl => labels[dl.Id]);
+        });
+
+        _ = scan.ContinueWith(t =>
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                switch (_pendingLoad.Complete(token, t.IsCompletedSuccessfully))
+                {
+                    case PendingLoadOutcome.Ready:
+                        ShowPendingItems(t.Result);
+                        break;
+                    case PendingLoadOutcome.Stale:
+                        if (_activeButton == NavPending) EnsurePendingLoaded();   // hidden: the next open scans
+                        break;
+                    case PendingLoadOutcome.Failed:
+                        ShowPendingLoadFailed();
+                        break;
+                }
+            }),
+            System.Threading.Tasks.TaskContinuationOptions.None);
+    }
+
+    private void ShowPendingLoading()
+    {
+        _pendingItems              = [];
+        PendingList.ItemsSource    = null;
+        PendingList.IsVisible      = false;
+        PendingListEmpty.Text      = "Loading pending reconciliations…";
+        PendingListEmpty.IsVisible = true;
+        PendingCountText.Text      = "loading…";
+        UpdatePendingDetailPanel(null);
+    }
+
+    private void ShowPendingLoadFailed()
+    {
+        PendingListEmpty.Text = "Pending reconciliations could not be loaded. Open this view again to retry.";
+        PendingCountText.Text = "not loaded";
+    }
+
+    private void ShowPendingItems(List<PendingItem> items)
+    {
+        _pendingItems         = items;
+        PendingListEmpty.Text = "No pending reconciliations";
 
         if (_pendingItems.Count == 0)
         {
@@ -12852,68 +12824,6 @@ public partial class MainWindow : Window
         }
 
         UpdatePendingDetailPanel(null);
-    }
-
-    private List<PendingItem> BuildPendingItems()
-    {
-        var allPlatforms = _catalog.LoadPlatforms();
-        var allDatLines  = _catalog.LoadDatLines();
-        var result       = new List<PendingItem>();
-
-        foreach (var dl in allDatLines)
-        {
-            if (dl.DataStorePath.Length == 0) continue;
-
-            var absPath = Path.Combine(_dataDir, dl.DataStorePath);
-            if (!File.Exists(absPath)) continue;
-
-            var store = new DatLineStore(absPath);
-            var rows  = store.LoadPendingReconciliations("pending");
-            if (rows.Count == 0) continue;
-
-            var platformName  = allPlatforms.FirstOrDefault(p => p.Id == dl.HardwareFamilyId)?.Name ?? dl.HardwareFamilyId;
-            var relById       = store.LoadReleases().ToDictionary(r => r.Id);
-            var filesByRelId  = store.LoadAllReleaseFiles();
-
-            foreach (var row in rows)
-            {
-                relById.TryGetValue(row.NewReleaseId,      out var newRelease);
-                relById.TryGetValue(row.OutdatedReleaseId, out var outdatedRelease);
-
-                // Skip orphaned rows: new_release_id must exist in the release set.
-                // Orphans can occur if SaveReleases ran between the row being created
-                // and it being loaded (e.g. re-import after an earlier update).
-                if (newRelease is null) continue;
-
-                filesByRelId.TryGetValue(row.NewReleaseId,      out var newFiles);
-                filesByRelId.TryGetValue(row.OutdatedReleaseId, out var outdatedFiles);
-
-                result.Add(new PendingItem
-                {
-                    ReconId            = row.Id,
-                    Reason             = row.Reason,
-                    CreatedAtUtc       = row.CreatedAtUtc,
-                    ReconStatus        = row.Status,
-                    ArtifactId         = row.ArtifactId         ?? "",
-                    VolumeId           = row.VolumeId           ?? "",
-                    DiskId             = row.DiskId             ?? "",
-                    StoredRelativePath = row.StoredRelativePath ?? "",
-                    StoredName         = row.StoredName         ?? "",
-                    TargetName         = row.TargetName,
-                    TargetRelativePath = row.TargetRelativePath ?? "",
-                    DatLineId          = dl.Id,
-                    DatLineName        = DatLineLabel(dl),
-                    PlatformId         = dl.HardwareFamilyId,
-                    PlatformName       = platformName,
-                    NewRelease         = newRelease,
-                    NewRomFiles        = newFiles      ?? [],
-                    OutdatedRelease    = outdatedRelease,
-                    OutdatedRomFiles   = outdatedFiles ?? [],
-                });
-            }
-        }
-
-        return result;
     }
 
     private void OnPendingSelectionChanged(object? sender, SelectionChangedEventArgs e)
@@ -14203,6 +14113,9 @@ public partial class MainWindow : Window
             // Recompute wanted coverage / unwanted share every time Systems is shown, so
             // status mutations made elsewhere (Mark Unwanted, Restore Wanted, Purge, bulk
             // operations, collision review) are reflected immediately. Preserves selection.
+            // Deliberately still the COMPLETE refresh: several workflows change what Systems shows without
+            // converging it themselves, and STAGING is a live filesystem flag, so nothing reliably says "unchanged".
+            // What made it slow — the complete volume-artifact assignment map — is no longer loaded.
             RefreshSystemsKeepSelection(_selectedPlatformId);
 
         if (btn == NavLibrary)
@@ -14219,6 +14132,9 @@ public partial class MainWindow : Window
                 ApplySystemsContextToLibrary();
             }
         }
+
+        if (btn == NavPending)
+            EnsurePendingLoaded();   // on-demand first scan (or rescan after a change); never blocks the UI thread
 
         if (btn == NavCatalog)
             SyncCatalogContext();
@@ -14259,10 +14175,26 @@ public partial class MainWindow : Window
 
     private AnalyticsData? _analyticsData;
 
+    // Stale = a release mutation happened while the Analytics view was hidden and the data was not recollected.
+    private readonly Arkadia.Analytics.AnalyticsFreshness _analyticsFreshness = new();
+
     private void InitAnalytics() { /* view is populated on first activation */ }
+
+    /// <summary>
+    /// A release mutation changed what Analytics shows. Analytics is recollected in full on every open
+    /// (SetActive → BuildAnalytics), so while the view is hidden the all-DAT-lines pass is skipped and the data is
+    /// only marked stale; if the view is the one on screen it is recollected at once.
+    /// </summary>
+    private void InvalidateAnalyticsAfterReleaseMutation()
+    {
+        if (_analyticsFreshness.Invalidate(viewVisible: _activeButton == NavAnalytics))
+            BuildAnalytics();
+    }
 
     private void BuildAnalytics()
     {
+        _analyticsFreshness.MarkBuilt();
+
         // ── Collect catalog-level data ────────────────────────────────────────
         var datLines   = _catalog.LoadDatLines();
         var volumes      = _catalog.GetVolumes();
@@ -15428,6 +15360,10 @@ public partial class MainWindow : Window
 
     private async void OnAnalyticsGenerateReports(object? sender, RoutedEventArgs e)
     {
+        // Reports are written from the collected data: never from data a release mutation left behind.
+        if (_analyticsData is not null && _analyticsFreshness.IsStale)
+            BuildAnalytics();
+
         if (_analyticsData is null)
         {
             await new InfoDialog("No Data",

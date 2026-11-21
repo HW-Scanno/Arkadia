@@ -10,7 +10,8 @@ namespace Arkadia.Systems;
 /// from MainWindow so its lifecycle — in particular the global LOADING activity — is unit-testable. Behaviour is the
 /// one the code-behind always had: pull ONE pending Group from the <see cref="GroupCoverageQueue"/>, compute its
 /// aggregate off the UI thread, record the result on the UI thread (the queue's generation token rejects an obsolete
-/// result), refresh the view, then pull the next. All UI-thread work is delegated through <c>postToUi</c>.
+/// result), refresh the view for THAT group (the callback receives its id, so the view updates only what the group
+/// affects), then pull the next. All UI-thread work is delegated through <c>postToUi</c>.
 ///
 /// <para><b>Activity lifecycle (the real Systems "loading").</b> Each compute holds one <see cref="ActivityKind.Loading"/>
 /// scope from the moment it starts until its result has been applied on the UI thread (success, failure or obsolete).
@@ -25,7 +26,7 @@ public sealed class GroupCoverageDrainer
     private readonly Func<string, IReadOnlyList<(string DatLineId, string DataStorePath, int ReleaseCount)>> _leavesOf;
     private readonly Func<IReadOnlyList<(string DatLineId, string DataStorePath, int ReleaseCount)>, Task<GroupStorageFacts>> _compute;
     private readonly Action<Action> _postToUi;
-    private readonly Action _refreshView;
+    private readonly Action<string> _refreshView;
     private readonly ActivityMonitor _activities;
 
     public GroupCoverageDrainer(
@@ -34,7 +35,7 @@ public sealed class GroupCoverageDrainer
         Func<string, IReadOnlyList<(string DatLineId, string DataStorePath, int ReleaseCount)>> leavesOf,
         Func<IReadOnlyList<(string DatLineId, string DataStorePath, int ReleaseCount)>, Task<GroupStorageFacts>> compute,
         Action<Action> postToUi,
-        Action refreshView,
+        Action<string> refreshView,
         ActivityMonitor activities)
     {
         _queue = queue; _isKnown = isKnown; _leavesOf = leavesOf; _compute = compute;
@@ -78,8 +79,9 @@ public sealed class GroupCoverageDrainer
                     _queue.Fail(groupId, generation);   // warning marker + retry-on-select
                 }
 
-                // Autonomous refresh (never gated on the current selection); preserves selection, no jumps.
-                _refreshView();
+                // Autonomous refresh (never gated on the current selection); preserves selection, no jumps. The view is
+                // told WHICH group changed state (cached, failed, or pending again after an obsolete result).
+                _refreshView(groupId);
                 Drain();   // continue with the next pending group (opens ITS Loading scope before this one is released)
             }
             finally

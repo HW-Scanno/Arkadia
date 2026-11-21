@@ -13,6 +13,7 @@ namespace Arkadia.Data;
 public sealed class DatLineStore
 {
     private readonly string _connectionString;
+    private readonly bool   _readOnly;   // opened through OpenReadOnly: EnsureSchema never ran on this store
 
     /// <summary>
     /// Diagnostic/test seam: counts DatLineStore constructions on the CURRENT thread (each opens the DB and
@@ -44,7 +45,7 @@ public sealed class DatLineStore
         // connection so NO write or schema DDL (CREATE/ALTER TABLE/INDEX) can ever execute. The existing
         // read methods reuse this connection string via Open(), so they run pure SELECTs. Opening throws if
         // the file is missing or not a valid database — the caller treats that as an error, never repairs it.
-        _ = readOnly;
+        _readOnly         = readOnly;
         _connectionString = $"Data Source={dbPath};Mode=ReadOnly";
     }
 
@@ -274,6 +275,25 @@ public sealed class DatLineStore
         TryAddColumn(alter, "releases", "show_in_catalog INTEGER NOT NULL DEFAULT 1");
     }
 
+    /// <summary>
+    /// The <c>show_in_catalog</c> projection of the release loaders.
+    ///
+    /// <para>A writable store ran <see cref="EnsureSchema"/> in its constructor, so the column exists and the text is
+    /// the constant it has always been. A read-only store never migrates (by design — see <see cref="OpenReadOnly"/>):
+    /// when the leaf was last written by a version older than the <c>show_in_catalog</c> migration the column is
+    /// absent, and such a leaf has no hidden release — exactly what the migration records with <c>DEFAULT 1</c> — so
+    /// the loaders project that constant instead of failing on a column the reader is not allowed to add.</para>
+    /// </summary>
+    private string ShowInCatalogProjection(SqliteConnection conn)
+    {
+        const string Column = "COALESCE(r.show_in_catalog, 1)";
+        if (!_readOnly) return Column;
+
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM pragma_table_info('releases') WHERE name = 'show_in_catalog'";
+        return cmd.ExecuteScalar() is null ? "1" : Column;
+    }
+
     private static void TryAddColumn(SqliteConnection conn, string table, string columnDef)
     {
         try
@@ -385,7 +405,7 @@ public sealed class DatLineStore
         var list = new List<ReleaseRecord>();
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             SELECT r.id, r.dat_line_id, r.name, r.status,
                    COALESCE(
                        NULLIF(r.tier, ''),
@@ -397,7 +417,7 @@ public sealed class DatLineStore
                        ''
                    ) AS effective_tier,
                    r.region, r.languages, r.format, r.size, r.release_content_key, r.introduced_at_utc,
-                   r.content_category_id, COALESCE(r.show_in_catalog, 1)
+                   r.content_category_id, {ShowInCatalogProjection(conn)}
             FROM releases r
             ORDER BY r.name
             """;
@@ -428,7 +448,7 @@ public sealed class DatLineStore
         var list = new List<ReleaseRecord>();
         using var conn = Open();
         using var cmd  = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             SELECT r.id, r.dat_line_id, r.name, r.status,
                    COALESCE(
                        NULLIF(r.tier, ''),
@@ -440,7 +460,7 @@ public sealed class DatLineStore
                        ''
                    ) AS effective_tier,
                    r.region, r.languages, r.format, r.size, r.release_content_key, r.introduced_at_utc,
-                   r.content_category_id, COALESCE(r.show_in_catalog, 1)
+                   r.content_category_id, {ShowInCatalogProjection(conn)}
             FROM releases r
             WHERE r.dat_line_id = $datLineId
             ORDER BY r.name

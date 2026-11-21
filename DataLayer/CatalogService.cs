@@ -2639,6 +2639,38 @@ public sealed class CatalogService
     }
 
     /// <summary>
+    /// Targeted form of <see cref="GetAllAssignedDerivedIdsByDatLine"/>: the same dat_line id → assigned
+    /// derived_artifact_id sets, restricted to <paramref name="datLineIds"/>. Each id is an index seek on
+    /// <c>idx_volume_artifacts_datline</c> (one prepared statement, one connection) instead of a scan of the whole
+    /// table, so a Systems refresh or one Group coverage calculation reads only the assignments it needs. For the
+    /// requested dat lines the result equals the bulk map entry for entry (same case-sensitive id match, duplicates
+    /// across volumes collapsed by the set); a dat line with no assignment is absent, exactly as in the bulk map.
+    /// Read-only.
+    /// </summary>
+    public Dictionary<string, System.Collections.Generic.HashSet<string>> GetAssignedDerivedIdsByDatLines(
+        IEnumerable<string> datLineIds)
+    {
+        var result = new Dictionary<string, System.Collections.Generic.HashSet<string>>(StringComparer.Ordinal);
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = "SELECT derived_artifact_id FROM volume_artifacts WHERE dat_line_id = $dlid";
+        var dlid = cmd.Parameters.Add("$dlid", Microsoft.Data.Sqlite.SqliteType.Text);
+        foreach (var id in datLineIds)
+        {
+            if (id is null || result.ContainsKey(id)) continue;   // each dat line once
+            dlid.Value = id;
+            using var r = cmd.ExecuteReader();
+            System.Collections.Generic.HashSet<string>? set = null;
+            while (r.Read())
+            {
+                set ??= result[id] = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+                set.Add(r.GetString(0));
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Returns all derived_artifact_ids assigned for the given dat_line_id, mapped to their
     /// volume label. Artifacts assigned to a deleted volume map to "(stale assignment)".
     /// </summary>

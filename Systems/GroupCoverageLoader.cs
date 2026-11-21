@@ -24,6 +24,24 @@ public readonly record struct GroupStorageFacts(int Present, int Unwanted, int O
 public static class GroupCoverageLoader
 {
     /// <summary>
+    /// The calculation as the Systems coverage worker runs it: reads from the catalog the assigned artifacts of
+    /// exactly this Group's leaves (<see cref="CatalogService.GetAssignedDerivedIdsByDatLines"/> — never the whole
+    /// assignment table), then sums over the leaf databases. For these leaves the targeted sets equal the bulk map's,
+    /// so the facts are the ones the bulk-map overload returns.
+    /// </summary>
+    public static GroupStorageFacts Compute(
+        IReadOnlyList<(string DatLineId, string DataStorePath, int ReleaseCount)> leaves,
+        string                                                                    dataDir,
+        CatalogService                                                            catalog,
+        Action<int>?                                                              onLeafLoaded      = null,
+        CancellationToken                                                         cancellationToken = default)
+    {
+        var ids = new List<string>(leaves.Count);
+        foreach (var leaf in leaves) ids.Add(leaf.DatLineId);
+        return Compute(leaves, dataDir, catalog.GetAssignedDerivedIdsByDatLines(ids), onLeafLoaded, cancellationToken);
+    }
+
+    /// <summary>
     /// Sums coverage and lifecycle facts across the given leaves (each existing leaf DB opened exactly once).
     /// <paramref name="assignedByDatLine"/> is the catalog's leaf id → assigned derived-artifact-id set (a single
     /// bulk query taken by the caller); a leaf absent from it has no assignments. <paramref name="onLeafLoaded"/>

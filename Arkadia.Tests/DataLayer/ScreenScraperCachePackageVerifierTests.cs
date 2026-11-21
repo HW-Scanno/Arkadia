@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Text;
 using Arkadia.Data;
 using Xunit;
@@ -483,7 +485,7 @@ public sealed class ScreenScraperCachePackageVerifierTests : IDisposable
         Assert.Equal("Valid", r.Status);
     }
 
-    // 20. Verify does not extract files (temp dir file count unchanged)
+    // 20. Verify does not extract files (the files in the temp dir are exactly the same before and after)
     [Fact]
     public void Verify_DoesNotExtractFiles()
     {
@@ -492,11 +494,41 @@ public sealed class ScreenScraperCachePackageVerifierTests : IDisposable
             ("payloads/102.json", Encoding.UTF8.GetBytes(ValidPayload102)),
         ]));
 
-        var before = Directory.GetFiles(_dir, "*", SearchOption.AllDirectories).Length;
+        var before = FilesExceptSqliteSidecars();
         _verifier.Verify(id);
-        var after = Directory.GetFiles(_dir, "*", SearchOption.AllDirectories).Length;
+        var after = FilesExceptSqliteSidecars();
 
-        Assert.Equal(before, after);
+        Assert.Contains("test.zip", before);       // the package and the catalog are what is there…
+        Assert.Contains("catalog.db", before);
+        Assert.Equal(before, after);               // …and verifying added nothing: no entry was extracted
+    }
+
+    /// <summary>
+    /// Every file under the test directory (relative paths, sorted) except SQLite's own write-ahead-log sidecars of a
+    /// database that is itself there (<c>catalog.db-wal</c>, <c>catalog.db-shm</c>). SQLite creates those when a
+    /// connection opens the database and removes them when the last one closes, so their presence depends on pooled
+    /// connections — which other test classes clear process-wide while this one runs — and never on the verifier.
+    /// Anything else, in particular any extracted package entry, is listed.
+    /// </summary>
+    private string[] FilesExceptSqliteSidecars()
+    {
+        var all = Directory.GetFiles(_dir, "*", SearchOption.AllDirectories);
+        var set = new HashSet<string>(all, StringComparer.OrdinalIgnoreCase);
+        return all.Where(f => !IsSqliteSidecar(f, set))
+                  .Select(f => Path.GetRelativePath(_dir, f).Replace('\\', '/'))
+                  .OrderBy(f => f, StringComparer.Ordinal)
+                  .ToArray();
+    }
+
+    private static bool IsSqliteSidecar(string file, HashSet<string> allFiles)
+    {
+        foreach (var suffix in new[] { "-wal", "-shm" })
+        {
+            if (!file.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) continue;
+            var database = file[..^suffix.Length];
+            if (database.EndsWith(".db", StringComparison.OrdinalIgnoreCase) && allFiles.Contains(database)) return true;
+        }
+        return false;
     }
 
     // 21. Missing package row → Error result (no exception)

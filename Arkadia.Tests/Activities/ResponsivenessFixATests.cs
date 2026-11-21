@@ -278,7 +278,7 @@ public sealed class ResponsivenessFixATests : IDisposable
         Assert.DoesNotContain("_purgeRunning", bulk);
         // original order after the run: result dialog → refreshes
         var after = m.Substring(m.IndexOf("var summary = new System.Text.StringBuilder();", StringComparison.Ordinal), 2500);
-        Assert.True(after.IndexOf("Purge Complete", StringComparison.Ordinal) < after.IndexOf("RebuildLibraryDatasets();", StringComparison.Ordinal));
+        Assert.True(after.IndexOf("Purge Complete", StringComparison.Ordinal) < after.IndexOf("RefreshLibraryLeafAfterReleaseMutation(entry.DatLineId);", StringComparison.Ordinal));
     }
 
     [Fact]

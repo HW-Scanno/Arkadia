@@ -28,6 +28,7 @@ public sealed class SystemsLoadingActivityTests
         public readonly Dictionary<string, TaskCompletionSource<GroupStorageFacts>> Computes = new();
         public readonly List<string> Started = new();
         public int Refreshes;
+        public readonly List<string> Refreshed = new();                            // the group each refresh was for
         public Action? OnRefresh;
         public GroupCoverageDrainer Drainer { get; }
 
@@ -47,7 +48,7 @@ public sealed class SystemsLoadingActivityTests
                     return tcs.Task;
                 },
                 Ui.Enqueue,
-                () => { Refreshes++; OnRefresh?.Invoke(); },
+                gid => { Refreshes++; Refreshed.Add(gid); OnRefresh?.Invoke(); },
                 Monitor);
         }
 
@@ -204,7 +205,7 @@ public sealed class SystemsLoadingActivityTests
         var monitor = new ActivityMonitor();
         queue.Enqueue("g1", false, _ => true);
         var drainer = new GroupCoverageDrainer(queue, _ => true, _ => NoLeaves,
-            _ => throw new InvalidOperationException("cannot start"), a => a(), () => { }, monitor);
+            _ => throw new InvalidOperationException("cannot start"), a => a(), _ => { }, monitor);
 
         Assert.Throws<InvalidOperationException>(drainer.Drain);
         Assert.True(monitor.IsIdle);

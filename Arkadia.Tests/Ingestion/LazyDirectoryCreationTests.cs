@@ -146,9 +146,17 @@ public sealed class LazyDirectoryCreationTests : IDisposable
     [Fact]
     public void LibraryLoad_AndEveryApplicationFlow_NeverCallsEnsureMediaFolders()
     {
-        var lib = Region(Read("MainWindow.axaml.cs"), "private void BuildLibraryDatasetsCore()", "var releases = store.LoadReleases()");
+        // The per-leaf Library load lives in LibraryDatasetBuilder (shared by the full build and the targeted
+        // single-leaf refresh); MainWindow only calls it.
+        var lib = Region(Read("MainWindow.axaml.cs"), "private void BuildLibraryDatasetsCore()", "// Preserve current platform");
+        Assert.Contains("Library.LibraryDatasetBuilder.BuildAll(", lib);
         Assert.DoesNotContain("EnsureMediaFolders", lib);
         Assert.DoesNotContain("CreateDirectory", lib);
+
+        var builder = Read("Library/LibraryDatasetBuilder.cs");
+        Assert.Contains("var releases = store.LoadReleases()", builder);
+        Assert.DoesNotContain("EnsureMediaFolders", builder);
+        Assert.DoesNotContain("CreateDirectory", builder);
 
         var root    = Path.GetDirectoryName(RepoFile("Arkadia.sln"))!;
         var callers = Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
