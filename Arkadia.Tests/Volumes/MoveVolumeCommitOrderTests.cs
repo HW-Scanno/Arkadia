@@ -19,7 +19,9 @@ public sealed class MoveVolumeCommitOrderTests
         return Path.Combine(dir!.FullName, rel);
     }
 
-    private static readonly string Code = File.ReadAllText(RepoFile("MainWindow.axaml.cs"));
+    // Line endings are normalized on read: the markers and assertions below are written with "\n", and the working
+    // copy may be LF or CRLF depending on Git's settings (core.autocrlf) — the result must be the same either way.
+    private static readonly string Code = File.ReadAllText(RepoFile("MainWindow.axaml.cs")).Replace("\r\n", "\n");
 
     private static string Between(string startMarker, string endMarker)
     {
