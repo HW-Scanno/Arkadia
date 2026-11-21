@@ -110,6 +110,8 @@ Each step emits an `IngestionOperation` with an action key. Current action keys:
 | `incomplete-skipped` | Release could not be completed (missing expected files) |
 | `empty-synthesized` | An authoritative DAT requirement declaring `size="0"` with **no** CRC/MD5/SHA1 was generated as an empty file in `staging` and verified to be 0 bytes (only for `missing` releases; never overwrites an existing file) |
 | `empty-synthesis-failed` | An authoritative empty requirement could not be synthesized/verified (unexpected existing file, unsafe path, I/O error, or release not `missing`) — the release stays incomplete |
+| `dat-hash-enriched` | A file with no SHA1/MD5 match was accepted by **CRC32 + size** against a CRC-only DAT requirement; the SHA1/MD5 computed from the file were recorded in the leaf's `release_files` (see [CRC32 + size fallback](#crc32--size-fallback-for-crc-only-dat-requirements)) |
+| `dat-hash-conflict` | Two incoming files with the same CRC32+size but different SHA1 in one run: the first acceptance stands, this one is not matched |
 | `requirement-unsatisfiable` | The release has a requirement no ingestion path can satisfy: no SHA1/MD5 without an explicit `size="0"` (incl. CRC-only), or `size="0"` with hashes that are not the empty-file hashes — the release stays incomplete |
 | `file-commit-failed` | A required file could not be committed under the file-oriented strategy (no extension mapping, mapped transform missing, or no usable identity) — the release is **not** marked present |
 | `verify-failed` | A promoted source file failed verification against its DAT requirement (SHA1 mismatch, or a non-empty file for a `size="0"` requirement) — the release is **not** marked present |
@@ -195,6 +197,80 @@ At the **start of each ingestion run** (before scan, so it applies even to an em
 **Counters:** `StaleStagingMoved` and `StaleSourceMoved` are surfaced in the dialog summary and final log **only when non-zero**, so ordinary runs keep the standard counter set.
 
 > This is a **narrow, veto-scoped** cleanup — Arkadia does **not** perform a broad `staging`/`source` sweep. Residue for **wanted** releases (including failed-transform recovery material) is intentionally left untouched.
+
+---
+
+## CRC32 + size fallback for CRC-only DAT requirements
+
+Some DATs (e.g. No-Intro Atari ST `.ipf`) declare ROMs with only `size` + `crc`. Matching is SHA1 → MD5, so such a requirement (`DatFileRequirementKind.Unmatchable`) is never indexed and a correct file would be moved to `incoming-skip` as `skip`.
+
+**Single-DAT ingestion** therefore adds a last-resort step (`Ingestion.CrcSizeFallbackMatcher`, index built by `LeafIngestionNeeds.CrcSizeIndex`), consulted **only after both SHA1 and MD5 missed**:
+
+- Candidates are CRC-only requirements with a valid CRC and a positive declared size. The file is read for CRC32 only if its length equals a declared size.
+- On a CRC32 **and** size match the file is accepted, and its already-computed SHA1/MD5 are written to `release_files` (`DatLineStore.EnrichReleaseFileHashes`) — **only into blank hash fields; DAT-declared hashes are never overwritten**. The requirement then behaves as an ordinary `Physical` one (commit identity `sha1:…`, SHA1 verification, future SHA1 matching). Logged as `dat-hash-enriched`.
+- A release already satisfied (DB-authoritative) is **never** matched by CRC, so a CRC-only match can never feed `duplicate-deleted`; such a file is moved to `incoming-skip` as before.
+- `unwanted` releases are matched (file routed to `incoming-skip` as `unwanted-moved`) but their DAT rows are not enriched.
+- Same CRC32+size with a different SHA1 in one run → `dat-hash-conflict`, first acceptance stands.
+- The source `.dat` file is never modified. Update DAT preserves locally recorded hashes when the rom (name, size, CRC) is unchanged and the new DAT still declares no SHA1/MD5 (`DatHashEnrichment.PreserveEnrichedHashes`); hashes supplied by the DAT win.
+- **Not covered:** Group DAT ingestion (`GroupIngestionPlanner`/`Execution`) and the Group leaf build/update path still treat CRC-only requirements as unmatchable. Enriched hashes are not flagged as "locally derived" in the schema — the `dat-hash-enriched` log line is the audit trail.
+
+---
+
+## RVZ (GameCube / Wii): verified conversion and Deep Hashing
+
+An RVZ is a lossless container of a **logical ISO**. Redump DATs identify the ISO, never the RVZ file. Arkadia therefore separates the two identities using the existing schema (no new tables or columns):
+
+| Layer | RVZ meaning |
+|---|---|
+| `content_identities` | The DAT ISO identity (`sha1:<dat sha1>`) |
+| `source_artifacts` | The **logical** ISO: verified logical SHA1/MD5/CRC32 and logical size. `source_artifacts` has no path, so this never claims that an ISO exists in `source/` — none is created |
+| `derived_artifacts` | The **physical** RVZ: physical SHA1/MD5/CRC32 and physical size, `storage_strategy_id = rvz_compression`, **Tier A** (verified to reconstruct the source ISO) |
+
+Verify Archive, Verify Volume, Append, Build Volume and Repair keep operating on the physical RVZ (SHA-1 / size), exactly as they do for CHD. Repair Pass B (Tier A source rebuild) matches a **physically supplied** ISO in `incoming-repair` whose SHA1 equals the recorded source SHA1; it never assumes an ISO exists locally.
+
+DolphinTool (`tools\dolphintool\DolphinTool.exe`, registry row `dolphintool`) is always run in **portable mode**: Arkadia creates an empty `portable.txt` next to the executable before any invocation, so Dolphin never writes to `Documents`/`AppData` or the `HKCU\Software\Dolphin Emulator\UserConfigPath` registry value.
+
+### Phase A — verified ISO → RVZ (`Ingestion.RvzConversion`)
+
+- The default transform is `convert -f rvz -b 131072 -c zstd -l 5 -i "{input}" -o "{output}"` (lossless, no scrubbing). The historical default without `-b` always failed, because DolphinTool requires a block size. Existing catalogs are corrected **only** when the template equals that exact historical value; a customized template is never touched.
+- The conversion runs in the private workdir `transform-work/rvz/<job>/`, which is on the same filesystem as the archive. The source ISO is exposed as a hardlink; if that is impossible, the tool reads the source path directly. **The ISO is never copied.**
+- Acceptance requires all of the following:
+  - a valid RVZ header (magic `RVZ\x01`, logical size equal to the source size, container size equal to the file length);
+  - `DolphinTool verify` SHA1/MD5/CRC32 equal to the source ISO's hashes.
+  Only then is the output promoted with a native `File.Move` (no overwrite) and committed as Tier A. On any failure the source is preserved (`transform-failed`) and the workdir is removed.
+- The archive collision guard and commit order are unchanged. Every other transform keeps its historical direct path.
+- Because Group finalization reuses the same file-oriented processor, a Group leaf mapped to `rvz_compression` also gets the verified conversion.
+
+### Phase B — Deep Hashing (`Ingestion.RvzDeepHashing`, Single DAT only)
+
+This phase runs right after archive extraction and before the ordinary matcher. It is active only when **all** of these hold:
+- the candidate is a `.rvz` file;
+- the run is an ordinary Single-DAT ingest (never Repair, never Group);
+- the leaf stores its roms with `rvz_compression` (an extension mapping, or the active storage transform);
+- DolphinTool is installed.
+Otherwise the files continue through the ordinary pipeline unchanged (`deep-hash-unavailable` is logged when the tool is missing).
+
+For each candidate:
+1. **Header (72 bytes).** If this is not an RVZ container, the file is handed back to the ordinary pipeline.
+2. **One physical pass** computes SHA1, MD5 and CRC32 together, with no separate MD5 pass. If the DAT identifies the file **physically**, it is handed back, which preserves the ordinary matching semantics. Otherwise these hashes are reused for registration.
+3. **Logical-size pre-filter.** If no RVZ-eligible requirement declares the header's logical size, the file goes to `rvz-no-match` → `incoming-skip`, and DolphinTool is not run.
+4. **One `DolphinTool verify -i` pass** (no temporary ISO, nothing written to disk). A tool failure or malformed output is **not** a mismatch: the file is preserved in place (`deep-hash-failed`), other candidates continue, and each failure counts in `TransformsFailed`. The run is therefore reported as PARTIAL SUCCESS or FAILED, never SUCCESS, and the failure is listed in the log's FAILURES section.
+5. **Match.** The logical SHA1 must equal the DAT SHA1. The DAT size, MD5 and CRC32 must also agree wherever the DAT declares them (otherwise `rvz-logical-conflict`). A successful verify alone is never enough, and CRC32 alone never matches. **MD5 may be absent:** on CPUs with SHA-1 hardware acceleration, DolphinTool's default verify report prints `MD5 not computed` (observed with DolphinTool 2609b). SHA1, CRC32 and logical size are then still enforced, and the logical source MD5 is stored as NULL, never copied from the DAT. The same rule applies to the Phase A conversion check. In Details, such a logical source shows **Source Verified ✔** only when it is linked from its RVZ derived artifact and its SHA1 and size (plus CRC32 when declared) match the DAT (`RvzIds.IsVerifiedLogicalSourceWithoutMd5`); every other case keeps the existing "all declared DAT hashes match" rule. A missing CRC32 is always a tool failure. If the default report says `SHA1 not computed` (a CPU-dependent default in some builds; current upstream always computes SHA1), Arkadia runs **one** extra `verify -i FILE -a sha1`, which prints only the bare digest, and reuses the CRC32, MD5 and problems from the first report. This fallback never runs when the first report contains SHA1. If it fails or prints anything other than a single 40-hex line, the result is an explicit tool failure.
+6. **Disposition:**
+   - more than one matching release → `rvz-ambiguous` → `incoming-skip`;
+   - `unwanted` → `unwanted-moved`;
+   - already PRESENT → `rvz-already-present` → **the redundant incoming RVZ is deleted** (`duplicate-deleted`, `FilesSkipped`). "PRESENT" means DB-authoritative satisfaction: status `present` **and** a derived artifact, via `RedundantIncomingPolicy`. A matching DAT identity alone is not enough, and a `present` release without an artifact is adopted instead. Only the candidate is deleted: the archived artifact is never read or touched, and no extra hashing is done. For an extracted ZIP/7z/RAR member, only that member is deleted; the container stays with Phase 9;
+   - not a single-file RVZ-eligible release → `rvz-unsupported-release`;
+   - otherwise → **adopted**.
+7. **Adoption** uses the existing `ArchiveWritePlanner` and `ArchiveWriteCollisionGuard`. An existing target is never overwritten (`archive-collision` / `rvz-target-exists`), and an artifact of another strategy is never re-pointed (`rvz-existing-artifact-conflict`).
+   - **Same filesystem → native `File.Move` only** (`rvz-adopted-moved`).
+   - Across filesystems → copy, then size check **and SHA1 of the destination**, which must equal the physical SHA1 already computed. A mismatch removes the copy and preserves the incoming file (`rvz-transfer-failed`). The incoming file is deleted only after the verified copy and the DB commit (`rvz-adopted-copied`).
+   - The DB rows are written as described in the table above, and the release becomes `present` through the guarded `UpdateReleaseStatus`.
+   - If the commit fails, the transfer is undone.
+
+Consumed candidates are removed from the ordinary matcher, staging and Phase 8. An adopted RVZ that came out of an extracted ZIP/7z is associated with its release for Phase 9; container cleanup is unchanged.
+
+I/O per adopted RVZ: 72-byte header read, one physical read, one DolphinTool read, then a rename. A cross-filesystem copy adds one write plus one destination read. Non-RVZ files incur no extra reads.
 
 ---
 

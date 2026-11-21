@@ -387,7 +387,7 @@ public sealed class CatalogService
                     ('chd_dreamcast_compression','CHD Dreamcast Compression (legacy/manual)', 'chdman',      'createcd -c zstd -i "{input}" -o "{output}"',            '.chd', 0, 'file_strategy',   'file_oriented',   'file',   'B'),
                     ('zip_compression',          'ZIP Compression (Folder)',     '7zip',        'a -tzip "{output}" "{input}\*"',                         '.zip', 1, 'folder_strategy', 'folder_oriented', 'file',   'A'),
                     ('zip_file_compression',     'ZIP Compression (File)',       '7zip',        'a -tzip "{output}" "{input}"',                           '.zip', 1, 'file_strategy',   'file_oriented',   'file',   'A'),
-                    ('rvz_compression',          'RVZ Compression',             'dolphintool',  'convert -f rvz -c zstd -l 5 -i "{input}" -o "{output}"','.rvz', 1, 'file_strategy',   'file_oriented',   'file',   'B'),
+                    ('rvz_compression',          'RVZ Compression',             'dolphintool',  'convert -f rvz -b 131072 -c zstd -l 5 -i "{input}" -o "{output}"','.rvz', 1, 'file_strategy',   'file_oriented',   'file',   'A'),
                     ('wux_compression',          'WUX Compression',             'wudcompress',  '-i "{input}" -o "{output}"',                             '.wux', 1, 'file_strategy',   'file_oriented',   'file',   'B');
                 """;
             txSeed.ExecuteNonQuery();
@@ -427,6 +427,23 @@ public sealed class CatalogService
                   AND command_template = 'a -tzip "{output}" * -w"{input}"';
             """;
         txZipFix.ExecuteNonQuery();
+
+        // ── Migrate rvz_compression command template (RVZ-SUPPORT-01, Phase A) ─────
+        // DolphinTool refuses RVZ conversion without an explicit block size ("Block size must be set for
+        // GCZ/RVZ/WIA"), so the historical default always failed. The fix adds Dolphin's GUI default
+        // (128 KiB, zstd level 5; lossless — no scrubbing). Guarded by the EXACT historical value so a
+        // user-customized template is never overwritten; idempotent (the fixed value no longer matches).
+        // In the same guarded row the default tier B becomes A (PO decision: an RVZ verified to reconstruct
+        // its ISO is a Tier A derived artifact); a user-chosen tier is left untouched.
+        using var txRvzFix = conn.CreateCommand();
+        txRvzFix.CommandText = """
+            UPDATE transforms
+               SET command_template = 'convert -f rvz -b 131072 -c zstd -l 5 -i "{input}" -o "{output}"',
+                   archive_tier     = CASE WHEN archive_tier = 'B' THEN 'A' ELSE archive_tier END
+             WHERE transform_id = 'rvz_compression'
+               AND command_template = 'convert -f rvz -c zstd -l 5 -i "{input}" -o "{output}"';
+            """;
+        txRvzFix.ExecuteNonQuery();
 
         // ── Migrate dat_lines: archive output validation columns (M1b) ───────
         // Nullable/additive — existing rows keep NULL, which reads as "unknown"

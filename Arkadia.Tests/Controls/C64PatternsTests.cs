@@ -271,7 +271,7 @@ public sealed class C64PatternsTests
         var clock = new ActivityClock(src, false);
         var c = new C64StatusConsole { Clock = clock };
         c.SetAttached(true);
-        foreach (var kind in Enum.GetValues<ActivityKind>())
+        foreach (var kind in Enum.GetValues<ActivityKind>().Where(k => ActivityCatalog.PatternFor(k) != ActivityPattern.Static))
         {
             c.Kind = kind;
             Assert.True(c.HasClockSubscription);

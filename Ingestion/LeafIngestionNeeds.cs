@@ -30,6 +30,12 @@ public sealed class LeafIngestionNeeds
     /// <summary>"releaseId|romName" → DAT-declared expected size (only positive parseable sizes).</summary>
     public required IReadOnlyDictionary<string, long> ExpectedSizeIndex { get; init; }
 
+    /// <summary>
+    /// CRC-only requirements ((size, crc32) → targets) for the last-resort <see cref="CrcSizeFallbackMatcher"/>. Single-DAT
+    /// ingestion only; Group aggregation ignores it. Empty when every requirement carries SHA1/MD5.
+    /// </summary>
+    public CrcSizeIndex CrcSizeIndex { get; init; } = CrcSizeIndex.Empty;
+
     /// <summary>Wanted releases whose staging is already complete but have no derived artifact — to be finalized (Phase 7) even if no new incoming matches them this run.</summary>
     public required IReadOnlyList<string> ResumableReleaseIds { get; init; }
 
@@ -90,6 +96,7 @@ public sealed class LeafIngestionNeeds
             Md5Index            = md5Index,
             ExpectedSizeIndex   = expectedSizeIndex,
             ResumableReleaseIds = resumableReleaseIds,
+            CrcSizeIndex        = CrcSizeIndex.Build(releases, allReleaseFiles),
         };
     }
 }

@@ -227,12 +227,12 @@ public sealed class ActivityIntegrationMatrixTests
     // ── Instrumentation only ──────────────────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void NoNewActivityKinds_BeyondTheSeventeenApproved()
+    public void NoNewActivityKinds_BeyondTheEighteenApproved()
     {
         var expected = new[]
         {
             "Loading", "Moving", "Ingesting", "Importing", "Verifying", "Appending", "Repairing", "Reabsorbing", "Creating",
-            "Updating", "Scraping", "Downloading", "Exporting", "Restoring", "Processing", "Cleaning", "Purging",
+            "Updating", "Scraping", "Downloading", "Exporting", "Restoring", "Processing", "Cleaning", "Purging", "Refreshing",
         };
         Assert.Equal(expected.OrderBy(x => x), Enum.GetNames<ActivityKind>().OrderBy(x => x));
     }

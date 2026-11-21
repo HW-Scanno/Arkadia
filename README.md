@@ -279,6 +279,8 @@ If 7zip is not present, MAME provider extraction is blocked and .7z/.rar ingest 
 
 **chdman** follows the `tools\<toolname>\<toolname>.exe` convention exactly.
 
+**DolphinTool setup (RVZ):** place the official Windows `DolphinTool.exe` (from a Dolphin Emulator release) in `tools\dolphintool\`. It is a separate GPL-2.0-or-later program invoked as a child process. If you redistribute it, include Dolphin's license text and the corresponding source (or a written offer) for that exact build. The x64 build inspected for RVZ-SUPPORT-01 imports only Windows system DLLs plus the **Visual C++ 2015–2022 x64 runtime** (`MSVCP140.dll`, `MSVCP140_ATOMIC_WAIT.dll`, `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll`): install the redistributable or place those DLLs next to the executable. Arkadia creates an empty `portable.txt` next to `DolphinTool.exe` before running it, so Dolphin keeps its user folder in `tools\dolphintool\User\` and never writes to `Documents`, `AppData` or the registry. DolphinTool is required only for DAT lines that store RVZ; see [docs/INGESTION_PIPELINE.md](docs/INGESTION_PIPELINE.md#rvz-gamecube--wii-verified-conversion-and-deep-hashing).
+
 **dolphintool and wudcompress** use upstream executable names (`DolphinTool.exe`, `WudCompress.exe`) that differ from the folder name casing. These will be normalized in a future migration.
 
 ### LibVLC

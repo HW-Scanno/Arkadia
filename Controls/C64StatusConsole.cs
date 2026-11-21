@@ -185,7 +185,8 @@ public sealed class C64StatusConsole : Control
     /// <summary>Subscribes to the shared clock iff animation is needed; otherwise releases it (no timer at rest).</summary>
     internal void UpdateSubscription()
     {
-        var need = _attached && Kind is not null && !_clock.ReducedMotion;
+        // A static kind (REFRESHING) never animates: no clock subscription, so no timer is ever started for it.
+        var need = _attached && Kind is { } k && ActivityCatalog.PatternFor(k) != ActivityPattern.Static && !_clock.ReducedMotion;
         if (need && _subscription is null)
         {
             _elapsedMs = _clock.ElapsedMs;                       // join the shared phase immediately
@@ -235,7 +236,7 @@ public sealed class C64StatusConsole : Control
         else
             context.FillRectangle(LightBlueBrush, new Rect(0, 0, w, h));
 
-        if (pattern is { } p && p != ActivityPattern.Raster && p != ActivityPattern.Lava)
+        if (pattern is { } p && p != ActivityPattern.Raster && p != ActivityPattern.Lava && p != ActivityPattern.Static)
         {
             using (context.PushClip(new Rect(0, 0, w, band)))
                 DrawStrip(context, p, w, 0, frame, strip: 0);

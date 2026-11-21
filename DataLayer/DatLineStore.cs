@@ -546,6 +546,34 @@ public sealed class DatLineStore
     }
 
     /// <summary>
+    /// Records the SHA1/MD5 computed from an incoming file that was accepted by CRC32+size against a CRC-only DAT
+    /// requirement. Strictly additive: writes only when the row has NO sha1 and NO md5 (DAT-declared hashes are never
+    /// overwritten) and its size and CRC still equal what the caller matched on. Returns the rows updated (0 or 1).
+    /// </summary>
+    public int EnrichReleaseFileHashes(string releaseId, string romName, long size, string crc, string md5, string sha1)
+    {
+        using var conn = Open();
+        using var cmd  = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE release_files
+            SET md5 = $md5, sha1 = $sha1
+            WHERE release_id = $rid
+              AND rom_name   = $rom
+              AND CAST(size AS INTEGER) = $size
+              AND substr('00000000' || lower(trim(crc)), -8) = $crc
+              AND (sha1 IS NULL OR sha1 = '')
+              AND (md5  IS NULL OR md5  = '')
+            """;
+        cmd.Parameters.AddWithValue("$rid",  releaseId);
+        cmd.Parameters.AddWithValue("$rom",  romName);
+        cmd.Parameters.AddWithValue("$size", size);
+        cmd.Parameters.AddWithValue("$crc",  crc.Trim().ToLowerInvariant().PadLeft(8, '0'));
+        cmd.Parameters.AddWithValue("$md5",  md5.ToLowerInvariant());
+        cmd.Parameters.AddWithValue("$sha1", sha1.ToLowerInvariant());
+        return cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
     /// Loads all release file entries for this DAT line, grouped by release_id.
     /// </summary>
     public Dictionary<string, List<ReleaseFileRecord>> LoadAllReleaseFiles()

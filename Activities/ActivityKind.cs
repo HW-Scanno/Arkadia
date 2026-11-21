@@ -11,6 +11,7 @@ public enum ActivityKind
     Appending, Repairing, Reabsorbing, Creating, Updating,
     Scraping, Downloading, Exporting, Restoring, Processing,
     Cleaning, Purging,
+    Refreshing,
 }
 
 /// <summary>
@@ -33,6 +34,8 @@ public enum ActivityPattern
     Sweep,
     /// <summary>Black console, blinking red text and a flowing lava region (destructive purge).</summary>
     Lava,
+    /// <summary>No animation at all: the plain console with its text (used by REFRESHING). Never subscribes to the clock.</summary>
+    Static,
 }
 
 /// <summary>Single place that maps an activity kind to its console text, visual pattern and foreground priority.</summary>
@@ -49,6 +52,7 @@ public static class ActivityCatalog
     public static readonly IReadOnlyList<ActivityKind> PriorityLowToHigh = new[]
     {
         ActivityKind.Loading,
+        ActivityKind.Refreshing,
         ActivityKind.Cleaning,
         ActivityKind.Processing,
         ActivityKind.Downloading,
@@ -74,7 +78,14 @@ public static class ActivityCatalog
     public static int Priority(ActivityKind kind) => Ranks[kind];
 
     /// <summary>Console text, e.g. <c>"VERIFYING..."</c>.</summary>
-    public static string Label(ActivityKind kind) => kind.ToString().ToUpperInvariant() + "...";
+    public static string Label(ActivityKind kind) => kind switch
+    {
+        ActivityKind.Refreshing => RefreshingLabel,
+        _ => kind.ToString().ToUpperInvariant() + "...",
+    };
+
+    /// <summary>REFRESHING is the one state shown in angle brackets (a short, static "UI is refreshing" notice).</summary>
+    public const string RefreshingLabel = "<REFRESHING>";
 
     /// <summary>Console text for no activity.</summary>
     public const string ReadyLabel = "READY.";
@@ -103,6 +114,8 @@ public static class ActivityCatalog
 
         ActivityKind.Cleaning    => ActivityPattern.Sweep,
         ActivityKind.Purging     => ActivityPattern.Lava,
+
+        ActivityKind.Refreshing  => ActivityPattern.Static,
 
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };

@@ -50,6 +50,11 @@ public static class IngestionLogFormatter
                     op.Action == "verify-failed"          ||
                     op.Action == "release-commit-failed"  ||
                     op.Action == "archive-collision"      ||
+                    op.Action == "deep-hash-failed"       ||
+                    op.Action == "rvz-transfer-failed"    ||
+                    op.Action == "rvz-commit-failed"      ||
+                    op.Action == "rvz-existing-artifact-conflict" ||
+                    op.Action == "rvz-target-exists"      ||
                     op.Action == "archive-validation-blocked")
                     sb.AppendLine($"  {op.Object,-50} | {op.Action,-22} | {op.Destination}");
             }

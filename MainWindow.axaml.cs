@@ -2265,15 +2265,19 @@ public partial class MainWindow : Window
         // Refresh views using existing non-blocking mechanisms (no synchronous 410-leaf aggregate rebuild).
         if (summary is not null && !summary.Aborted)
         {
-            // Group facts (present/owned/unassigned) changed — invalidate the cache so the row goes pending and
-            // the queue recomputes it. RefreshSystemsKeepSelection re-renders (spinner) and its SelectPlatform
-            // re-enqueues the now-pending group with priority → autonomous convergence, no restart/click.
-            InvalidateGroupCoverage(groupId);
-            RebuildLibraryDatasets();
-            ResolveFlagImages();
-            RefreshSystemsKeepSelection(platformId);
-            RefreshPending();
-            RefreshStaging();
+            // The sequence is unchanged and still on the UI thread; REFRESHING is painted first (see RunRefreshingAsync).
+            await RunRefreshingAsync(() =>
+            {
+                // Group facts (present/owned/unassigned) changed — invalidate the cache so the row goes pending and
+                // the queue recomputes it. RefreshSystemsKeepSelection re-renders (spinner) and its SelectPlatform
+                // re-enqueues the now-pending group with priority → autonomous convergence, no restart/click.
+                InvalidateGroupCoverage(groupId);
+                RebuildLibraryDatasets();
+                ResolveFlagImages();
+                RefreshSystemsKeepSelection(platformId);
+                RefreshPending();
+                RefreshStaging();
+            }, "post-Group-ingestion refresh");
         }
     }
 
@@ -6965,8 +6969,8 @@ public partial class MainWindow : Window
 
             // SOURCE FILES — first 5 rows, then a "view all" link
             const int MaxSourceDisplay = 5;
-            foreach (var (f, src, _) in triples.Take(MaxSourceDisplay))
-                DetailSourceFiles.Children.Add(MakeSourceFileRow(f, src, extTransforms, CopyAndToast));
+            foreach (var (f, src, dst) in triples.Take(MaxSourceDisplay))
+                DetailSourceFiles.Children.Add(MakeSourceFileRow(f, src, dst, extTransforms, CopyAndToast));
 
             if (triples.Count > MaxSourceDisplay)
             {
@@ -6984,7 +6988,7 @@ public partial class MainWindow : Window
 
             // Release-level source verification totals used by derived section
             int srcTotal    = triples.Count;
-            int srcVerified = triples.Count(t => IsSourceVerified(t.F, t.Src));
+            int srcVerified = triples.Count(t => IsSourceVerified(t.F, t.Src, t.Dst));
 
             // DERIVED FILES — unique by derived FileName
             var seenDerived = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -6992,7 +6996,7 @@ public partial class MainWindow : Window
             {
                 if (dst is null) continue;
                 if (!seenDerived.Add(dst.FileName)) continue;
-                bool thisSrcOk      = IsSourceVerified(f, src);
+                bool thisSrcOk      = IsSourceVerified(f, src, dst);
                 bool hasDerivedHash = dst.HashedDerivedSha1.Length > 0;
                 bool derivedOk      = thisSrcOk && hasDerivedHash;
                 var  xformName      = transformNames.TryGetValue(dst.StorageStrategyId, out var xn) ? xn : dst.StorageStrategyId;
@@ -7419,9 +7423,12 @@ public partial class MainWindow : Window
         return btn;
     }
 
-    private static bool IsSourceVerified(Data.ReleaseFileRecord f, Data.SourceArtifactRecord? src)
+    private static bool IsSourceVerified(Data.ReleaseFileRecord f, Data.SourceArtifactRecord? src,
+                                         Data.DerivedArtifactRecord? derived)
     {
         if (src is null) return false;
+        // RVZ logical ISO whose MD5 DolphinTool did not compute: SHA1 + size (+ CRC32) verified — see RvzIds.
+        if (Ingestion.RvzIds.IsVerifiedLogicalSourceWithoutMd5(f, src, derived)) return true;
         // All DAT hashes that are present must match; if none are present, cannot verify.
         bool anyDat = false;
         if (f.Sha1.Length > 0) { anyDat = true; if (!string.Equals(src.HashedSourceSha1,         f.Sha1, StringComparison.OrdinalIgnoreCase)) return false; }
@@ -7433,6 +7440,7 @@ public partial class MainWindow : Window
     private static Control MakeSourceFileRow(
         Data.ReleaseFileRecord     f,
         Data.SourceArtifactRecord? source,
+        Data.DerivedArtifactRecord? derived,
         Dictionary<string, (bool IsDiscard, string Name)>? extTransforms = null,
         Action<string>? onCopy = null)
     {
@@ -7455,7 +7463,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            srcSymbol = IsSourceVerified(f, source) ? "✔" : "✖";
+            srcSymbol = IsSourceVerified(f, source, derived) ? "✔" : "✖";
             srcColor  = srcSymbol == "✔" ? green : red;
         }
 
@@ -7704,8 +7712,8 @@ public partial class MainWindow : Window
         Dictionary<string, (bool IsDiscard, string Name)> extTransforms)
     {
         var list = new StackPanel { Spacing = 10, Margin = new Avalonia.Thickness(20, 16) };
-        foreach (var (f, src, _) in triples)
-            list.Children.Add(MakeSourceFileRow(f, src, extTransforms, CopyAndToast));
+        foreach (var (f, src, dst) in triples)
+            list.Children.Add(MakeSourceFileRow(f, src, dst, extTransforms, CopyAndToast));
 
         var scroll = new ScrollViewer
         {
@@ -7762,7 +7770,7 @@ public partial class MainWindow : Window
         }
         else
         {
-            srcSymbol = IsSourceVerified(f, source) ? "✔" : "✖";
+            srcSymbol = IsSourceVerified(f, source, derived) ? "✔" : "✖";
             srcColor  = srcSymbol == "✔" ? green : red;
         }
 
@@ -9057,6 +9065,9 @@ public partial class MainWindow : Window
         var store      = new DatLineStore(absPath);
         var reconResult = ReconciliationEngine.ApplyDatUpdate(store, datLineId, games);
 
+        // Hashes recorded locally by the CRC32+size fallback must survive the release_files rewrite below.
+        var previousFiles = store.LoadAllReleaseFiles();
+
         var newGameByName = games.ToDictionary(g => g.Name, StringComparer.Ordinal);
         var releases      = store.LoadReleases();
         var relevant      = releases.Where(r => newGameByName.ContainsKey(r.Name)).ToList();
@@ -9078,7 +9089,12 @@ public partial class MainWindow : Window
         {
             var r = relevant[i];
             if (newGameByName.TryGetValue(r.Name, out var g))
-                store.SaveReleaseFiles(r.Id, ToReleaseFiles(r.Id, g.Roms));
+            {
+                var newFiles = ToReleaseFiles(r.Id, g.Roms);
+                if (previousFiles.TryGetValue(r.Id, out var prevFiles))
+                    Ingestion.DatHashEnrichment.PreserveEnrichedHashes(prevFiles, newFiles);
+                store.SaveReleaseFiles(r.Id, newFiles);
+            }
 
             if (i % 25 == 0 || i == count - 1)
                 progress.Report(new DatOperationProgress
@@ -10429,25 +10445,62 @@ public partial class MainWindow : Window
 
         if (!workTask.IsCompletedSuccessfully || ingestResult is null) return;
 
-        if (_catalog.GetBoolSetting("auto_export_ingestion_logs", defaultValue: true))
+        // The sequence below is the EXISTING post-summary work, unchanged and still on the UI thread.
+        void PostIngestSequence()
         {
-            var logsDir = Path.Combine(AppContext.BaseDirectory, "logs", "ingest");
-            WriteIngestionLog(logsDir, datLineId, ingestResult);
+            if (_catalog.GetBoolSetting("auto_export_ingestion_logs", defaultValue: true))
+            {
+                var logsDir = Path.Combine(AppContext.BaseDirectory, "logs", "ingest");
+                WriteIngestionLog(logsDir, datLineId, ingestResult);
+            }
+
+            if (ingestResult.Error is null && ingestResult.ReleasesPresent > 0)
+            {
+                RebuildLibraryDatasets();
+                ResolveFlagImages();
+                RefreshSystemsKeepSelection(platformId);
+                RefreshPending();
+            }
+
+            // Includes all-unwanted runs (UnwantedSkipped > 0) — those still changed incoming-skip.
+            if (Ingestion.IngestionSummary.ShouldRefreshAfterIngest(ingestResult))
+            {
+                RefreshStaging();
+            }
         }
 
-        if (ingestResult.Error is null && ingestResult.ReleasesPresent > 0)
-        {
-            RebuildLibraryDatasets();
-            ResolveFlagImages();
-            RefreshSystemsKeepSelection(platformId);
-            RefreshPending();
-        }
+        // REFRESHING is shown (and painted) first only when a view refresh will actually run.
+        if ((ingestResult.Error is null && ingestResult.ReleasesPresent > 0) || Ingestion.IngestionSummary.ShouldRefreshAfterIngest(ingestResult))
+            await RunRefreshingAsync(PostIngestSequence, "post-ingestion refresh");
+        else
+            PostIngestSequence();
+    }
 
-        // Includes all-unwanted runs (UnwantedSkipped > 0) — those still changed incoming-skip.
-        if (Ingestion.IngestionSummary.ShouldRefreshAfterIngest(ingestResult))
-        {
-            RefreshStaging();
-        }
+    /// <summary>
+    /// Runs an existing synchronous UI refresh under a REFRESHING scope, started only after Avalonia has really rendered
+    /// the new status (see <see cref="LetStatusRenderAsync"/>). The refresh itself is unchanged and stays on the UI thread.
+    /// </summary>
+    private System.Threading.Tasks.Task RunRefreshingAsync(Action refresh, string detail)
+        => Activities.DeferredRefresh.RunAsync(Activities.ActivityMonitor.Shared, LetStatusRenderAsync, refresh, detail);
+
+    /// <summary>
+    /// Completes once two frames have been produced: the foreground-change notification (Normal priority) has already set
+    /// the console text, so the FIRST frame renders it and the SECOND frame callback runs only after that render was
+    /// recorded and committed. A dispatcher yield is not enough (measured: a Background-priority job runs before the next
+    /// frame is produced, so the text was painted only after the refresh). Waiting on frames is not a delay — it ends as
+    /// soon as the frames exist; the timeout is only a safety net for a window that cannot render (e.g. minimised).
+    /// </summary>
+    private async System.Threading.Tasks.Task LetStatusRenderAsync()
+    {
+        await NextFrameAsync();
+        await NextFrameAsync();
+    }
+
+    private async System.Threading.Tasks.Task NextFrameAsync()
+    {
+        var frame = new System.Threading.Tasks.TaskCompletionSource();
+        RequestAnimationFrame(_ => frame.TrySetResult());
+        await System.Threading.Tasks.Task.WhenAny(frame.Task, System.Threading.Tasks.Task.Delay(500));
     }
 
     // Builds the ArchiveOutputConfig for the M1f ingestion gate from catalog primitives.
@@ -10570,6 +10623,25 @@ public partial class MainWindow : Window
             .ToList();
         result.FilesScanned = sourceFiles.Count;
 
+        // ── Phase 1b: Deep Hashing (RVZ-SUPPORT-01 Phase B) ──────────────────
+        // Selective, right after archive extraction: only `.rvz` candidates, only for an ordinary Single-DAT run
+        // (never Repair: shouldIngest/incomingDirOverride), only when the leaf stores its discs as RVZ and a
+        // DolphinTool installation is present. Consumed candidates are removed from the ordinary pipeline; every
+        // other file (and every handed-back RVZ) continues unchanged. Runs BEFORE the releases are loaded below,
+        // so an adopted release is already 'present' for the rest of this run.
+        Ingestion.RvzDeepHashOutcome? deepHash = null;
+        if (shouldIngest is null && incomingDirOverride is null)
+        {
+            var rvzCandidates = sourceFiles.Where(Ingestion.RvzDeepHashing.IsCandidate).ToList();
+            if (rvzCandidates.Count > 0)
+            {
+                deepHash = RunRvzDeepHashing(appRoot, platformId, datLineId, storageStrategyId, absDbPath, skipDir,
+                    rvzCandidates, result, progress);
+                if (deepHash is not null)
+                    sourceFiles.RemoveAll(deepHash.Consumed.Contains);
+            }
+        }
+
         var store = new DatLineStore(absDbPath);
 
         var allReleasesList = store.LoadReleases();
@@ -10593,8 +10665,10 @@ public partial class MainWindow : Window
                     rf.Where(Ingestion.DatFileRequirement.IsSynthesizableEmpty).Select(f => f.RomName).ToList());
             }).ToList());
 
-        // Nothing to ingest and nothing to resume → done.
-        if (sourceFiles.Count == 0 && resumable.ResumableReleaseIds.Count == 0)
+        // Nothing to ingest and nothing to resume → done. (Deep-hash-consumed RVZ still need the Phase 9
+        // container cleanup and post-ingest pass below, so they keep the run going.)
+        if (sourceFiles.Count == 0 && resumable.ResumableReleaseIds.Count == 0 &&
+            (deepHash?.Consumed.Count ?? 0) == 0)
             return result;
 
         // ── Build hash indexes from non-outdated release files ─────────────────
@@ -10677,6 +10751,12 @@ public partial class MainWindow : Window
         var copyPlan = new Dictionary<string, List<(string ReleaseId, string RomName)>>(
             StringComparer.OrdinalIgnoreCase);
 
+        // Last-resort CRC32+size identification of CRC-only DAT requirements (no SHA1/MD5 in the DAT). Only consulted
+        // after SHA1 and MD5 both missed; a satisfied release is never matched this way (DB-authoritative, via ReleaseSat).
+        var crcFallback = new Ingestion.CrcSizeFallbackMatcher(
+            needs.CrcSizeIndex, releases,
+            rid => ReleaseSat(rid) == Ingestion.ReleaseSatisfaction.Satisfied, store);
+
         int hashProcessed = 0;
         foreach (var srcPath in sourceFiles)
         {
@@ -10702,9 +10782,22 @@ public partial class MainWindow : Window
                 continue;
             }
 
-            if (m.Targets.Count > 0)
+            IReadOnlyList<(string ReleaseId, string RomName)> matchedTargets = m.Targets;
+            if (matchedTargets.Count == 0 && m.HashSucceeded && crcFallback.IsActive)
             {
-                copyPlan[srcPath] = (List<(string ReleaseId, string RomName)>)m.Targets;
+                var fb = crcFallback.TryMatch(srcPath, m.Sha1, m.Md5);
+                foreach (var fbOp in fb.Operations)
+                {
+                    result.Operations.Add(fbOp);
+                    progress.Report(new IngestionProgress { NewOperation = fbOp });
+                }
+                matchedTargets = fb.Targets;
+            }
+
+            if (matchedTargets.Count > 0)
+            {
+                copyPlan[srcPath] = matchedTargets as List<(string ReleaseId, string RomName)>
+                                    ?? matchedTargets.ToList();
                 result.FilesMatched++;
             }
 
@@ -10732,8 +10825,21 @@ public partial class MainWindow : Window
             foreach (var (rid, _) in destinations)
                 touchSet.Add(rid);
         }
+        // Deep-hash-matched RVZ (adopted, or deleted as a duplicate of an already-present release) that came out of a
+        // container are associated with their release exactly like a matched file (they are not "unmatched").
+        bool DeepHashMatched(string p) =>
+            deepHash is not null &&
+            (deepHash.AdoptedReleaseByPath.ContainsKey(p) || deepHash.DuplicateReleaseByPath.ContainsKey(p));
+        if (deepHash is not null)
+            foreach (var (matchedPath, rid) in deepHash.AdoptedReleaseByPath.Concat(deepHash.DuplicateReleaseByPath))
+            {
+                if (!extractedFileToArchive.TryGetValue(matchedPath, out var archInfo)) continue;
+                if (!archiveTouchedReleases.TryGetValue(archInfo.ArchivePath, out var touchSet))
+                    archiveTouchedReleases[archInfo.ArchivePath] = touchSet = new HashSet<string>(StringComparer.Ordinal);
+                touchSet.Add(rid);
+            }
         foreach (var filePath in extractedFileToArchive.Keys)
-            if (!copyPlan.ContainsKey(filePath))
+            if (!copyPlan.ContainsKey(filePath) && !DeepHashMatched(filePath))
                 unmatchedExtractedFiles.Add(filePath);
 
         // ── Phase 4b: Pre-compute satisfied targets ───────────────────────────────
@@ -10990,7 +11096,12 @@ public partial class MainWindow : Window
         }
 
         // ── Finalise result counters ──────────────────────────────────────────
-        result.TransformsFailed    = transformFailedReleases.Count;
+        // Deep-hash commit failures (collision/transfer/commit) count as failed releases without being fed into
+        // transformFailedReleases (which gates Phase 7 status/Phase 8 handling of ordinary candidates). Each preserved
+        // DolphinTool failure counts as one failed transform too, so the run can never report an unconditional SUCCESS
+        // (Status → PARTIAL SUCCESS / FAILED via the existing TransformsFailed semantics).
+        result.TransformsFailed    = deepHash?.CombinedFailureCount(transformFailedReleases, successfulReleaseIds)
+                                     ?? transformFailedReleases.Count;
         result.ReleasesIncomplete  = incompleteReleases.Count;
 
         // ── Phase 9: Per-archive cleanup ──────────────────────────────────────
@@ -11223,7 +11334,8 @@ public partial class MainWindow : Window
                 var newFileName = datLineArchiveForm == Archive.ArchiveDatLineOutputForm.SingleFileFlat
                     ? safeFolder + (outputExt.Length > 0 ? outputExt : Path.GetExtension(f.RomName))
                     : originalName;
-                var existingRel = store.GetDerivedByContentKey(ck)?.RelativePath;
+                var existingDerived = store.GetDerivedByContentKey(ck);
+                var existingRel     = existingDerived?.RelativePath;
                 var writePlan = Archive.ArchiveWritePlanner.Plan(
                     appRoot, platformId, datLineId, datLineArchiveForm, safeFolder, newFileName, existingRel);
                 var relPath  = writePlan.RelativePath;
@@ -11249,9 +11361,22 @@ public partial class MainWindow : Window
                     continue;   // leave source/staging intact for recovery
                 }
 
+                // RVZ (RVZ-SUPPORT-01 Phase A): private workdir + logical verification against this source ISO before
+                // the output is promoted by native rename. Every other transform keeps the historical direct path.
+                bool isRvz       = Ingestion.RvzIds.IsRvzTransform(effectiveXform);
+                bool rvzVerified = false;
                 if (!File.Exists(destPath))
                 {
-                    if (!TransformEngine.ExecuteTransform(effectiveXform, effectiveTool, appRoot, sourceFilePath, destPath, out var xformError))
+                    if (isRvz)
+                    {
+                        var conv = Ingestion.RvzConversion.Run(
+                            appRoot, effectiveXform, effectiveTool, sourceFilePath, destPath,
+                            new Ingestion.RvzExpectedLogical(fileSize, hashedSha1, hashedMd5, hashedCrc32));
+                        if (!conv.Success)
+                            throw new InvalidOperationException($"Transform failed: {conv.Error}");
+                        rvzVerified = true;
+                    }
+                    else if (!TransformEngine.ExecuteTransform(effectiveXform, effectiveTool, appRoot, sourceFilePath, destPath, out var xformError))
                         throw new InvalidOperationException($"Transform failed: {xformError}");
                 }
 
@@ -11261,6 +11386,13 @@ public partial class MainWindow : Window
                     var xformOp = new IngestionOperation(f.RomName, "transform", $"{effectiveXform.Name} → {destName}");
                     result.Operations.Add(xformOp);
                     progress.Report(new IngestionProgress { NewOperation = xformOp });
+                }
+                if (rvzVerified)
+                {
+                    var rvzOp = new IngestionOperation(f.RomName, "rvz-verified",
+                        $"{destName} reconstructs the source ISO (SHA1 {hashedSha1}); Tier A");
+                    result.Operations.Add(rvzOp);
+                    progress.Report(new IngestionProgress { NewOperation = rvzOp });
                 }
 
                 // ── 5. Hash derived file independently (single pass: SHA1 + MD5 + CRC32) ─
@@ -11280,7 +11412,10 @@ public partial class MainWindow : Window
                     hashedDerivedSha1:  hashedDerivedSha1,
                     hashedDerivedMd5:   hashedDerivedMd5,
                     hashedDerivedCrc32: hashedDerivedCrc32,
-                    archiveTier:        effectiveXform.ArchiveTier);
+                    // RVZ: Tier A only when verified in this run; a reused existing RVZ keeps its recorded tier.
+                    archiveTier:        !isRvz      ? effectiveXform.ArchiveTier
+                                      : rvzVerified ? "A"
+                                      : existingDerived?.ArchiveTier ?? effectiveXform.ArchiveTier);
                 result.DerivedArtifactsCreated++;
 
                 // ── 7. Link release → content identity ────────────────────
@@ -11329,6 +11464,87 @@ public partial class MainWindow : Window
             result.Operations.Add(gapOp);
             progress.Report(new IngestionProgress { NewOperation = gapOp });
         }
+    }
+
+    // ── Deep Hashing adapter (RVZ-SUPPORT-01 Phase B, Single DAT only) ───────
+    // Resolves the leaf's persisted transform configuration with the same pure resolver finalization uses, and runs
+    // Deep Hashing only when the leaf stores (some of) its roms with rvz_compression and DolphinTool is installed.
+    // Returns null — and the RVZ candidates simply continue through the ordinary pipeline — otherwise.
+    private Ingestion.RvzDeepHashOutcome? RunRvzDeepHashing(
+        string                       appRoot,
+        string                       platformId,
+        string                       datLineId,
+        string                       storageStrategyId,
+        string                       absDbPath,
+        string                       skipDir,
+        IReadOnlyList<string>        candidates,
+        IngestionResult              result,
+        IProgress<IngestionProgress> progress)
+    {
+        var allTransforms = _catalog.LoadTransforms();
+        var allTools      = _catalog.LoadTools();
+        var dlRecord      = _catalog.LoadDatLines().FirstOrDefault(dl => dl.Id == datLineId);
+        var extMappings   = dlRecord?.TransformStrategyType == "file_extension"
+            ? _catalog.LoadExtensionMappings(datLineId)
+            : new List<ExtensionTransformMapping>();
+        var persistedForm = Archive.ArchiveOutputPersistenceMapping.FormFromDb(
+            _catalog.GetDatLineArchiveOutputValidation(datLineId)?.Form);
+
+        var store       = new DatLineStore(absDbPath);
+        var allReleases = store.LoadReleases();
+        var allFiles    = store.LoadAllReleaseFiles();
+        var nonOutdated = allReleases.Where(r => r.Status != "outdated").ToDictionary(r => r.Id, StringComparer.Ordinal);
+
+        var cfg = Ingestion.LeafTransformConfigResolver.Resolve(
+            storageStrategyId, dlRecord, allTransforms, allTools, extMappings, persistedForm, nonOutdated, allFiles);
+
+        Func<string, bool>? isRvzRom = null;
+        if (cfg.StrategyType == "file_extension")
+        {
+            var rvzExts = cfg.ExtMappings
+                .Where(kv => !kv.Value.IsDiscard && kv.Value.TransformId == Ingestion.RvzIds.TransformId)
+                .Select(kv => kv.Key)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (rvzExts.Count > 0)
+                isRvzRom = rom =>
+                {
+                    var e = Path.GetExtension(rom).ToLowerInvariant();
+                    return rvzExts.Contains(e.Length == 0 ? "(no ext)" : e);
+                };
+        }
+        else if (cfg.StrategyType == "none" && Ingestion.RvzIds.IsRvzTransform(cfg.ActiveXform))
+        {
+            isRvzRom = _ => true;
+        }
+        if (isRvzRom is null) return null;   // leaf is not configured for RVZ storage → ordinary pipeline
+
+        var rvzXform = allTransforms.FirstOrDefault(t => t.Id == Ingestion.RvzIds.TransformId);
+        var tool     = rvzXform is null ? null : allTools.FirstOrDefault(t => t.Id == rvzXform.ToolId);
+        var exePath  = Ingestion.DolphinToolInstallation.TryResolve(appRoot, tool);
+        string unavailable = exePath is null
+            ? $"DolphinTool not found (tools\\{tool?.FolderName ?? "dolphintool"}\\{tool?.ExecutableName ?? "DolphinTool.exe"})"
+            : Ingestion.DolphinToolInstallation.EnsurePortable(exePath, out var portableError) ? "" : portableError;
+        if (unavailable.Length > 0)
+        {
+            var op = new IngestionOperation($"{candidates.Count} RVZ file(s)", "deep-hash-unavailable",
+                $"{unavailable} — RVZ files processed by the ordinary pipeline");
+            result.Operations.Add(op);
+            progress.Report(new IngestionProgress { NewOperation = op });
+            return null;
+        }
+
+        var settings = new Ingestion.RvzDeepHashSettings
+        {
+            AppRoot          = appRoot,
+            PlatformId       = platformId,
+            DatLineId        = datLineId,
+            SkipDir          = skipDir,
+            ArchiveForm      = cfg.ArchiveForm,
+            IsRvzEligibleRom = isRvzRom,
+            SafeFileName     = SafeFileName,
+            VerifyLogical    = path => Ingestion.DolphinToolVerifier.Verify(exePath!, path),
+        };
+        return Ingestion.RvzDeepHashing.Run(settings, candidates, store, allReleases, allFiles, result, progress);
     }
 
     // ── Configured leaf finalization adapter ────────────────────────────────
