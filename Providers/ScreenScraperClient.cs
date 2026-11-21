@@ -370,6 +370,7 @@ public static class ScreenScraperClient
 
         try
         {
+            Directory.CreateDirectory(dir);   // lazy: only once a real media download is about to be written
             await using var src  = await response.Content.ReadAsStreamAsync(ct);
             await using var dest = File.Create(tmpPath);
             await src.CopyToAsync(dest, ct);

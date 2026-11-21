@@ -50,7 +50,10 @@ public static class MediaStore
         };
     }
 
-    /// <summary>Creates all standard media folders. Idempotent — safe to call repeatedly.</summary>
+    /// <summary>
+    /// Creates all standard media folders. Idempotent — safe to call repeatedly. Not used by application flows
+    /// (lazy directory creation: media parents are created only immediately before a real media write).
+    /// </summary>
     public static void EnsureMediaFolders(string dataDir, string hardwareFamilyId, string datLineId)
     {
         var root = DatLinePath(dataDir, hardwareFamilyId, datLineId);
@@ -201,10 +204,11 @@ public static class MediaStore
         string dataDir, string hardwareFamilyId, string datLineId,
         string releaseName, string subFolder)
     {
+        // Pure path calculation (lazy directory creation): the folder is NOT created here — the caller creates the
+        // parent immediately before writing. A missing folder simply holds no files yet.
         var dir      = Path.Combine(DatLinePath(dataDir, hardwareFamilyId, datLineId), subFolder);
-        Directory.CreateDirectory(dir);
         var stem     = ReleaseStem(releaseName);
-        var existing = Directory.EnumerateFiles(dir, stem + "_*").Count();
+        var existing = Directory.Exists(dir) ? Directory.EnumerateFiles(dir, stem + "_*").Count() : 0;
         return Path.Combine(dir, $"{stem}_{existing + 1:D3}");
     }
 
@@ -227,10 +231,10 @@ public static class MediaStore
         string dataDir, string hardwareFamilyId, string datLineId,
         string releaseName, string coverSubFolder, string region)
     {
+        // Pure path calculation (lazy directory creation) — see NextIndexedMediaStem.
         var dir      = Path.Combine(DatLinePath(dataDir, hardwareFamilyId, datLineId), coverSubFolder);
-        Directory.CreateDirectory(dir);
         var prefix   = $"{ReleaseStem(releaseName)}_{region}_";
-        var existing = Directory.EnumerateFiles(dir, prefix + "*").Count();
+        var existing = Directory.Exists(dir) ? Directory.EnumerateFiles(dir, prefix + "*").Count() : 0;
         return Path.Combine(dir, $"{prefix}{existing + 1:D3}");
     }
 

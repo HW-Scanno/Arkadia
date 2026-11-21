@@ -74,13 +74,14 @@ public sealed class EmptyFolderCleanerTests : IDisposable
     // ── Roots ────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void ManagedRoots_AreStagingArchiveSource_UnderTheBaseFolder()
+    public void ManagedRoots_AreStagingArchiveSourceMedia_UnderTheBaseFolder()
     {
         var r = Roots();
-        Assert.Equal(new[] { "Staging", "Archive", "Source" }, r.Select(x => x.Label));
+        Assert.Equal(new[] { "Staging", "Archive", "Source", "Media" }, r.Select(x => x.Label));
         Assert.Equal(Path.Combine(_base, "staging"), r[0].Path);
         Assert.Equal(Path.Combine(_base, "archive"), r[1].Path);
         Assert.Equal(Path.Combine(_base, "source"),  r[2].Path);
+        Assert.Equal(Path.Combine(_base, "data", "media"), r[3].Path);
     }
 
     [Fact]
@@ -91,6 +92,7 @@ public sealed class EmptyFolderCleanerTests : IDisposable
         Assert.False(Directory.Exists(Path.Combine(_base, "staging")));
         Assert.False(Directory.Exists(Path.Combine(_base, "archive")));
         Assert.False(Directory.Exists(Path.Combine(_base, "source")));
+        Assert.False(Directory.Exists(Path.Combine(_base, "data")));
     }
 
     [Fact]
@@ -403,6 +405,192 @@ public sealed class EmptyFolderCleanerTests : IDisposable
         Assert.Equal(2, res.Removed.Count);
         Assert.Equal(3, res.NotProcessed);
         Assert.Equal(3, Directory.GetDirectories(Path.Combine(_base, "archive")).Length);
+    }
+
+    // ── data/media (CLEAN-EMPTY-FOLDERS / MEDIA SUPPORT) ─────────────────────────
+
+    private static readonly string[] MediaCategories =
+    [
+        "covers-front", "covers-back", "covers-spine", "covers-wrap", "screenshots-title", "screenshots",
+        "fanart", "videos", "logos-hd", "logos", "manuals", "marquees", "flyers", "metadata", "physical", "physical-texture",
+    ];
+
+    private EmptyFolderRootScan MediaScan(EmptyFolderScan scan) => scan.Roots.Single(r => r.Root.Label == "Media");
+
+    [Fact]
+    public void Media_EmptyNestedCategoryFolders_AreDetectedAndRemoved_DeepestFirst()
+    {
+        var a = Dir("data", "media", "snes", "dat001", "covers-front");
+        var b = Dir("data", "media", "snes", "dat001", "screenshots", "nested-empty");
+        var c = new EmptyFolderCleaner();
+        var scan = c.Scan(Roots());
+        var media = MediaScan(scan);
+
+        Assert.True(media.RootExists);
+        Assert.Null(media.RootProblem);
+        var paths = media.Candidates.Select(x => x.Path).ToList();
+        Assert.Equal(5, paths.Count);                       // covers-front, nested-empty, screenshots, dat001, snes
+        Assert.All(media.Candidates, x => Assert.Equal("Media", x.RootLabel));
+        // Children before parents (post-order), so each parent is empty by the time it is removed.
+        Assert.True(paths.IndexOf(b) < paths.IndexOf(Path.GetDirectoryName(b)!));
+        Assert.True(paths.IndexOf(a) < paths.IndexOf(Path.Combine(_base, "data", "media", "snes", "dat001")));
+        Assert.Equal(Path.Combine(_base, "data", "media", "snes"), paths[^1]);
+
+        var res = c.Execute(scan);
+        Assert.Equal(5, res.Removed.Count);
+        Assert.Empty(res.Failed);
+        Assert.Empty(res.Skipped);
+        Assert.True(Directory.Exists(Path.Combine(_base, "data", "media")));   // protected root survives
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(_base, "data", "media")));
+    }
+
+    [Fact]
+    public void Media_EmptyGroupLeafTrees_AreRemovedCompletely_UpToTheProtectedMediaRoot()
+    {
+        // A C64 Group with many leaves, each carrying the 16 standard (empty) media category folders.
+        for (int i = 0; i < 25; i++)
+            foreach (var cat in MediaCategories)
+                Dir("data", "media", "c64", $"c64-tosec-leaf-{i:D2}", cat);
+        var c = new EmptyFolderCleaner();
+        var scan = c.Scan(Roots());
+        Assert.Equal(25 * 16 + 25 + 1, MediaScan(scan).Candidates.Count);   // categories + leaves + family
+
+        var res = c.Execute(scan);
+        Assert.Equal(25 * 16 + 25 + 1, res.Removed.Count);
+        var mediaRoot = Path.Combine(_base, "data", "media");
+        Assert.True(Directory.Exists(mediaRoot));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(mediaRoot));
+        Assert.True(Directory.Exists(Path.Combine(_base, "data")));          // data/ itself is never a candidate
+    }
+
+    [Fact]
+    public void Media_FoldersHoldingRealMedia_AndTheirAncestors_ArePreserved_FilesUntouched()
+    {
+        var cover = File0(Dir("data", "media", "md", "d1", "covers-front"), "sonic_wor_001.png");
+        var meta  = File0(Dir("data", "media", "md", "d1", "metadata"), "sonic_screenscraper.json");
+        var empty = Dir("data", "media", "md", "d1", "fanart");
+        var other = Dir("data", "media", "md", "d2", "videos");               // fully empty sibling leaf
+        var before = Snapshot(Path.Combine(_base, "data"));
+
+        var c = new EmptyFolderCleaner();
+        var scan = c.Scan(Roots());
+        var paths = MediaScan(scan).Candidates.Select(x => x.Path).ToList();
+        Assert.Equal(new[] { empty, other, Path.GetDirectoryName(other)! }.OrderBy(x => x), paths.OrderBy(x => x));
+
+        c.Execute(scan);
+        Assert.True(File.Exists(cover));
+        Assert.True(File.Exists(meta));
+        Assert.False(Directory.Exists(empty));
+        Assert.False(Directory.Exists(Path.Combine(_base, "data", "media", "md", "d2")));
+        Assert.True(Directory.Exists(Path.Combine(_base, "data", "media", "md", "d1")));
+        Assert.Equal(before, Snapshot(Path.Combine(_base, "data")));
+    }
+
+    [Fact]
+    public void Media_OnlyTheMediaRootIsManaged_DataSiblingsAreNeverScanned()
+    {
+        // data/ holds catalog DBs, leaf DBs, system images and caches — the cleaner looks only inside data/media.
+        var emptySibling = Dir("data", "systems", "c64", "empty-leaf-folder");
+        Dir("data", "media");
+        var c = new EmptyFolderCleaner();
+        var scan = c.Scan(Roots());
+        Assert.DoesNotContain(scan.Roots.SelectMany(r => r.Candidates),
+            x => x.Path.StartsWith(Path.Combine(_base, "data", "systems"), StringComparison.OrdinalIgnoreCase));
+        c.Execute(scan);
+        Assert.True(Directory.Exists(emptySibling));
+    }
+
+    [Fact]
+    public void Media_Junctions_AreNeverFollowedNorRemoved_AndTheirTargetIsUntouched()
+    {
+        var outside = Path.Combine(_base, "outside-media");
+        Directory.CreateDirectory(Path.Combine(outside, "empty-a", "empty-b"));
+        var keep = File0(outside, "precious.png");
+        var host = Dir("data", "media", "c64", "leaf");
+        var link = Path.Combine(host, "covers-front");
+        if (!TryJunction(link, outside)) return;                             // platform refused: nothing to test
+
+        var c = new EmptyFolderCleaner();
+        var scan = c.Scan(Roots());
+        Assert.Empty(MediaScan(scan).Candidates);
+        Assert.Contains(MediaScan(scan).Notes, n => n.Path == link);
+        var res = c.Execute(scan);
+
+        Assert.Empty(res.Removed);
+        Assert.True(Directory.Exists(link));
+        Assert.True(Directory.Exists(host));
+        Assert.True(Directory.Exists(Path.Combine(outside, "empty-a", "empty-b")));
+        Assert.True(File.Exists(keep));
+    }
+
+    [Fact]
+    public void Media_RootThatIsAJunction_IsNotScanned()
+    {
+        var outside = Dir("elsewhere-media");
+        Directory.CreateDirectory(Path.Combine(outside, "empty"));
+        Dir("data");
+        if (!TryJunction(Path.Combine(_base, "data", "media"), outside)) return;
+
+        var c = new EmptyFolderCleaner();
+        var scan = c.Scan(Roots());
+        Assert.NotNull(MediaScan(scan).RootProblem);
+        Assert.Empty(MediaScan(scan).Candidates);
+        c.Execute(scan);
+        Assert.True(Directory.Exists(Path.Combine(outside, "empty")));
+    }
+
+    [Fact]
+    public void Media_Symlinks_WhenTheSystemAllowsThem_AreNeverFollowedNorRemoved()
+    {
+        var outside = Dir("outside-media-sym");
+        Directory.CreateDirectory(Path.Combine(outside, "e"));
+        var host = Dir("data", "media", "snes", "d1");
+        var link = Path.Combine(host, "logos");
+        try { Directory.CreateSymbolicLink(link, outside); }
+        catch { return; }                                                     // needs privilege/developer mode
+
+        var c = new EmptyFolderCleaner();
+        var scan = c.Scan(Roots());
+        Assert.Empty(MediaScan(scan).Candidates);
+        c.Execute(scan);
+        Assert.True(Directory.Exists(Path.Combine(outside, "e")));
+        Assert.NotNull(new DirectoryInfo(link).LinkTarget);
+    }
+
+    [Fact]
+    public void Media_PreviewAndExecution_AreConsistent_AndReportedPerRoot()
+    {
+        Dir("data", "media", "nes", "d1", "covers-front");
+        Dir("archive", "nes", "d1", "empty-release");
+        var c = new EmptyFolderCleaner();
+        var scan = c.Scan(Roots());
+        var previewed = scan.Roots.SelectMany(r => r.Candidates).Select(x => x.Path).ToList();
+        Assert.Equal(3, MediaScan(scan).Candidates.Count);
+        Assert.Equal(3, scan.Roots.Single(r => r.Root.Label == "Archive").Candidates.Count);
+
+        var report = EmptyFolderReport.Preview(scan);
+        Assert.Contains("MEDIA  —  " + Path.Combine(_base, "data", "media"), report);
+        Assert.Contains(Path.Combine("nes", "d1", "covers-front"), report);
+        Assert.Contains("6 empty folders can be removed", EmptyFolderReport.Headline(scan));
+
+        var res = c.Execute(scan);
+        Assert.Equal(previewed, res.Removed);                               // exactly what the preview listed, in order
+        Assert.Contains("Removed:  6", EmptyFolderReport.Summary(res));
+    }
+
+    [Fact]
+    public void Media_FolderThatGainsAFileAfterThePreview_IsSkipped_NotForced()
+    {
+        var cat = Dir("data", "media", "gba", "d1", "screenshots");
+        var c = new EmptyFolderCleaner();
+        var scan = c.Scan(Roots());
+        Assert.Equal(3, MediaScan(scan).Candidates.Count);
+
+        var shot = File0(cat, "game_001.png");                              // a scrape lands between preview and removal
+        var res = c.Execute(scan);
+        Assert.True(File.Exists(shot));
+        Assert.Empty(res.Removed);
+        Assert.Equal(3, res.Skipped.Count);                                  // category + its now non-empty ancestors
     }
 
     // ── Never deletes files ──────────────────────────────────────────────────────

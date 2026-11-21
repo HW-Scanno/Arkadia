@@ -108,7 +108,7 @@ public sealed class ScreenScraperCacheImportService(string dataDir, CatalogServi
 
         // ── 6. Extract media from ZIP ─────────────────────────────────────────
         progress?.Report("Extracting media from cache…");
-        MediaStore.EnsureMediaFolders(dataDir, entry.HardwareFamilyId, entry.DatLineId);
+        // Media parents are created lazily, immediately before each extracted file is written.
 
         var (mediaExtracted, mediaByType) =
             await ExtractMediaAsync(zip, entry, candidate.ProviderGameId, ct);
@@ -215,6 +215,7 @@ public sealed class ScreenScraperCacheImportService(string dataDir, CatalogServi
 
             try
             {
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
                 using var src  = zipEntry.Open();
                 using var dest = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None);
                 await src.CopyToAsync(dest, ct);
@@ -310,7 +311,7 @@ public sealed class ScreenScraperCacheImportService(string dataDir, CatalogServi
         if (!options.ExtractMissingMedia)
             return new BulkImportResult(proposed.Count, autoApplied.Count, 0, 0, 0);
 
-        MediaStore.EnsureMediaFolders(dataDir, entry.HardwareFamilyId, entry.DatLineId);
+        // Media parents are created lazily, immediately before each extracted file is written.
 
         var (extracted, skippedExcluded, skippedExisting) =
             await ExtractMediaBatchAsync(zip, entry, candidate.ProviderGameId, options, excludedHashes, ct);
@@ -369,6 +370,7 @@ public sealed class ScreenScraperCacheImportService(string dataDir, CatalogServi
 
             try
             {
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
                 using var src  = zipEntry.Open();
                 using var dest = new FileStream(destPath, FileMode.Create, FileAccess.Write, FileShare.None);
                 await src.CopyToAsync(dest, ct);

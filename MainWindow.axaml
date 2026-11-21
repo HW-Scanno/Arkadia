@@ -1982,7 +1982,7 @@
                                                     Content="Clean Empty Folders"
                                                     Classes="view-toggle"
                                                     Click="OnCleanEmptyFolders"/>
-                                            <TextBlock Text="Removes empty folders left behind in staging/, archive/ and source/. Previews first; files are never deleted."
+                                            <TextBlock Text="Removes empty folders left behind in staging/, archive/, source/ and data/media/. Previews first; files are never deleted."
                                                        FontSize="11" Foreground="#555577"
                                                        TextWrapping="Wrap"/>
                                         </StackPanel>

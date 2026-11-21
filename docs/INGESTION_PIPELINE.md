@@ -37,6 +37,14 @@ incoming → staging → source (temporary transform input) → derived artifact
 
 > **`source` is transient.** It holds raw release inputs only while a transform is in progress. After the derived artifact is verified and its DB rows are committed, the source input is deleted. The **durable** output is the derived artifact in `archive\...\` (or, once assigned, on a volume) — never the raw source. Raw source lingers only when a transform fails (kept as recovery material) or a delete is denied by the OS.
 
+> **Lazy directory creation.** Per-DAT, per-leaf and per-release folders under `staging\`, `source\`, `archive\` and `data\media\` are created **only immediately before a file is actually written or moved there**, never because a DAT, Group, leaf or release exists. Concretely:
+> - a release staging folder is created when the first file is staged into it;
+> - `source\<platform>\<datLine>\<release>\` is created when a complete release is promoted from staging;
+> - the archive parent is created right before the transform writes (CHD and RVZ workdirs create it at promotion);
+> - a media subfolder is created right before a media file is saved.
+>
+> DAT/Group import and update, Library load, and path resolution (`MediaStore.NextIndexed*`) create nothing. A logical Source Artifact (e.g. the ISO behind a verified RVZ) never creates a source folder. Every reader treats a missing folder as empty. Platform-level `incoming-roms\<platform>\` and `incoming-skip\<platform>\` are still created when ingestion starts. Existing empty folders are not removed automatically (see Maintenance → Clean Empty Folders).
+
 ---
 
 ## Unwanted early-skip (Phase 6 / Phase 8)

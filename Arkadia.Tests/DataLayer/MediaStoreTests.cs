@@ -560,12 +560,22 @@ public sealed class MediaStoreTests : IDisposable
     }
 
     [Fact]
-    public void NextIndexedCoverStem_CreatesDirectory_WhenMissing()
+    public void NextIndexedCoverStem_WhenMissing_IsPurePathCalculation_CreatesNoDirectory()
     {
+        // Lazy directory creation: computing the next path never creates the media folder.
         var stem = MediaStore.NextIndexedCoverStem(
             _dataDir, "md", "d2", "Sonic", "covers-front", "us");
-        Assert.True(Directory.Exists(Path.GetDirectoryName(stem)));
+        Assert.False(Directory.Exists(Path.GetDirectoryName(stem)));
+        Assert.False(Directory.Exists(MediaStore.DatLinePath(_dataDir, "md", "d2")));
         Assert.EndsWith("sonic_us_001", stem);
+    }
+
+    [Fact]
+    public void NextIndexedMediaPath_WhenMissing_IsPurePathCalculation_CreatesNoDirectory()
+    {
+        var path = MediaStore.NextIndexedMediaPath(_dataDir, "md", "d2", "Sonic", "screenshots", "png");
+        Assert.False(Directory.Exists(Path.GetDirectoryName(path)));
+        Assert.EndsWith("sonic_001.png", path);
     }
 
     // ── NormalizeMediaType ────────────────────────────────────────────────────

@@ -120,7 +120,7 @@ public sealed class AmpLocalPackageImportService(string dataDir)
                 MediaByType:               mediaByType);
         }
 
-        MediaStore.EnsureMediaFolders(dataDir, entry.HardwareFamilyId, entry.DatLineId);
+        // Media parents are created lazily, immediately before each verified media move (below).
 
         var localRows      = store.LoadMediaCurationRows(entry.ReleaseId);
         var excludedHashes = respectExcludedMedia

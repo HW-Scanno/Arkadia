@@ -75,7 +75,8 @@ public sealed class RvzIngestionWiringTests
         var p = Region(Read("MainWindow.axaml.cs"), "private void ProcessFileOrientedRelease(", "// ── Configured leaf finalization adapter");
         Assert.Contains("bool isRvz       = Ingestion.RvzIds.IsRvzTransform(effectiveXform);", p);
         Assert.Contains("Ingestion.RvzConversion.Run(", p);
-        Assert.Contains("else if (!TransformEngine.ExecuteTransform(effectiveXform, effectiveTool, appRoot, sourceFilePath, destPath, out var xformError))", p);
+        // Non-RVZ: historical direct transform, with the archive parent created lazily just before it writes.
+        Assert.Contains("Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);\n                        if (!TransformEngine.ExecuteTransform(effectiveXform, effectiveTool, appRoot, sourceFilePath, destPath, out var xformError))", p);
         Assert.Contains("!isRvz      ? effectiveXform.ArchiveTier", p);                         // non-RVZ tier untouched
         Assert.Contains("rvzVerified ? \"A\"", p);                                              // Tier A only when verified
     }

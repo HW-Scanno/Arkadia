@@ -6724,7 +6724,7 @@ public partial class MainWindow : Window
             var metadata     = store.LoadReleaseMetadata();
             var titleMode    = dl.LibraryTitleMode;
 
-            MediaStore.EnsureMediaFolders(_dataDir, dl.HardwareFamilyId, dl.Id);
+            // Library load is read-only for media: no folders are created (lazy directory creation).
 
             var releases = store.LoadReleases()
                 .Select(r =>
@@ -10542,8 +10542,9 @@ public partial class MainWindow : Window
         var skipDir     = Path.Combine(appRoot, "incoming-skip", platformId);
 
         Directory.CreateDirectory(incomingDir);
-        Directory.CreateDirectory(stagingRoot);
-        Directory.CreateDirectory(sourceRoot);
+        // staging/<platform>/<datLine> and source/<platform>/<datLine> are created lazily, only when a file is actually
+        // staged (IngestionStagingEngine) or promoted to source (LeafFinalizationEngine). Every reader of these roots
+        // (stale cleanup, resumable detection, dedup checks, finalization) already tolerates their absence.
         Directory.CreateDirectory(skipDir);
 
         // ── Archive-output validation gate (M1f) ──────────────────────────────
@@ -11341,7 +11342,8 @@ public partial class MainWindow : Window
                 var relPath  = writePlan.RelativePath;
                 var destPath = writePlan.FullPath;
                 var destName = Path.GetFileName(destPath);
-                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                // Lazy directory creation: the archive parent is created only immediately before a real write
+                // (below), never for a blocked / already-present target.
 
                 // ── Archive write collision guard (defense-in-depth) ───────
                 // Never overwrite/reuse a target that belongs to a different content
@@ -11374,10 +11376,14 @@ public partial class MainWindow : Window
                             new Ingestion.RvzExpectedLogical(fileSize, hashedSha1, hashedMd5, hashedCrc32));
                         if (!conv.Success)
                             throw new InvalidOperationException($"Transform failed: {conv.Error}");
-                        rvzVerified = true;
+                        rvzVerified = true;   // RvzConversion creates the parent itself, only at promotion
                     }
-                    else if (!TransformEngine.ExecuteTransform(effectiveXform, effectiveTool, appRoot, sourceFilePath, destPath, out var xformError))
-                        throw new InvalidOperationException($"Transform failed: {xformError}");
+                    else
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+                        if (!TransformEngine.ExecuteTransform(effectiveXform, effectiveTool, appRoot, sourceFilePath, destPath, out var xformError))
+                            throw new InvalidOperationException($"Transform failed: {xformError}");
+                    }
                 }
 
                 // Log transform step (skip no_compression — that's a plain copy, already captured)
@@ -11709,7 +11715,7 @@ public partial class MainWindow : Window
             var relPath  = writePlan.RelativePath;
             var destPath = writePlan.FullPath;
             var destName = Path.GetFileName(destPath);
-            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+            // Lazy directory creation: the archive parent is created only immediately before the transform writes.
 
             // ── Archive write collision guard (defense-in-depth) ───────────────
             var guardDecision = Archive.ArchiveWriteCollisionGuard.Decide(
@@ -11729,6 +11735,7 @@ public partial class MainWindow : Window
             // ── 3. Transform: source folder → derived file ────────────────────
             if (!File.Exists(destPath))
             {
+                Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
                 if (!TransformEngine.ExecuteTransform(folderXform, folderTool, appRoot, sourceDir, destPath, out var xformError))
                     throw new InvalidOperationException($"Transform failed: {xformError}");
             }
@@ -11866,7 +11873,8 @@ public partial class MainWindow : Window
             var relPath  = writePlan.RelativePath;
             var destPath = writePlan.FullPath;
             var destName = Path.GetFileName(destPath);
-            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+            // Lazy directory creation: CueBinWorkdir / IsoChdWorkdir create the archive parent themselves, only when
+            // promoting a produced CHD — never for an already-satisfied or blocked target.
 
             // ── 2b. Satisfaction check — skip if artifact is already valid ────
             // A "present" release whose CHD exists, has size > 0, and whose physical
@@ -12083,7 +12091,7 @@ public partial class MainWindow : Window
                 ? er
                 : Archive.ArchiveArtifactPathBuilder.GetReleaseFolderRoot(platformId, datLineId, safeFolder);
             var destPath = Path.Combine(appRoot, relPath.Replace('/', Path.DirectorySeparatorChar));
-            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+            // Lazy directory creation: CopyFolderRecursive creates the destination (and its parents) only when copying.
 
             // ── Archive write collision guard (defense-in-depth) ───────────────
             // The derived artifact is a folder; a different release resolving to the

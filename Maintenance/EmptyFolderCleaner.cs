@@ -64,15 +64,15 @@ public sealed class EmptyFolderCleanupResult
 public readonly record struct EmptyFolderProgress(int Done, int Total, string CurrentPath);
 
 /// <summary>
-/// CLEAN-EMPTY-FOLDERS-1: removes EMPTY directories (and only empty directories) from Arkadia's three managed work
-/// roots — <c>staging</c>, <c>archive</c> and <c>source</c> under the application folder. Manual, on-demand,
-/// UI-free and conservative:
+/// CLEAN-EMPTY-FOLDERS-1: removes EMPTY directories (and only empty directories) from Arkadia's four managed
+/// roots — <c>staging</c>, <c>archive</c>, <c>source</c> and <c>data\media</c> under the application folder. Manual,
+/// on-demand, UI-free and conservative:
 ///
 /// <list type="bullet">
 /// <item>It never deletes a file — hidden, system or zero-byte files all count as content and keep their folder.
 /// The only deletion primitive used is <c>Directory.Delete(path, recursive: false)</c>, which the OS refuses for any
 /// directory that has content.</item>
-/// <item>The three roots themselves are protected: they are never candidates, never deleted, and never created.</item>
+/// <item>The four roots themselves are protected: they are never candidates, never deleted, and never created.</item>
 /// <item>Symbolic links, junctions and mount points (any reparse point) are never followed and never removed; they
 /// count as content of their parent. Hidden and system directories are left alone too.</item>
 /// <item>Each candidate is re-validated immediately before deletion (still inside its root, no link on the way,
@@ -86,7 +86,7 @@ public readonly record struct EmptyFolderProgress(int Done, int Total, string Cu
 /// </summary>
 public sealed class EmptyFolderCleaner
 {
-    public const string StagingLabel = "Staging", ArchiveLabel = "Archive", SourceLabel = "Source";
+    public const string StagingLabel = "Staging", ArchiveLabel = "Archive", SourceLabel = "Source", MediaLabel = "Media";
 
     private const int MaxDepth = 256;
 
@@ -103,7 +103,11 @@ public sealed class EmptyFolderCleaner
 
     public EmptyFolderCleaner(ActivityMonitor? activities = null) => _activities = activities;
 
-    /// <summary>The three managed work roots under <paramref name="baseDirectory"/> (the application folder).</summary>
+    /// <summary>
+    /// The four managed roots under <paramref name="baseDirectory"/> (the application folder): the three work roots
+    /// plus <c>data\media</c> (media assets per hardware family / DAT line / media category). Only the media root is
+    /// managed — its parent <c>data\</c> (catalog, leaf databases, images, cache) is never scanned or touched.
+    /// </summary>
     public static IReadOnlyList<CleanupRoot> ManagedRoots(string baseDirectory)
     {
         var b = Path.GetFullPath(baseDirectory);
@@ -112,6 +116,7 @@ public sealed class EmptyFolderCleaner
             new CleanupRoot(StagingLabel, Path.Combine(b, "staging")),
             new CleanupRoot(ArchiveLabel, Path.Combine(b, "archive")),
             new CleanupRoot(SourceLabel,  Path.Combine(b, "source")),
+            new CleanupRoot(MediaLabel,   Path.Combine(b, "data", "media")),
         };
     }
 

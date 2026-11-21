@@ -74,7 +74,7 @@ public sealed class ScreenScraperImportService(string dataDir)
         await File.WriteAllTextAsync(metaFile, payloadJson, ct);
 
         // ── Download media ──────────────────────────────────────────────────
-        MediaStore.EnsureMediaFolders(dataDir, entry.HardwareFamilyId, entry.DatLineId);
+        // Media parents are created lazily by ScreenScraperClient.DownloadMediaAsync, only for a real download.
 
         var imgExts = ScreenScraperClient.ValidImageExts;
         var vidExts = ScreenScraperClient.ValidVideoExts;

@@ -131,8 +131,8 @@ public static class IngestionStagingEngine
                 var relName    = releases.TryGetValue(releaseId, out var rel) ? rel.Name : releaseId;
                 var safeFolder = safeFileName(relName);
                 var stagingDir = Path.Combine(stagingRoot, safeFolder);
-
-                Directory.CreateDirectory(stagingDir);
+                // Lazy: the release staging folder is created below together with the file's parent, immediately
+                // before the file is materialized — never for a target that fails path resolution.
 
                 try
                 {
